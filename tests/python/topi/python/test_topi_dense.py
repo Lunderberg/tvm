@@ -55,8 +55,14 @@ _dense_implementation = {
     },
     "int8": {
         "generic": [(topi.nn.dense, topi.generic.schedule_dense)],
-        "gpu": [
+        "cuda": [
             (topi.cuda.dense_int8, topi.cuda.schedule_dense_int8),
+            (topi.cuda.dense_small_batch, topi.cuda.schedule_dense_small_batch),
+            (topi.cuda.dense_large_batch, topi.cuda.schedule_dense_large_batch),
+        ],
+        "gpu": [
+            (topi.cuda.dense_small_batch, topi.cuda.schedule_dense_small_batch),
+            (topi.cuda.dense_large_batch, topi.cuda.schedule_dense_large_batch),
         ],
     },
 }
