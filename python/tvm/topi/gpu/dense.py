@@ -30,9 +30,9 @@ logger = logging.getLogger("topi")
 
 
 @autotvm.register_topi_compute("dense_small_batch.gpu")
-def dense_small_batch(cfg, data, weight, bias=None, out_dtype=None):
+def dense_small_batch(cfg, data, weight, bias=None, out_dtype=None, accumulate_dtype=None):
     """Dense operator on GPU"""
-    return nn.dense(data, weight, bias, out_dtype)
+    return nn.dense(data, weight, bias, out_dtype, accumulate_dtype=accumulate_dtype)
 
 
 @autotvm.register_topi_schedule("dense_small_batch.gpu")

@@ -21,7 +21,7 @@ from tvm import te, auto_scheduler
 from .. import tag
 
 
-def matmul(
+def dense(
     tensor_a,
     tensor_b,
     bias=None,
@@ -29,6 +29,7 @@ def matmul(
     transpose_a=False,
     transpose_b=False,
     auto_scheduler_rewritten_layout="",
+    accumulate_dtype=None,
 ):
     """The default implementation of matmul in topi.
 
@@ -44,7 +45,8 @@ def matmul(
         1-D with shape [out_dim]
 
     out_dtype : Optional[str]
-        The output type. This is used for mixed precision.
+        The output type. This is used for mixed precision.  If not
+        given, `out_dtype` will be the same as `data`'s dtype.
 
     transpose_a : Optional[bool] = False
         Whether the tensor_a is in transposed format.
@@ -55,10 +57,19 @@ def matmul(
     auto_scheduler_rewritten_layout: Optional[str] = ""
         The layout after auto-scheduler's layout rewrite pass.
 
+    accumulate_dtype : Optional[str]
+        The type to be used to accumulate the results.  If not given,
+        `accumulate_dtype` will be the same as `out_dtype`.  Intended
+        for uses where the `out_dtype` does not have enough precision
+        to perform a summation.  For example, if the input and output
+        both have dtype of ``float16``, the summation can be performed
+        in ``float32``.
+
     Returns
     -------
     output : tvm.te.Tensor
         2-D with shape [batch, out_dim]
+
     """
     # TODO(jcf94): Add multi-dim support for tensor_a
     assert len(tensor_a.shape) == 2, "only support 2-dim matmul"
@@ -66,10 +77,14 @@ def matmul(
         assert len(bias.shape) == 1
     if out_dtype is None:
         out_dtype = tensor_a.dtype
+
     if transpose_a:
         in_dim, batch = tensor_a.shape
     else:
         batch, in_dim = tensor_a.shape
+
+    if accumulate_dtype is None:
+        accumulate_dtype = out_dtype
 
     if auto_scheduler_rewritten_layout:
         # Infer shape for the rewritten layout
@@ -86,26 +101,30 @@ def matmul(
     k = te.reduce_axis((0, in_dim), name="k")
     if (transpose_a, transpose_b) == (True, True):
         compute_lambda = lambda i, j: te.sum(
-            tensor_a[k, i].astype(out_dtype) * tensor_b[j, k].astype(out_dtype), axis=k
+            tensor_a[k, i].astype(accumulate_dtype) * tensor_b[j, k].astype(accumulate_dtype),
+            axis=k,
         )
         compute_name = "T_matmul_TT"
         compute_tag = "matmul"
     elif (transpose_a, transpose_b) == (True, False):
         compute_lambda = lambda i, j: te.sum(
-            tensor_a[k, i].astype(out_dtype) * tensor_b[k, j].astype(out_dtype), axis=k
+            tensor_a[k, i].astype(accumulate_dtype) * tensor_b[k, j].astype(accumulate_dtype),
+            axis=k,
         )
         compute_name = "T_matmul_TN"
         compute_tag = "matmul"
     elif (transpose_a, transpose_b) == (False, True):
         compute_lambda = lambda i, j: te.sum(
-            tensor_a[i, k].astype(out_dtype) * tensor_b[j, k].astype(out_dtype), axis=k
+            tensor_a[i, k].astype(accumulate_dtype) * tensor_b[j, k].astype(accumulate_dtype),
+            axis=k,
         )
         compute_name = "T_matmul_NT"
         # TODO(jcf94): Remove `dense` when `matmul` is finally ready
         compute_tag = "dense"
     else:  # (transpose_a, transpose_b) == (False, False):
         compute_lambda = lambda i, j: te.sum(
-            tensor_a[i, k].astype(out_dtype) * tensor_b[k, j].astype(out_dtype), axis=k
+            tensor_a[i, k].astype(accumulate_dtype) * tensor_b[k, j].astype(accumulate_dtype),
+            axis=k,
         )
         compute_name = "T_matmul_NN"
         compute_tag = "matmul"
@@ -117,6 +136,8 @@ def matmul(
         tag=compute_tag,
         attrs={"layout_free_placeholders": [tensor_b]},
     )
+    if accumulate_dtype != out_dtype:
+        matmul = matmul.astype(out_dtype)
 
     if bias is not None:
         mat = te.compute(

@@ -31,10 +31,11 @@ from common import Int8Fallback
 use_bias = tvm.testing.parameter(True, False)
 batch_size = tvm.testing.parameter(1, 2, 128)
 in_dim, out_dim = tvm.testing.parameters((1024, 1000))
-in_dtype, out_dtype = tvm.testing.parameters(
-    ("float32", "float32"),
-    ("float16", "float16"),
-    ("int8", "int32"),
+in_dtype, accumulate_dtype, out_dtype = tvm.testing.parameters(
+    ("float32", "float32", "float32"),
+    ("float16", "float16", "float16"),
+    ("float16", "float32", "float16"),
+    ("int8", "int32", "int32"),
 )
 
 
@@ -46,7 +47,7 @@ _dense_implementations = {
     ],
     "gpu": [
         (topi.gpu.dense_small_batch, topi.gpu.schedule_dense_small_batch),
-        (topi.gpu.dense_large_batch, topi.gpu.schedule_dense_large_batch),
+        # (topi.gpu.dense_large_batch, topi.gpu.schedule_dense_large_batch),
     ],
     "mali": [(topi.mali.dense, topi.mali.schedule_dense)],
     "bifrost": [(topi.bifrost.dense, topi.bifrost.schedule_dense)],
@@ -56,7 +57,7 @@ _dense_implementations = {
 
 
 @tvm.testing.fixture(cache_return_value=True)
-def dense_ref_data(batch_size, in_dim, out_dim, use_bias, in_dtype, out_dtype):
+def dense_ref_data(batch_size, in_dim, out_dim, use_bias, in_dtype, accumulate_dtype, out_dtype):
     if "float" in in_dtype:
         a_np = np.random.uniform(size=(batch_size, in_dim)).astype(in_dtype)
         b_np = np.random.uniform(size=(out_dim, in_dim)).astype(in_dtype)
@@ -87,6 +88,7 @@ def test_dense(
     dense_ref_data,
     in_dtype,
     out_dtype,
+    accumulate_dtype,
     implementations=None,
 ):
     target = tvm.target.Target(target)
@@ -134,7 +136,7 @@ def test_dense(
 
     for fcompute, fschedule in implementations:
         with tvm.target.Target(target):
-            D = fcompute(A, B, C if use_bias else None, out_dtype)
+            D = fcompute(A, B, C if use_bias else None, out_dtype, accumulate_dtype)
             D = topi.nn.relu(D)
             s = fschedule([D])
 
@@ -147,7 +149,9 @@ def test_dense(
         tvm.testing.assert_allclose(d.numpy(), d_np, **tol)
 
 
-@pytest.mark.parametrize("target,in_dtype,out_dtype", [("cuda", "int8", "int32")])
+@pytest.mark.parametrize(
+    "target,in_dtype,accumulate_dtype,out_dtype", [("cuda", "int8", "int32", "int32")]
+)
 @tvm.testing.requires_gpu
 def test_dense_cuda_int8(
     target,
@@ -158,6 +162,7 @@ def test_dense_cuda_int8(
     use_bias,
     dense_ref_data,
     in_dtype,
+    accumulate_dtype,
     out_dtype,
 ):
     implementations = [
@@ -174,6 +179,7 @@ def test_dense_cuda_int8(
             dense_ref_data,
             in_dtype,
             out_dtype,
+            accumulate_dtype,
             implementations=implementations,
         )
 
