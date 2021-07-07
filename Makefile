@@ -23,6 +23,7 @@ OUTPUTDIR = $(if $(OUTDIR), $(OUTDIR), build)
 	 cython cython2 cython3 web runtime vta
 
 ifndef DMLC_CORE_PATH
+asdf
   DMLC_CORE_PATH = $(ROOTDIR)/3rdparty/dmlc-core
 endif
 
