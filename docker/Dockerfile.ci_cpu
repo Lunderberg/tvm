@@ -126,3 +126,11 @@ ENV PATH /opt/arm/gcc-arm-none-eabi/bin:$PATH
 # PaddlePaddle deps
 COPY install/ubuntu_install_paddle.sh /install/ubuntu_install_paddle.sh
 RUN bash /install/ubuntu_install_paddle.sh
+
+# Install cmake from source (version 3.13.5).  Swiftshader requires 3.13 or higher.
+COPY install/ubuntu_install_cmake_source.sh /install/ubuntu_install_cmake_source.sh
+RUN bash /install/ubuntu_install_cmake_source.sh
+
+# Install swiftshader
+COPY install/ubuntu_install_swiftshader.sh /install/ubuntu_install_swiftshader.sh
+RUN bash /install/ubuntu_install_swiftshader.sh
