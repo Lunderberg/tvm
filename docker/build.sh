@@ -75,7 +75,8 @@ if [[ "$1" == "--net=host" ]]; then
     shift 1
 fi
 
-DOCKER_NO_CACHE_ARG=--no-cache
+#DOCKER_NO_CACHE_ARG=--no-cache
+DOCKER_NO_CACHE_ARG=
 
 if [[ "$1" == "--cache-from" ]]; then
     shift 1
