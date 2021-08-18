@@ -48,6 +48,7 @@ if [[ ! -z $ROCM_ENABLED ]]; then
 fi
 
 # This is a grotesque hack to get PYTEST_ADD_OPTS available to all task scripts.
+mkdir -p /etc/sudoers.d
 echo "${CI_BUILD_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-nopasswd-sudo
 
 if [[ ! -z $CUDA_VISIBLE_DEVICES ]]; then

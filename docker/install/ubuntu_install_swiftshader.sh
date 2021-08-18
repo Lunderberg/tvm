@@ -22,7 +22,7 @@ set -euo pipefail
 
 GIT_TAG=master
 GIT_REPO=https://swiftshader.googlesource.com/SwiftShader
-INSTALL_DIR=/opt/swiftshader
+INSTALL_DIR=/opt/swiftshader/
 BUILD_DIR=$(mktemp --tmpdir --directory build.swiftshader.XXXXXXXX)
 
 trap "rm -rf ${BUILD_DIR}" EXIT
