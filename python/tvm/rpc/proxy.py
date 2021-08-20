@@ -42,7 +42,7 @@ except ImportError as error_msg:
         "RPCProxy module requires tornado package %s. Try 'pip install tornado'." % error_msg
     )
 
-from tvm.contrib.popen_pool import PopenWorker
+from tvm.contrib.popen_pool import PopenWorker, kill_gracefully
 from . import _ffi_api
 from . import base
 from .base import TrackerCode
@@ -639,7 +639,7 @@ class Proxy(object):
         """Terminate the server process"""
         if self.proc:
             logging.info("Terminating Proxy Server...")
-            self.proc.kill()
+            kill_gracefully(self.proc.pid)
             self.proc = None
 
     def __del__(self):

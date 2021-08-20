@@ -27,8 +27,6 @@ import os
 
 import numpy as np
 
-import psutil
-
 import tvm
 from tvm import rpc
 from tvm.tir import expr
@@ -219,21 +217,6 @@ def deserialize_args(args):
         else:
             ret.append(t)
     return ret
-
-
-def kill_child_processes(parent_pid, sig=signal.SIGTERM):
-    """kill all child processes recursively"""
-    try:
-        parent = psutil.Process(parent_pid)
-    except psutil.NoSuchProcess:
-        return
-
-    try:
-        children = parent.children(recursive=True)
-        for process in children:
-            process.send_signal(sig)
-    except psutil.NoSuchProcess:
-        return
 
 
 # The maximum length of traceback information

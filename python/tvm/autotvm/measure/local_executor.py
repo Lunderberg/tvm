@@ -26,23 +26,9 @@ try:
 except ImportError:
     from Queue import Empty
 
-import psutil
+from tvm.contrib.popen_pool import kill_gracefully
 
 from . import executor
-
-
-def kill_child_processes(parent_pid, sig=signal.SIGTERM):
-    """kill all child processes recursively"""
-    try:
-        parent = psutil.Process(parent_pid)
-        children = parent.children(recursive=True)
-    except psutil.NoSuchProcess:
-        return
-    for process in children:
-        try:
-            process.send_signal(sig)
-        except psutil.NoSuchProcess:
-            return
 
 
 def _execute_func(func, queue, args, kwargs):
@@ -64,8 +50,7 @@ def call_with_timeout(queue, timeout, func, args, kwargs):
 
     queue.put(executor.TimeoutError())
 
-    kill_child_processes(p.pid)
-    p.terminate()
+    kill_gracefully(p.pid)
     p.join()
 
 
@@ -123,8 +108,7 @@ class LocalFuture(executor.Future):
             return
 
         if self._process.is_alive():
-            kill_child_processes(self._process.pid)
-            self._process.terminate()
+            kill_gracefully(self._process.pid)
         self._process.join()
         self._queue.close()
         self._queue.join_thread()

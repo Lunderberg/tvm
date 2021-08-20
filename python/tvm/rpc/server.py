@@ -36,14 +36,12 @@ import multiprocessing
 import time
 import errno
 
-import psutil
-
 import tvm._ffi
 from tvm._ffi.base import py_str
 from tvm._ffi.libinfo import find_lib_path
 from tvm.runtime.module import load_module as _load_module
 from tvm.contrib import utils
-from tvm.contrib.popen_pool import PopenWorker
+from tvm.contrib.popen_pool import PopenWorker, kill_gracefully
 from . import _ffi_api
 from . import base
 
@@ -248,12 +246,7 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
 
         if server_proc.is_alive():
             logger.info("Timeout in RPC session, kill..")
-            parent = psutil.Process(server_proc.pid)
-            # terminate worker children
-            for child in parent.children(recursive=True):
-                child.terminate()
-            # terminate the worker
-            server_proc.terminate()
+            kill_gracefully(server_proc.pid)
         work_path.remove()
 
 
@@ -287,7 +280,7 @@ def _connect_proxy_loop(addr, key, load_library):
             process.join(opts.get("timeout", None))
             if process.is_alive():
                 logger.info("Timeout in RPC session, kill..")
-                process.terminate()
+                kill_gracefully(process.pid)
             retry_count = 0
         except (socket.error, IOError) as err:
             retry_count += 1

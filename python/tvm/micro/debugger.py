@@ -30,12 +30,12 @@ import termios
 import threading
 import time
 
-import psutil
-
 from .._ffi import register_func
 from . import class_factory
 from . import transport
 from .transport.file_descriptor import FdTransport
+
+from tvm.contrib.popen_pool import kill_gracefully
 
 
 _LOG = logging.getLogger(__name__)
@@ -93,14 +93,7 @@ class GdbDebugger(Debugger):
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSAFLUSH, self.old_termios)
 
         try:
-            children = psutil.Process(self.popen.pid).children(recursive=True)
-            for c in children:
-                c.terminate()
-                _, alive = psutil.wait_procs(children, timeout=self._GRACEFUL_SHUTDOWN_TIMEOUT_SEC)
-                for a in alive:
-                    a.kill()
-        except psutil.NoSuchProcess:
-            pass
+            kill_gracefully(self.popen.pid, escalation_timeout=self._GRACEFUL_SHUTDOWN_TIMEOUT_SEC)
         finally:
             self.__class__._STARTED_INSTANCE = None
             self._is_running = False

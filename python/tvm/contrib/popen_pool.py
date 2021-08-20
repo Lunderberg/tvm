@@ -23,6 +23,7 @@ with additional timeout support.
 import concurrent.futures
 import os
 import pickle
+import signal
 import struct
 import subprocess
 import sys
@@ -35,27 +36,80 @@ from enum import IntEnum
 import psutil
 
 
+def kill_gracefully(pid, escalation_timeout=10, include_children=True):
+    """Kill a process and children gracefully.
 
-
-def kill_child_processes(pid):
-    """Kill all child processes recursively for a given pid.
+    Kills a currently running process.  The interrupted process is
+    allowed time to close any resources before being aggressively
+    stopped.
 
     Parameters
     ----------
-    pid : int
-        The given parameter id.
+    pid: int
+
+        The process id to kill.
+
+    escalation_timeout: float
+
+        The timeout, in seconds, to wait before escalating to a more
+        aggressive signal to terminate.
+
+    include_children: bool
+
+        Whether children of the process specified should be
+        terminated.
+
     """
+    if sys.platform == 'win32':
+        # Windows doesn't support SIGINT, needs a different escalation pathway.
+        # https://psutil.readthedocs.io/en/latest/index.html?highlight=terminate#psutil.Process.send_signal
+        signals = [signal.CTRL_C_EVENT, signal.CTRL_BREAK_EVENT, signal.SIGTERM]
+    else:
+        signals = [signal.SIGINT, signal.SIGTERM, signal.SIGKILL]
+
     try:
-        parent = psutil.Process(pid)
-        children = parent.children(recursive=True)
+        top_proc = psutil.Process(pid)
     except psutil.NoSuchProcess:
         return
 
-    for process in children:
-        try:
-            process.kill()
-        except psutil.NoSuchProcess:
-            pass
+    procs = [top_proc]
+
+    if include_children:
+        procs = top_proc.children(recursive=True) + procs
+
+    # Zombie processes typically happen when a the parent python
+    # process keeps a reference to a multiprocessing.Process or
+    # subprocess.Popen that has completed.  No need to kill them or
+    # wait for them, as they'll die with their parent process, or
+    # their parent's garbage collector.
+    def filter_zombies(procs):
+        output = []
+        for p in procs:
+            try:
+                status = p.status()
+            except psutil.NoSuchProcess:
+                continue
+
+            if status!='zombie':
+                output.append(p)
+        return output
+
+    procs = filter_zombies(procs)
+    for sig in signals:
+        for proc in procs:
+            with suppress(psutil.NoSuchProcess):
+                proc.send_signal(sig)
+
+        _, procs = psutil.wait_procs(procs, timeout=escalation_timeout)
+
+        procs = filter_zombies(procs)
+
+        if not procs:
+            break
+
+    if procs:
+        unkillable = ', '.join(str(proc.pid) for proc in procs)
+        raise RuntimeError(f'Could not kill PID: {unkillable}')
 
 
 class StatusKind(IntEnum):
@@ -124,15 +178,8 @@ class PopenWorker:
                 self._reader.close()
             except IOError:
                 pass
-            # kill all child processes recurisvely
-            try:
-                kill_child_processes(self._proc.pid)
-            except TypeError:
-                pass
-            try:
-                self._proc.kill()
-            except OSError:
-                pass
+
+            kill_gracefully(self._proc.pid)
             self._proc = None
 
     def _start(self):
