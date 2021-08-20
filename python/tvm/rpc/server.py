@@ -35,8 +35,10 @@ import threading
 import multiprocessing
 import time
 import errno
-import tvm._ffi
 
+import psutil
+
+import tvm._ffi
 from tvm._ffi.base import py_str
 from tvm._ffi.libinfo import find_lib_path
 from tvm.runtime.module import load_module as _load_module
@@ -246,9 +248,6 @@ def _listen_loop(sock, port, rpc_key, tracker_addr, load_library, custom_addr):
 
         if server_proc.is_alive():
             logger.info("Timeout in RPC session, kill..")
-            # pylint: disable=import-outside-toplevel
-            import psutil
-
             parent = psutil.Process(server_proc.pid)
             # terminate worker children
             for child in parent.children(recursive=True):

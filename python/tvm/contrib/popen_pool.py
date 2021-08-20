@@ -20,15 +20,21 @@
 This module provides a multi-processing pool backed by Popen.
 with additional timeout support.
 """
-import os
-import sys
-import struct
-import threading
-import subprocess
 import concurrent.futures
-from enum import IntEnum
-from collections import namedtuple
+import os
 import pickle
+import struct
+import subprocess
+import sys
+import threading
+
+from collections import namedtuple
+from contextlib import suppress
+from enum import IntEnum
+
+import psutil
+
+
 
 
 def kill_child_processes(pid):
@@ -39,9 +45,6 @@ def kill_child_processes(pid):
     pid : int
         The given parameter id.
     """
-    # pylint: disable=import-outside-toplevel
-    import psutil
-
     try:
         parent = psutil.Process(pid)
         children = parent.children(recursive=True)
@@ -102,10 +105,7 @@ class PopenWorker:
             raise TypeError("initializer must be callable for PopenWorker")
 
     def __del__(self):
-        try:
-            self.kill()
-        except ImportError:
-            pass
+        self.kill()
 
     def kill(self):
         """Kill the current running process and cleanup.
@@ -316,10 +316,7 @@ class PopenPoolExecutor:
     def __del__(self):
         self._lock.acquire()
         for worker in self._worker_map.values():
-            try:
-                worker.kill()
-            except ImportError:
-                pass
+            worker.kill()
         self._lock.release()
         self._threadpool.shutdown()
 

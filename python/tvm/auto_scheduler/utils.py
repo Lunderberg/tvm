@@ -27,10 +27,7 @@ import os
 
 import numpy as np
 
-try:
-    import psutil
-except ImportError:
-    psutil = None
+import psutil
 
 import tvm
 from tvm import rpc
@@ -226,9 +223,6 @@ def deserialize_args(args):
 
 def kill_child_processes(parent_pid, sig=signal.SIGTERM):
     """kill all child processes recursively"""
-    if not psutil:
-        raise ImportError("psutil not found, try `pip install psutil` to fix this")
-
     try:
         parent = psutil.Process(parent_pid)
     except psutil.NoSuchProcess:
