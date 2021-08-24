@@ -66,6 +66,8 @@ class MeasureErrorNo(object):
     BUILD_TIMEOUT = 6  # timeout during compilation
     RUN_TIMEOUT = 7  # timeout during run
     UNKNOWN_ERROR = 8  # unknown error
+    BUILD_TERMINATED = 9  # Executor subprocess terminated without finishing the build.
+    RUN_TERMINATED = 10  # Executor subprocess terminated without finishing the run.
 
 
 class Builder(object):
