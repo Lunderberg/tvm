@@ -46,6 +46,7 @@ from tvm.target import Target
 from ..env import AutotvmGlobalScope
 from ..task.space import InstantiationError
 from ..utils import get_const_tuple
+from .executor import TimeoutError, ExecutionError
 from .local_executor import LocalExecutor
 from .measure import Builder, MeasureErrorNo, MeasureResult, Runner
 
@@ -99,70 +100,77 @@ class LocalBuilder(Builder):
                 raise ValueError("Invalid build_func" + build_func)
         self.build_func = _WrappedBuildFunc(build_func)
         self.executor = LocalExecutor(timeout=timeout)
-        self.tmp_dir = tempfile.mkdtemp()
 
+    @contextlib.contextmanager
     def build(self, measure_inputs):
         results = []
 
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
-        self.tmp_dir = tempfile.mkdtemp()
-
-        for i in range(0, len(measure_inputs), self.n_parallel):
-            futures = []
-            for inp in measure_inputs[i : i + self.n_parallel]:
-                ret = self.executor.submit(self.build_func, inp, self.tmp_dir, **self.build_kwargs)
-                futures.append(ret)
-
-            for future in futures:
-                res = future.get()
-
-                if isinstance(res, Exception):
-                    # timeout or fleet error, return MeasureResult directly
-                    results.append(
-                        MeasureResult(
-                            (res,), MeasureErrorNo.BUILD_TIMEOUT, self.timeout, time.time()
+        with tempfile.TemporaryDirectory(prefix="tvm_build") as tmp_dir:
+            for i in range(0, len(measure_inputs), self.n_parallel):
+                with contextlib.ExitStack() as futures_cleanup:
+                    futures = []
+                    for inp in measure_inputs[i : i + self.n_parallel]:
+                        ret = self.executor.submit(
+                            self.build_func, inp, tmp_dir, **self.build_kwargs
                         )
-                    )
-                elif res.error is not None:
-                    # instantiation error
-                    if isinstance(res.error, InstantiationError):
-                        results.append(
-                            MeasureResult(
-                                (res.error,),
-                                MeasureErrorNo.INSTANTIATION_ERROR,
-                                res.time_cost,
-                                time.time(),
-                            )
-                        )
-                    else:
-                        if "InstantiationError" in str(res.error):
-                            msg = str(res.error)
-                            try:
-                                msg = msg.split("\n")[-2].split(": ")[1]
-                            except Exception:  # pylint: disable=broad-except
-                                pass
-                            results.append(
-                                MeasureResult(
-                                    (InstantiationError(msg),),
-                                    MeasureErrorNo.INSTANTIATION_ERROR,
-                                    res.time_cost,
-                                    time.time(),
-                                )
-                            )
-                        else:  # tvm error
-                            results.append(
-                                MeasureResult(
-                                    (res.error,),
-                                    MeasureErrorNo.COMPILE_HOST,
-                                    res.time_cost,
-                                    time.time(),
-                                )
-                            )
-                else:
-                    # return BuildResult
-                    results.append(res)
+                        futures_cleanup.enter_context(ret)
+                        futures.append(ret)
 
-        return results
+                    for future in futures:
+                        results.append(self._unpack_future(future))
+
+            # contextlib.contextmanager will clean up the temporary
+            # directory when exiting the scope.
+            yield results
+
+    def _unpack_future(self, future):
+        # WrappedBuildFunc returns exceptions for the
+        # Exceptions could either be returned as the
+        # result of a remote call, or thrown from
+        # LocalFuture.get.
+        try:
+            res = future.get()
+        except (TimeoutError, ExecutionError) as err:
+            res = err
+
+        if isinstance(res, TimeoutError):
+            return MeasureResult((res,), MeasureErrorNo.BUILD_TIMEOUT, self.timeout, time.time())
+
+        elif isinstance(res, ExecutionError):
+            return MeasureResult((res,), MeasureErrorNo.BUILD_TERMINATED, self.timeout, time.time())
+
+        elif res.error is None:
+            return res
+
+        elif isinstance(res.error, InstantiationError):
+            return MeasureResult(
+                (res.error,),
+                MeasureErrorNo.INSTANTIATION_ERROR,
+                res.time_cost,
+                time.time(),
+            )
+
+        elif "InstantiationError" in str(res.error):
+            msg = str(res.error)
+            try:
+                msg = msg.split("\n")[-2].split(": ")[1]
+            except IndexError:
+                pass
+            return MeasureResult(
+                (InstantiationError(msg),),
+                MeasureErrorNo.INSTANTIATION_ERROR,
+                res.time_cost,
+                time.time(),
+            )
+
+        else:
+            # tvm error
+            return MeasureResult(
+                (res.error,),
+                MeasureErrorNo.COMPILE_HOST,
+                res.time_cost,
+                time.time(),
+            )
 
 
 class RPCRunner(Runner):
@@ -311,42 +319,57 @@ class RPCRunner(Runner):
         )
 
         for i in range(0, len(measure_inputs), self.n_parallel):
-            futures = []
-            for measure_inp, build_res in zip(
-                measure_inputs[i : i + self.n_parallel], build_results[i : i + self.n_parallel]
-            ):
-                module_loader = (
-                    self.module_loader
-                    if self.module_loader is not None
-                    else default_module_loader()
+            with contextlib.ExitStack() as futures_cleanup:
+                futures = []
+                batch = zip(
+                    measure_inputs[i : i + self.n_parallel], build_results[i : i + self.n_parallel]
                 )
-                ret = self.executor.submit(
-                    run_through_rpc,
-                    measure_inp,
-                    build_res,
-                    self.number,
-                    self.repeat,
-                    self.min_repeat_ms,
-                    self.cooldown_interval,
-                    remote_kwargs,
-                    self.ref_input,
-                    self.enable_cpu_cache_flush,
-                    module_loader,
-                )
-                futures.append(ret)
-
-            for future in futures:
-                res = future.get()
-                if isinstance(res, Exception):  # executor error or timeout
-                    results.append(
-                        MeasureResult(
-                            (str(res),), MeasureErrorNo.RUN_TIMEOUT, self.timeout, time.time()
-                        )
+                for measure_inp, build_res in batch:
+                    module_loader = (
+                        self.module_loader
+                        if self.module_loader is not None
+                        else default_module_loader()
                     )
-                else:
-                    results.append(res)
+                    ret = self.executor.submit(
+                        run_through_rpc,
+                        measure_inp,
+                        build_res,
+                        self.number,
+                        self.repeat,
+                        self.min_repeat_ms,
+                        self.cooldown_interval,
+                        remote_kwargs,
+                        self.ref_input,
+                        self.enable_cpu_cache_flush,
+                        module_loader,
+                    )
+                    futures_cleanup.enter_context(ret)
+                    futures.append(ret)
+
+                for future in futures:
+                    results.append(self._unpack_future(future))
 
         return results
+
+    def _unpack_future(self, future):
+        try:
+            res = future.get()
+        except (TimeoutError, ExecutionError) as err:
+            res = err
+
+        # run_through_rpc can return a TimeoutError without
+        # throwing it, so these checks should not be moved
+        # into the except block.
+        if isinstance(res, TimeoutError):
+            return MeasureResult((str(res),), MeasureErrorNo.RUN_TIMEOUT, self.timeout, time.time())
+
+        elif isinstance(res, ExecutionError):
+            return MeasureResult(
+                (str(res),), MeasureErrorNo.RUN_TERMINATED, self.timeout, time.time()
+            )
+
+        else:
+            return res
 
 
 class LocalRunner(RPCRunner):

@@ -49,14 +49,19 @@ class Executor(object):
 
 
 class Future(object):
-    """
-    Base class of the future object.
-    The implementations can return object of subclass of this.
-    This objects encapsulates the asynchronous execution of task
-    submitted to another thread, or another worker for execution.
+    """Base class of the future object.
 
-    Future objects store the state of tasks--can be polled for
-    result or a blocking call to retrieve the result can be used.
+    Submissions to an executor object will return a subclass of
+    Future.  These objects encapsulate the asynchronous execution of
+    task submitted to another thread, or another worker for execution.
+
+    Future objects store the state of tasks.  The result can be polled
+    with non-blocking calls to `get()`, or can be waited on with a blocking call
+    to `get()`.
+
+    If used as a context manager, all in-progress computations will be
+    halted when exiting the "with" block.
+
     """
 
     def done(self):
@@ -66,25 +71,58 @@ class Future(object):
         raise NotImplementedError()
 
     def get(self, timeout=None):
-        """
-        Get the result. This will block until the result is available.
+        """Get the result.
+
+        If a result is available, will return immediately.  If not,
+        will block until a result is available, until the specified
+        timeout is reached, or until the call computing the result has
+        terminated without producing output.
 
         Parameters
         ----------
         timeout : int or float, optional
-            Maximum number of seconds to wait before it timeouts.
-            If not specified, it means we block until the result is available.
+
+            Maximum number of seconds to wait before it timeouts.  If
+            not specified, the call will block until either the result
+            is available or the result call has terminated without
+            producing output.
 
         Returns
         -------
         result : Any
+
             The result returned by the submitted function.
 
         Raises
         ------
-        TimeoutError : if the result call timeouts.
+        TimeoutError
+
+            If the result call times out.  If TimeoutError is raised,
+            a subsequent call to .get() may return a result.
+
+        ExecutionError
+
+            If the result call terminated without producing output.
+            If ExecutionError is raised, no subsequent calls to .get()
+            will return a result.
+
         """
         raise NotImplementedError()
+
+    def stop(self):
+        """Stop the in-progress computation.
+
+        Terminates and cleans up any in-progress computation.  Can be
+        called on its own, or can be called on exiting a block when
+        used as a context manager.
+        """
+        raise NotImplementedError()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.stop()
 
 
 class FutureError(RuntimeError):

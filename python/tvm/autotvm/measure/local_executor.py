@@ -89,20 +89,48 @@ class LocalFuture(executor.Future):
         return self._done
 
     def get(self, timeout=None):
-        try:
-            res = self._queue.get(block=True, timeout=timeout)
-        except Empty:
-            raise executor.TimeoutError()
+        # If no timeout is specified, we still want to periodically
+        # check if the process is alive.  Otherwise, we could wait
+        # forever on a zombie process.
+        if timeout is None:
+            timeout = 0.1
+            check_until_process_ends = True
+        else:
+            check_until_process_ends = False
+
+        while True:
+            process_is_alive = self._process.is_alive()
+
+            try:
+                res = self._queue.get(block=True, timeout=timeout)
+                break
+            except Empty:
+                if check_until_process_ends and process_is_alive:
+                    continue
+                elif check_until_process_ends:
+                    raise executor.ExecutionError(
+                        f"Process {self._process.pid} ended without pushing to the result queue"
+                    )
+                else:
+                    raise executor.TimeoutError()
+
+        self.stop()
+        return res
+
+    def stop(self):
+        if self._process is None:
+            return
+
         if self._process.is_alive():
             kill_child_processes(self._process.pid)
             self._process.terminate()
         self._process.join()
         self._queue.close()
         self._queue.join_thread()
+
         self._done = True
-        del self._queue
-        del self._process
-        return res
+        self._process = None
+        self._queue = None
 
 
 class LocalFutureNoFork(executor.Future):
@@ -119,6 +147,9 @@ class LocalFutureNoFork(executor.Future):
 
     def get(self, timeout=None):
         return self._result
+
+    def stop(self):
+        pass
 
 
 class LocalExecutor(executor.Executor):
