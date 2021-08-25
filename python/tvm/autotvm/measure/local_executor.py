@@ -37,21 +37,32 @@ def _execute_func(func, queue, args, kwargs):
         res = func(*args, **kwargs)
     except Exception as exc:  # pylint: disable=broad-except
         res = exc
+    except KeyboardInterrupt:
+        return
     queue.put(res)
 
 
 def call_with_timeout(queue, timeout, func, args, kwargs):
     """A wrapper to support timeout of a function call"""
 
-    # start a new process for timeout (cannot use thread because we have c function)
-    p = Process(target=_execute_func, args=(func, queue, args, kwargs))
-    p.start()
-    p.join(timeout=timeout)
+    # Start a new process to handle the timeout.  Cannot use a python
+    # thread, because we may need to kill a subprocess that is
+    # currently in a C function.
+    try:
+        p = Process(target=_execute_func, args=(func, queue, args, kwargs))
+        p.start()
+        p.join(timeout=timeout)
 
-    queue.put(executor.TimeoutError())
+        queue.put(executor.TimeoutError())
 
-    kill_gracefully(p.pid)
-    p.join()
+    except KeyboardInterrupt:
+        pass
+
+    finally:
+        try:
+            kill_gracefully(p.pid)
+        except KeyboardInterrupt:
+            pass
 
 
 class LocalFuture(executor.Future):
