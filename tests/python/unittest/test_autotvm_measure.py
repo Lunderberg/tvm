@@ -74,8 +74,7 @@ def test_task_runner_with_ref_input():
 
         def submit(self, func, *args, **kwargs):
             self.ran_dummy_executor = True
-            sig = Signature.from_callable(func)
-            assert sig.bind(*args, **kwargs).arguments["ref_input"] == refinp
+            assert func.__self__.ref_input == refinp
             return measure.local_executor.LocalFutureNoFork(None)
 
     runner.executor = DummyExecutor()

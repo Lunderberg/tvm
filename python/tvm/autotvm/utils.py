@@ -16,6 +16,7 @@
 # under the License.
 # pylint: disable=invalid-name
 """Utilities"""
+import itertools
 import logging
 import time
 
@@ -199,3 +200,32 @@ YOCTO_EXP10 = -24
 def format_si_prefix(x, si_prefix):
     exp10 = 10 ** (SI_PREFIXES.index(si_prefix) * 3 + YOCTO_EXP10)
     return float(x) / exp10
+
+
+def grouper(iterable, n):
+    """Group an iterable into fixed-length chunks.
+
+    The last value returned may have fewer than n values, if the
+    length of the iterable is not divisible by n.
+
+    Parameters
+    ----------
+
+    iterable : Iter[Any]
+
+        The iterable to be grouped
+
+    n : int
+
+        The max number of elements that should be in each group.
+
+    """
+    output = []
+    for i, val in enumerate(iterable):
+        output.append(val)
+        if (i + 1) % n == 0:
+            yield output
+            output = []
+
+    if output:
+        yield output

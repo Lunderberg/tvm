@@ -16,6 +16,7 @@
 # under the License.
 """Local based implementation of the executor using multiprocessing"""
 
+import multiprocessing
 import signal
 
 from multiprocessing import Process, Queue
@@ -158,22 +159,41 @@ class LocalExecutor(executor.Executor):
     Parameters
     ----------
     timeout: float, optional
+
         timeout of a job. If time is out. A TimeoutError will be returned (not raised)
-    do_fork: bool, optional
-        For some runtime systems that do not support fork after initialization
-        (e.g. cuda runtime, cudnn). Set this to False if you have used these runtime
+
+    start_method: str, optional
+
+        Allowed options are "immediate", "spawn", and "fork".
+        "immediate" will run the function immediately within the
+        current process.  "spawn" and "fork" will start
+        multiprocessing.Process instances using the specified method
+        of starting.
+
+        Some runtime systems that do not support fork after
+        initialization (e.g. cuda runtime, cudnn).  Set this to
+        something other than "fork" if you have used these runtime
         before submitting jobs.
+
     """
 
-    def __init__(self, timeout=None, do_fork=True):
+    def __init__(self, timeout=None, start_method="spawn"):
+        assert start_method in ["spawn", "fork", "immediate"]
+
         self.timeout = timeout or executor.Executor.DEFAULT_TIMEOUT
-        self.do_fork = do_fork
+        self.start_method = start_method
 
     def submit(self, func, *args, **kwargs):
-        if not self.do_fork:
+        if self.start_method == "immediate":
             return LocalFutureNoFork(func(*args, **kwargs))
 
-        queue = Queue(2)  # Size of 2 to avoid a race condition with size 1.
-        process = Process(target=call_with_timeout, args=(queue, self.timeout, func, args, kwargs))
+        context = multiprocessing.get_context(self.start_method)
+
+        # Queue may contain the function output, a TimeoutError, or in
+        # rare race cases, both.  Therefore, size must be 2.
+        queue = context.Queue(2)
+        process = context.Process(
+            target=call_with_timeout, args=(queue, self.timeout, func, args, kwargs)
+        )
         process.start()
         return LocalFuture(process, queue)

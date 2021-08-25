@@ -25,7 +25,6 @@ remote devices, recording the running time costs, and checking the correctness o
 import contextlib
 import logging
 import os
-import shutil
 import tempfile
 import threading
 import time
@@ -45,7 +44,7 @@ from tvm.target import Target
 
 from ..env import AutotvmGlobalScope
 from ..task.space import InstantiationError
-from ..utils import get_const_tuple
+from ..utils import get_const_tuple, grouper
 from .executor import TimeoutError, ExecutionError
 from .local_executor import LocalExecutor
 from .measure import Builder, MeasureErrorNo, MeasureResult, Runner
@@ -173,57 +172,59 @@ class LocalBuilder(Builder):
             )
 
 
-class RPCRunner(Runner):
-    """Run generated code on remove devices.
-    This function will ask a RPC Tracker to get device for measurement.
+class DeviceRunner(Runner):
+    """Run generated code on a device.
 
     Parameters
     ----------
     timeout: float
-        The timeout of a RPCRunner measurement task
-    n_parallel: int
-        The number of tasks run in parallel. "None" will use all cpu cores
-    key: str
-        The key of the device registered in the tracker
-    host: str
-        The host address of RPC Tracker
-    port: int
-        The port of RPC Tracker
+
+        The timeout when running the measurement.
+
+    n_parallel: Union[int, None]
+
+        The number of tasks to be run in parallel. If "None", will run
+        one task for each CPU core on the local machine.
+
     number: int
-        The number of times to run the generated code for taking average.
-        We call these runs as one `repeat` of measurement.
+
+        The number of times to run the generated code when taking a
+        single measurement of the average runtime.
+
     repeat : int, optional
-        The number of times to repeat the measurement.
-        In total, the generated code will be run (1 + number x repeat) times,
-        where the first "1" is warm up and will be discarded.
-        The returned result contains `repeat` costs,
-        each of which is an average of `number` costs.
+
+        The number of times to repeat the measurement.  In total, the
+        generated code will be run ``(1 + number x repeat)`` times,
+        where the first iteration is a warm up and will be discarded.
+        The returned result contains `repeat` costs, each of which is
+        an average of `number` costs.
+
     min_repeat_ms: int, optional
-        The minimum duration of one `repeat` in milliseconds.
-        By default, one `repeat` contains `number` runs. If this parameter is set,
-        the parameters `number` will be dynamically adjusted to meet the
-        minimum duration requirement of one `repeat`.
-        i.e., When the run time of one `repeat` falls below this time, the `number` parameter
-        will be automatically increased.
+
+        The minimum duration of one `repeat` in milliseconds.  By
+        default, one `repeat` contains `number` runs. If this
+        parameter is set, the parameters `number` will be dynamically
+        adjusted to meet the minimum duration requirement of one
+        `repeat`.  i.e., When the run time of one `repeat` falls below
+        this time, the `number` parameter will be automatically
+        increased.
+
     cooldown_interval: float, optional
-        The cool down interval between two measurements.
+
+        The cool down interval between two measurements, in seconds.
+
     enable_cpu_cache_flush: bool
+
         Whether to flush cache on CPU between repeated measurements.
-        Flushing cache can make the measured latency of one operator closer to
-        its actual latency during end-to-end inference.
-        To make this option effective, the argument `number` should also be set to 1.
-        This is only has effect on CPU task.
-    module_loader : ModuleLoader
-        If given, a context manager that loads the module to be timed into the remote runtime.
-        If not given, default_module_loader is used.
+        Flushing cache can make the measured latency of one operator
+        closer to its actual latency during end-to-end inference.  To
+        make this option effective, the argument `number` should also
+        be set to 1.  This is only has effect on CPU task.
+
     """
 
     def __init__(
         self,
-        key,
-        host,
-        port,
-        priority=1,
         timeout=10,
         n_parallel=None,
         number=4,
@@ -231,15 +232,8 @@ class RPCRunner(Runner):
         min_repeat_ms=0,
         cooldown_interval=0.1,
         enable_cpu_cache_flush=False,
-        module_loader=None,
     ):
-        super(RPCRunner, self).__init__(timeout, n_parallel)
-
-        self.key = key
-        self.host = host
-        self.port = port
-        self.priority = priority
-        self.timeout = timeout
+        super().__init__(timeout, n_parallel)
 
         self.number = number
         self.repeat = repeat
@@ -248,9 +242,20 @@ class RPCRunner(Runner):
 
         self.enable_cpu_cache_flush = enable_cpu_cache_flush
         self.cooldown_interval = cooldown_interval
-        self.module_loader = module_loader
 
         self.executor = LocalExecutor(timeout=timeout * (self.n_parallel + 1))
+
+    def get_device(self, target):
+        """Returns context manager that returns device"""
+        raise NotImplementedError()
+
+    def get_module(self, build_result):
+        """Returns context manager that returns module"""
+        raise NotImplementedError()
+
+    def get_packed_function(self, name):
+        """Returns context manager that returns packed function from registry"""
+        raise NotImplementedError()
 
     @property
     def ref_input(self):
@@ -271,20 +276,8 @@ class RPCRunner(Runner):
         )
         self._ref_input = val
 
-    def set_task(self, task):
-        self.task = task
-
-        if check_remote(task.target, self.key, self.host, self.port):
-            logger.info("Get devices for measurement successfully!")
-        else:
-            raise RuntimeError(
-                "Cannot get remote devices from the tracker. "
-                "Please check the status of tracker by "
-                "'python -m tvm.exec.query_rpc_tracker --port [THE PORT YOU USE]' "
-                "and make sure you have free devices on the queue status."
-            )
-
     def get_build_kwargs(self):
+        """Implementation of Runner.get_build_kwargs"""
         kwargs = {}
         if (
             "cuda" in self.task.target.keys
@@ -292,58 +285,34 @@ class RPCRunner(Runner):
             or "rocm" in self.task.target.keys
             or "vulkan" in self.task.target.keys
         ):
-            remote = request_remote(self.key, self.host, self.port)
-            dev = remote.device(str(self.task.target), 0)
-            max_dims = dev.max_thread_dimensions
-            kwargs["check_gpu"] = {
-                "max_shared_memory_per_block": dev.max_shared_memory_per_block,
-                "max_threads_per_block": dev.max_threads_per_block,
-                "max_thread_x": max_dims[0],
-                "max_thread_y": max_dims[1],
-                "max_thread_z": max_dims[2],
-            }
+            with self.get_device(self.task.target) as dev:
+                max_dims = dev.max_thread_dimensions
+                kwargs["check_gpu"] = {
+                    "max_shared_memory_per_block": dev.max_shared_memory_per_block,
+                    "max_threads_per_block": dev.max_threads_per_block,
+                    "max_thread_x": max_dims[0],
+                    "max_thread_y": max_dims[1],
+                    "max_thread_z": max_dims[2],
+                }
 
-            if "cuda" in self.task.target.keys:
-                kwargs["cuda_arch"] = "sm_" + "".join(dev.compute_version.split("."))
+                if "cuda" in self.task.target.keys:
+                    kwargs["cuda_arch"] = "sm_" + "".join(dev.compute_version.split("."))
 
         return kwargs
 
     def run(self, measure_inputs, build_results):
-        results = []
-        remote_kwargs = dict(
-            device_key=self.key,
-            host=self.host,
-            port=self.port,
-            priority=self.priority,
-            timeout=self.timeout,
-        )
+        """Implementation of Runner.run"""
+        assert len(measure_inputs) == len(build_results)
 
-        for i in range(0, len(measure_inputs), self.n_parallel):
-            with contextlib.ExitStack() as futures_cleanup:
+        results = []
+
+        batches = grouper(zip(measure_inputs, build_results), self.n_parallel)
+        for batch in batches:
+            with contextlib.ExitStack() as stack:
                 futures = []
-                batch = zip(
-                    measure_inputs[i : i + self.n_parallel], build_results[i : i + self.n_parallel]
-                )
-                for measure_inp, build_res in batch:
-                    module_loader = (
-                        self.module_loader
-                        if self.module_loader is not None
-                        else default_module_loader()
-                    )
-                    ret = self.executor.submit(
-                        run_through_rpc,
-                        measure_inp,
-                        build_res,
-                        self.number,
-                        self.repeat,
-                        self.min_repeat_ms,
-                        self.cooldown_interval,
-                        remote_kwargs,
-                        self.ref_input,
-                        self.enable_cpu_cache_flush,
-                        module_loader,
-                    )
-                    futures_cleanup.enter_context(ret)
+                for measure_input, build_result in batch:
+                    ret = self.executor.submit(self._run_measurement, measure_input, build_result)
+                    stack.enter_context(ret)
                     futures.append(ret)
 
                 for future in futures:
@@ -351,15 +320,87 @@ class RPCRunner(Runner):
 
         return results
 
+    def _run_measurement(self, measure_input, build_result):
+        if isinstance(build_result, MeasureResult):
+            return build_result
+
+        time_initial = time.perf_counter()
+
+        errno = 0
+        try:
+            costs = self._get_costs(measure_input, build_result)
+        except TVMError as exc:
+            msg = str(exc)
+            if "Stack trace returned" in msg:
+                msg = msg[: msg.index("Stack trace returned")]
+            if "CUDA Source" in msg:
+                msg = msg[: msg.index("CUDA Source")]
+            costs = (RuntimeError(msg[:1024]),)
+            errno = MeasureErrorNo.RUNTIME_DEVICE
+
+        time_final = time.perf_counter()
+        unix_timestamp = time.time()
+        return MeasureResult(
+            costs, errno, time_final - time_initial + build_result.time_cost, unix_timestamp
+        )
+
+    def _get_costs(self, measure_input, build_result):
+        with self.get_device(measure_input.target) as dev, self.get_module(build_result) as mod:
+            # Limitation:
+            # We can not get PackFunction directly in the remote mode as it is wrapped
+            # under the std::function. We could lift the restriction later once we fold
+            # the PackedFunc as an object. Currently, we pass function name to work
+            # around it.
+            f_prepare = "cache_flush_cpu_non_first_arg" if self.enable_cpu_cache_flush else ""
+
+            time_f = mod.time_evaluator(
+                mod.entry_name,
+                dev,
+                number=self.number,
+                repeat=self.repeat,
+                min_repeat_ms=self.min_repeat_ms,
+                f_preproc=f_prepare,
+            )
+
+            args = self._get_function_inputs(measure_input, build_result, dev)
+
+            costs = time_f(*args).results
+
+        if len(costs) > 2:
+            # remove largest and smallest value to reduce variance
+            costs = list(costs)
+            costs.sort()
+            costs = tuple(costs[1:-1])
+
+        return costs
+
+    def _get_function_inputs(self, measure_input, build_result, dev):
+        if self.ref_input:
+            args = [nd.array(x, device=dev) for x in ref_input]
+        else:
+            try:
+                random_fill = self.get_packed_function("tvm.contrib.random.random_fill")
+            except AttributeError:
+                raise AttributeError(
+                    "Please make sure USE_RANDOM is ON in the config.cmake.  "
+                    "If running over RPC, this must be set on the remote devices."
+                )
+
+            args = [nd.empty(x[0], x[1], dev) for x in build_result.arg_info]
+            if "scatter" not in measure_input.task.name:
+                # the index tensor of scatter op cannot be randomly initialized
+                for arg in args:
+                    random_fill(arg)
+            dev.sync()
+
+        return args
+
     def _unpack_future(self, future):
         try:
             res = future.get()
         except (TimeoutError, ExecutionError) as err:
             res = err
 
-        # run_through_rpc can return a TimeoutError without
-        # throwing it, so these checks should not be moved
-        # into the except block.
         if isinstance(res, TimeoutError):
             return MeasureResult((str(res),), MeasureErrorNo.RUN_TIMEOUT, self.timeout, time.time())
 
@@ -372,41 +413,50 @@ class RPCRunner(Runner):
             return res
 
 
-class LocalRunner(RPCRunner):
+class LocalRunner(DeviceRunner):
     """Run generated code on local devices.
 
     Parameters
     ----------
     timeout: float
-        The timeout of a compilation
+
+        The timeout when running the measurement.
+
     number: int
-        The number of times to run the generated code for taking average.
-        We call these runs as one `repeat` of measurement.
+
+        The number of times to run the generated code when taking a
+        single measurement of the average runtime.
+
     repeat : int, optional
-        The number of times to repeat the measurement.
-        In total, the generated code will be run (1 + number x repeat) times,
-        where the first one is warm up and will be discarded.
-        The returned result contains `repeat` costs,
-        each of which is an average of `number` costs.
+
+        The number of times to repeat the measurement.  In total, the
+        generated code will be run ``(1 + number x repeat)`` times,
+        where the first iteration is a warm up and will be discarded.
+        The returned result contains `repeat` costs, each of which is
+        an average of `number` costs.
+
     min_repeat_ms: int, optional
-        The minimum duration of one `repeat` in milliseconds.
-        By default, one `repeat` contains `number` runs. If this parameter is set,
-        the parameters `number` will be dynamically adjusted to meet the
-        minimum duration requirement of one `repeat`.
-        i.e., When the run time of one `repeat` falls below this time, the `number` parameter
-        will be automatically increased.
+
+        The minimum duration of one `repeat` in milliseconds.  By
+        default, one `repeat` contains `number` runs. If this
+        parameter is set, the parameters `number` will be dynamically
+        adjusted to meet the minimum duration requirement of one
+        `repeat`.  i.e., When the run time of one `repeat` falls below
+        this time, the `number` parameter will be automatically
+        increased.
+
     cooldown_interval: float, optional
-        The cool down interval between two measurements.
+
+        The cool down interval between two measurements, in seconds.
+
     enable_cpu_cache_flush: bool
+
         Whether to flush cache on CPU between repeated measurements.
-        Flushing cache can make the measured latency of one operator closer to
-        its actual latency during end-to-end inference.
-        To make this option effective, the argument `number` should also be set to 1.
-        This is only has effect on CPU task.
-    Note
-    ----
-    This is a "fake" local mode. We start a silent rpc tracker and rpc server
-    for the user. In this way we reuse timeout/isolation mechanism in RPC infrastructure.
+        Flushing cache can make the measured latency of one operator
+        closer to its actual latency during end-to-end inference.  To
+        make this option effective, the argument `number` should also
+        be set to 1.  This is only has effect on CPU task.
+
     """
 
     def __init__(
@@ -417,13 +467,8 @@ class LocalRunner(RPCRunner):
         min_repeat_ms=0,
         cooldown_interval=0.1,
         enable_cpu_cache_flush=False,
-        module_loader=None,
     ):
-        super(LocalRunner, self).__init__(
-            "",
-            None,
-            None,
-            0,
+        super().__init__(
             timeout=timeout,
             n_parallel=1,
             number=number,
@@ -431,33 +476,126 @@ class LocalRunner(RPCRunner):
             min_repeat_ms=min_repeat_ms,
             cooldown_interval=cooldown_interval,
             enable_cpu_cache_flush=enable_cpu_cache_flush,
-            module_loader=module_loader,
         )
-        self.tracker = None
-        self.server = None
+
+    @contextlib.contextmanager
+    def get_device(self, target):
+        yield tvm.device(str(target))
+
+    @contextlib.contextmanager
+    def get_module(self, build_result):
+        yield tvm.runtime.module.load_module(build_result.filename)
+
+    @contextlib.contextmanager
+    def get_packed_function(self, name):
+        yield tvm.get_global_func(name)
+
+
+class RPCRunner(DeviceRunner):
+    """Run generated code on remote devices.
+
+    This function will ask a RPC Tracker to get device for measurement.
+
+    Parameters
+    ----------
+    key: str
+
+        The key of the device registered in the tracker
+
+    host: str
+
+        The host address of RPC Tracker
+
+    port: int
+
+        The port of RPC Tracker
+
+    priority : int
+
+        The job priority
+
+    pre_load_function : Callable[ [RPCSession, BuildResult], None ]
+
+        If given, an additional function to be called when loading the module.
+
+    args, kwargs: List, Dict
+
+        Additional arguments, passed to `DeviceRunner` superclass.
+
+    """
+
+    def __init__(self, key, host, port, priority=1, pre_load_function=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.key = key
+        self.host = host
+        self.port = port
+        self.priority = priority
+        self.pre_load_function = pre_load_function
 
     def set_task(self, task):
-        # pylint: disable=import-outside-toplevel
-        from ...rpc.server import Server
-        from ...rpc.tracker import Tracker
+        super().set_task(task)
 
-        self.task = task
-        tracker = Tracker(port=9000, port_end=10000, silent=True)
-        device_key = "$local$device$%d" % tracker.port
-        server = Server(
-            port=9000,
-            port_end=10000,
-            key=device_key,
-            silent=True,
-            tracker_addr=("127.0.0.1", tracker.port),
-            no_fork=True,
-        )
-        self.key = device_key
-        self.host = "127.0.0.1"
-        self.port = tracker.port
+        if check_remote(task.target, self.key, self.host, self.port):
+            logger.info("Get devices for measurement successfully!")
+        else:
+            raise RuntimeError(
+                "Cannot get remote devices from the tracker. "
+                "Please check the status of tracker by "
+                "'python -m tvm.exec.query_rpc_tracker --port [THE PORT YOU USE]' "
+                "and make sure you have free devices on the queue status."
+            )
 
-        super(LocalRunner, self).set_task(task)
-        return server, tracker
+    @contextlib.contextmanager
+    def get_remote(self):
+        """Returns a remote.
+
+        This is re-entrant, and if called multiple times in nested
+        context managers will return the same remote.  This ensures
+        that the a call to self.get_device() and self.get_module()
+        both refer to the same remote.
+
+        """
+        if self._remote is None:
+            try:
+                self._remote = request_remote(
+                    device_key=self.key,
+                    host=self.host,
+                    port=self.port,
+                    priority=self.priority,
+                    timeout=self.timeout,
+                )
+                yield self._remote
+            finally:
+                self._remote = None
+
+        else:
+            yield self._remote
+
+    @contextlib.contextmanager
+    def get_device(self, target):
+        """Implementation of DeviceRunner.get_device"""
+        with self.get_remote() as remote:
+            yield remote.device(str(target), 0)
+
+    @contextlib.contextmanager
+    def get_module(self, build_result):
+        with self.get_remote() as remote:
+            if self.pre_load_function is not None:
+                self.pre_load_function(remote, build_result)
+
+            remote.upload(build_result.filename)
+            try:
+                yield remote.load_module(os.path.split(build_result.filename)[1])
+            finally:
+                remote.remove(build_result.filename)
+                remote.remove(os.path.splitext(build_result.filename)[0] + ".so")
+                remote.remove("")
+
+    @contextlib.contextmanager
+    def get_packed_function(self, name):
+        with self.get_remote() as remote:
+            yield remote.get_function(name)
 
 
 def _build_func_common(measure_input, check_gpu=None, cuda_arch=None, build_option=None):
@@ -539,166 +677,6 @@ class _WrappedBuildFunc:
         except Exception as e:  # pylint: disable=broad-except
             return BuildResult(None, None, e, time.time() - tic)
         return BuildResult(filename, arg_info, None, time.time() - tic)
-
-
-ModuleLoader = typing.Callable[
-    [dict, dict], typing.ContextManager[typing.Tuple[tvm.rpc.RPCSession, tvm.runtime.Module]]
-]
-
-
-def run_through_rpc(
-    measure_input,
-    build_result,
-    number,
-    repeat,
-    min_repeat_ms,
-    cooldown_interval,
-    remote_kwargs,
-    ref_input,
-    enable_cpu_cache_flush=False,
-    module_loader=None,
-):
-    """Run a generated library through rpc
-
-    Parameters
-    ----------
-    measure_input: MeasureInput
-        The raw measure input
-    build_result: BuildResult
-        The result returned from Builder. This contains the path to the generated library.
-    number: int
-        The number of times to run the generated code for taking average.
-        We call these runs as one `repeat` of measurement.
-    repeat : int, optional
-        The number of times to repeat the measurement.
-        In total, the generated code will be run (1 + number x repeat) times,
-        where the first one is warm up and will be discarded.
-        The returned result contains `repeat` costs,
-        each of which is an average of `number` costs.
-    min_repeat_ms: int, optional
-        The minimum duration of one `repeat` in milliseconds.
-        By default, one `repeat` contains `number` runs. If this parameter is set,
-        the parameters `number` will be dynamically adjusted to meet the
-        minimum duration requirement of one `repeat`.
-        i.e., When the run time of one `repeat` falls below this time, the `number` parameter
-        will be automatically increased.
-    cooldown_interval: float
-        The cool down interval between two measurements
-    remote_kwargs: dict
-        Passed to module_loader(). Ultimately, keyword args to request_remote().
-    ref_input: List of np.ndarray
-        The reference input used for tuning. Empty for randomly filled input.
-    enable_cpu_cache_flush: bool
-        Whether to flush cache on CPU between repeated measurements.
-        Flushing cache can make the measured latency of one operator closer to
-        its actual latency during end-to-end inference.
-        To make this option effective, the argument `number` should also be set to 1.
-        This is only has effect on CPU task.
-    module_loader: ModuleLoader
-        A function that returns a ContextManager used to establish and teardown the remote session.
-    """
-    if isinstance(build_result, MeasureResult):
-        return build_result
-
-    tic = time.time()
-    errno = MeasureErrorNo.NO_ERROR
-    try:
-        # upload built module
-        with module_loader(remote_kwargs, build_result) as (remote, mod):
-            dev = remote.device(str(measure_input.target), 0)
-
-            # Limitation:
-            # We can not get PackFunction directly in the remote mode as it is wrapped
-            # under the std::function. We could lift the restriction later once we fold
-            # the PackedFunc as an object. Currently, we pass function name to work
-            # around it.
-            f_prepare = "cache_flush_cpu_non_first_arg" if enable_cpu_cache_flush else ""
-            time_f = mod.time_evaluator(
-                mod.entry_name,
-                dev,
-                number=number,
-                repeat=repeat,
-                min_repeat_ms=min_repeat_ms,
-                f_preproc=f_prepare,
-            )
-
-            if ref_input:
-                args = [nd.array(x, device=dev) for x in ref_input]
-            else:
-                try:
-                    random_fill = remote.get_function("tvm.contrib.random.random_fill")
-                except AttributeError:
-                    raise AttributeError(
-                        "Please make sure USE_RANDOM is ON in the config.cmake "
-                        "on the remote devices"
-                    )
-                args = [nd.empty(x[0], x[1], dev) for x in build_result.arg_info]
-                if "scatter" not in measure_input.task.name:
-                    # the index tensor of scatter op cannot be randomly initialized
-                    for arg in args:
-                        random_fill(arg)
-                dev.sync()
-
-            costs = time_f(*args).results
-
-        if len(costs) > 2:  # remove largest and smallest value to reduce variance
-            costs = list(costs)
-            costs.sort()
-            costs = tuple(costs[1:-1])
-    except TVMError as exc:
-        msg = str(exc)
-        if "Stack trace returned" in msg:
-            msg = msg[: msg.index("Stack trace returned")]
-        if "CUDA Source" in msg:
-            msg = msg[: msg.index("CUDA Source")]
-        costs = (RuntimeError(msg[:1024]),)
-        errno = MeasureErrorNo.RUNTIME_DEVICE
-    tstamp = time.time()
-    time.sleep(cooldown_interval)
-    return MeasureResult(costs, errno, tstamp - tic + build_result.time_cost, tstamp)
-
-
-class DefaultModuleLoader:
-    """See default_module_loader(). A pickleable emulation of the original function closure."""
-
-    def __init__(self, pre_load_function=None) -> None:
-        self.pre_load_function = pre_load_function
-
-    @contextlib.contextmanager
-    def __call__(self, remote_kwargs, build_result):
-        remote = request_remote(**remote_kwargs)
-        if self.pre_load_function is not None:
-            self.pre_load_function(remote, build_result)
-
-        remote.upload(build_result.filename)
-        try:
-            yield remote, remote.load_module(os.path.split(build_result.filename)[1])
-
-        finally:
-            # clean up remote files
-            remote.remove(build_result.filename)
-            remote.remove(os.path.splitext(build_result.filename)[0] + ".so")
-            remote.remove("")
-
-
-def default_module_loader(pre_load_function=None):
-    """Returns a default function that can be passed as module_loader to run_through_rpc.
-
-    Parameters
-    ----------
-    pre_load_function : Optional[Function[tvm.rpc.Session, tvm.runtime.Module]]
-        Invoked after a session is established and before the default code-loading RPC calls are
-        issued. Allows performing pre-upload actions, e.g. resetting the remote runtime environment.
-
-    Returns
-    -------
-    DefaultModuleLoader :
-        A callable that can be passed as module_loader to run_through_rpc.
-    """
-
-    # This was a function with a closure before but that couldn't be pickled!
-    # We need pickle to work for using python's multiprocessing on some platforms.
-    return DefaultModuleLoader(pre_load_function)
 
 
 def request_remote(device_key, host=None, port=None, priority=1, timeout=60):
