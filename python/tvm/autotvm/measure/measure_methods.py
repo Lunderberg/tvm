@@ -427,6 +427,7 @@ class LocalRunner(RPCRunner):
             key=device_key,
             silent=True,
             tracker_addr=("127.0.0.1", tracker.port),
+            no_fork=True,
         )
         self.key = device_key
         self.host = "127.0.0.1"
