@@ -29,6 +29,7 @@
 #include <tvm/te/tensor.h>
 #include <tvm/te/tensor_intrin.h>
 #include <tvm/tir/expr.h>
+#include <tvm/tir/index_map.h>
 
 #include <string>
 #include <unordered_map>
@@ -251,6 +252,24 @@ class Stage : public ObjectRef {
    * \return reference to self.
    */
   TVM_DLL Stage& double_buffer();  // NOLINT(*)
+  /*!
+   * \brief Defines the physical layout of the buffer.
+   *
+   * The map from logical_index to physical_index must be an
+   * invertible affine transformation.
+   *
+   * \param logical_index An array of variables to represent the
+   * location in the logical layout of a tensor.
+   *
+   * \param physical_index An array of expressions, giving the
+   * physical location of a value in terms of the logical location.
+   * Expression should be in terms of the variables given in
+   * logical_index.
+   *
+   * \return reference to self
+   */
+  TVM_DLL Stage& set_physical_layout(const Array<Var>& logical_index,
+                                     const Array<PrimExpr>& physical_index);
   /*!
    * \brief whether the stage has been scheduled.
    * \return whether the stage has been scheduled.
@@ -493,6 +512,8 @@ class StageNode : public Object {
   bool is_output{false};
   /*! \brief Whether apply double buffer optimization to this stage */
   bool double_buffer{false};
+  /*! \brief The map from logical layout to physical layout. */
+  IndexMap physical_layout;
   /*!
    * \brief The parent group of the current stage.
    *  The stage cannot be assigned to stages outside the group.
@@ -515,6 +536,7 @@ class StageNode : public Object {
     v->Visit("scope", &scope);
     v->Visit("is_output", &is_output);
     v->Visit("double_buffer", &double_buffer);
+    v->Visit("physical_layout", &physical_layout);
     v->Visit("group", &group);
     v->Visit("num_child_stages", &num_child_stages);
   }

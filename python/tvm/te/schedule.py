@@ -16,12 +16,15 @@
 # under the License.
 # pylint: disable=unused-import
 """The computation schedule api of TVM."""
+import inspect
+from typing import Callable, List
+
 import tvm._ffi
 from tvm._ffi.base import string_types
 
 from tvm.runtime import Object, convert
 from tvm.ir import container as _container
-from tvm.tir import IterVar, Buffer
+from tvm.tir import IterVar, Buffer, Var
 
 from . import tensor as _tensor
 from . import _ffi_api
@@ -511,9 +514,56 @@ class Stage(Object):
         """
         _ffi_api.StageDoubleBuffer(self)
 
+    def set_physical_layout(self, mapping_function: Callable[..., List[tvm.tir.PrimExpr]]):
+        """Defines the physical layout of the current stage's tensor.
+
+        The map from logical_index to physical_index must be an
+        invertible affine transformation.
+
+        Parameters
+        ----------
+        mapping_function : Callable[..., List[tvm.tir.PrimExpr]]
+
+            A callable that accepts N arguments of type tvm.tir.Var,
+            and outputs a list of PrimExpr.  The input arguments
+            represent the logical indices of the tensor in the current
+            stage.  The output gives the ordering of physical indices
+            corresponding to the logical indices.
+
+        Examples
+        --------
+        .. code-block:: python
+
+            # ``A`` is a tensor whose compute definition is in NHWC
+            # format, and whose physical layout is in NCHWc format.
+
+            s[A].set_physical_layout(
+                lambda n,h,w,c: [n, c//4, h, w, c%4]
+            )
+        """
+
+        params = inspect.signature(mapping_function).parameters
+        for name, param in params.items():
+            if param.kind in [inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD]:
+                raise ValueError('set_physical_layout mapping may not have *args or **kwargs')
+            if param.kind in [inspect.Parameter.POSITIONAL_ONLY]:
+                raise ValueError(f'set_physical_layout mapping cannot accept {name} by keyword')
+
+        if len(params) != len(self.op.shape):
+            raise ValueError(f'set_physical_layout mapping accepts {len(params)} logical indices, '
+                             f'but {self.op.name} is {len(self.op.shape)}-dimensional')
+
+        var_names = list(params)
+        logical_index = [tvm.tir.Var(name, dtype='int64') for name in var_names]
+        physical_index = mapping_function(**dict(zip(var_names, logical_index)))
+
+        _ffi_api.StageSetPhysicalLayout(self, logical_index, physical_index);
+
+
 
 @tvm._ffi.register_object
 class SpecializedCondition(Object):
+
     """Specialized condition to enable op specialization."""
 
     def __init__(self, conditions):
