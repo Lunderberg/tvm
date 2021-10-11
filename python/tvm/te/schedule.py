@@ -545,20 +545,23 @@ class Stage(Object):
         params = inspect.signature(mapping_function).parameters
         for name, param in params.items():
             if param.kind in [inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD]:
-                raise ValueError('set_physical_layout mapping may not have *args or **kwargs')
+                raise ValueError("set_physical_layout mapping may not have *args or **kwargs")
             if param.kind in [inspect.Parameter.POSITIONAL_ONLY]:
-                raise ValueError(f'set_physical_layout mapping cannot accept {name} by keyword')
+                raise ValueError(f"set_physical_layout mapping cannot accept {name} by keyword")
 
-        if len(params) != len(self.op.shape):
-            raise ValueError(f'set_physical_layout mapping accepts {len(params)} logical indices, '
-                             f'but {self.op.name} is {len(self.op.shape)}-dimensional')
+        ndim = len(self.op.output(0).shape)
+
+        if len(params) != ndim:
+            raise ValueError(
+                f"set_physical_layout mapping accepts {len(params)} logical indices, "
+                f"but {self.op.name} is {ndim}-dimensional"
+            )
 
         var_names = list(params)
-        logical_index = [tvm.tir.Var(name, dtype='int64') for name in var_names]
+        logical_index = [tvm.tir.Var(name, dtype="int64") for name in var_names]
         physical_index = mapping_function(**dict(zip(var_names, logical_index)))
 
-        _ffi_api.StageSetPhysicalLayout(self, logical_index, physical_index);
-
+        _ffi_api.StageSetPhysicalLayout(self, logical_index, physical_index)
 
 
 @tvm._ffi.register_object
