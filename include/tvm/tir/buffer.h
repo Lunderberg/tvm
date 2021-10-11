@@ -28,6 +28,7 @@
 #include <tvm/runtime/container/array.h>
 #include <tvm/runtime/container/string.h>
 #include <tvm/tir/var.h>
+#include <tvm/tir/index_map.h>
 
 #include <string>
 
@@ -125,7 +126,8 @@ class BufferNode : public Object {
 
   /*! \brief The shape of the buffer */
   Array<PrimExpr> shape;
-
+  /*! \brief The map from logical shape of the buffer to physical layout */
+  IndexMap physical_layout;
   /*!
    * \brief The strides of each dimension
    *  This can be an empty array, indicating array is contiguous
@@ -163,6 +165,7 @@ class BufferNode : public Object {
     v->Visit("data", &data);
     v->Visit("dtype", &dtype);
     v->Visit("shape", &shape);
+    v->Visit("physical_layout", &physical_layout);
     v->Visit("strides", &strides);
     v->Visit("physical_axes", &physical_axes);
     v->Visit("name", &name);

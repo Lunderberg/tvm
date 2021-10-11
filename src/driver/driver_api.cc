@@ -80,16 +80,16 @@ tir::Buffer BufferWithOffsetAlignment(Array<PrimExpr> shape, DataType dtype, std
                                       int data_alignment, int offset_factor, bool compact) {
   DataType storage_dtype = (dtype == DataType::Bool() ? DataType::Int(8) : dtype);
   auto data = tir::Var(name, PointerType(PrimType(storage_dtype)));
-  bool has_any = false;
+  bool has_variable_shape = false;
   if (!compact) {
     for (const auto& it : shape) {
       if (it.as<tir::VarNode>()) {
-        has_any = true;
+        has_variable_shape = true;
         break;
       }
     }
   }
-  tir::BufferType buffer_type = has_any ? tir::kAutoBroadcast : tir::kDefault;
+  tir::BufferType buffer_type = has_variable_shape ? tir::kAutoBroadcast : tir::kDefault;
 
   PrimExpr elem_offset;
   if (offset_factor != 0) {

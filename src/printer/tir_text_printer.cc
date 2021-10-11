@@ -217,6 +217,9 @@ Doc TIRTextPrinter::PrintProducer(const DataProducerNode* op) {
 Doc TIRTextPrinter::BufferNode2Doc(const BufferNode* buf, Doc doc) {
   doc << Doc::Text(": Buffer(") << Print(buf->data) << ", " << PrintDType(buf->dtype) << ", "
       << Print(buf->shape) << ", " << Print(buf->strides);
+  if (buf->physical_layout.defined()) {
+    doc << ", physical_layout=" << Print(buf->physical_layout);
+  }
 
   doc << ", physical_axes=[";
   for (size_t i = 0; i < buf->physical_axes.size(); i++) {
