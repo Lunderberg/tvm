@@ -558,7 +558,7 @@ class Stage(Object):
             )
 
         var_names = list(params)
-        logical_index = [tvm.tir.Var(name, dtype="int64") for name in var_names]
+        logical_index = [tvm.tir.Var(name, dtype="int32") for name in var_names]
         physical_index = mapping_function(**dict(zip(var_names, logical_index)))
 
         _ffi_api.StageSetPhysicalLayout(self, logical_index, physical_index)
