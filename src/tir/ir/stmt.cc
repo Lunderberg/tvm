@@ -232,10 +232,24 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       p->stream << "}\n";
     });
 
+PrimExpr StoreNode::flat_index() const {
+  ICHECK_EQ(indices.size(), 1) << "Cannot access " << indices.size() << "-d buffer "
+                               << buffer_var->name_hint << " as flat 1-d memory.";
+  return indices[0];
+}
+
 // Store
-Store::Store(Var buffer_var, PrimExpr value, PrimExpr index, PrimExpr predicate, Span span) {
+Store::Store(Var buffer_var, PrimExpr value, PrimExpr flat_index, PrimExpr predicate, Span span)
+    : Store(buffer_var, value, Array<PrimExpr>{flat_index}, predicate, span) {}
+
+Store::Store(Var buffer_var, PrimExpr value, Array<PrimExpr> indices, PrimExpr predicate,
+             Span span) {
   ICHECK(value.defined());
-  ICHECK(index.defined());
+  ICHECK(indices.defined());
+  ICHECK(indices.size());
+  for (const auto& index : indices) {
+    ICHECK(index.defined());
+  }
   ICHECK(predicate.defined());
 
   // Assume that the array elements have 1 lane, unless a type
@@ -256,15 +270,20 @@ Store::Store(Var buffer_var, PrimExpr value, PrimExpr index, PrimExpr predicate,
     element_lanes = pointer_type.second.lanes();
   }
 
-  ICHECK((value.dtype().lanes() == element_lanes * index.dtype().lanes()) ||
-         (value.dtype().lanes() == index.dtype().lanes()));
+  int index_lanes = 1;
+  for (const auto& index : indices) {
+    index_lanes *= index.dtype().lanes();
+  }
+
+  ICHECK((value.dtype().lanes() == element_lanes * index_lanes) ||
+         (value.dtype().lanes() == index_lanes));
   ICHECK((value.dtype().lanes() == element_lanes * predicate.dtype().lanes()) ||
-         (value.dtype().lanes() == index.dtype().lanes()));
+         (value.dtype().lanes() == index_lanes));
 
   ObjectPtr<StoreNode> node = make_object<StoreNode>();
   node->buffer_var = std::move(buffer_var);
   node->value = std::move(value);
-  node->index = std::move(index);
+  node->indices = std::move(indices);
   node->predicate = std::move(predicate);
   node->span = std::move(span);
   data_ = std::move(node);
@@ -332,16 +351,24 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     });
 
 // Allocate
-Allocate::Allocate(Var buffer_var, DataType dtype, PrimExpr extent, PrimExpr condition, Stmt body,
-                   Map<String, ObjectRef> annotations, Span span) {
+Allocate::Allocate(Var buffer_var, DataType dtype, PrimExpr flat_size, PrimExpr condition,
+                   Stmt body, Map<String, ObjectRef> annotations, Span span)
+    : Allocate(buffer_var, dtype, Array<PrimExpr>{flat_size}, condition, body, annotations, span) {}
+
+Allocate::Allocate(Var buffer_var, DataType dtype, Array<PrimExpr> shape, PrimExpr condition,
+                   Stmt body, Map<String, ObjectRef> annotations, Span span) {
   CHECK(IsPointerType(buffer_var->type_annotation, dtype))
       << "The allocated data type (" << dtype
       << ") does not match the type annotation of the buffer " << buffer_var << " ("
       << buffer_var->type_annotation
       << "). The data type should be an element of the pointer type.";
 
-  ICHECK(extent.defined());
-  ICHECK(extent.dtype().is_scalar());
+  ICHECK(shape.defined());
+  ICHECK(shape.size());
+  for (const auto& dim : shape) {
+    ICHECK(dim.defined());
+    ICHECK(dim.dtype().is_scalar());
+  }
   ICHECK(body.defined());
   ICHECK(condition.defined());
   ICHECK(condition.dtype().is_bool());
@@ -349,12 +376,18 @@ Allocate::Allocate(Var buffer_var, DataType dtype, PrimExpr extent, PrimExpr con
   ObjectPtr<AllocateNode> node = make_object<AllocateNode>();
   node->buffer_var = std::move(buffer_var);
   node->dtype = dtype;
-  node->extent = std::move(extent);
+  node->shape = std::move(shape);
   node->condition = std::move(condition);
   node->body = std::move(body);
   node->annotations = std::move(annotations);
   node->span = std::move(span);
   data_ = std::move(node);
+}
+
+PrimExpr AllocateNode::flat_size() const {
+  ICHECK_EQ(shape.size(), 1) << "Cannot allocate " << shape.size() << "-d buffer "
+                             << buffer_var->name_hint << " as flat 1-d memory.";
+  return shape[0];
 }
 
 int32_t AllocateNode::constant_allocation_size(const PrimExpr& extent) {

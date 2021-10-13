@@ -62,8 +62,18 @@ class BufferNode : public Object {
    *  This can be an empty array, indicating array is contiguous
    */
   Array<PrimExpr> strides;
-  /*! \brief The offset in terms of number of dtype elements (including lanes) */
-  PrimExpr elem_offset;
+  /*! \brief The offset in terms of number of dtype elements (including lanes)
+   *
+   * If `elem_offsets` is non-empty, it should contain one element for
+   * each physical dimension.  For flat memory space, `elem_offsets`
+   * will have exactly one element.
+   *
+   * Note: This cannot be easily removed using
+   * buffer_bind/MatchBufferRegion, as `elem_offsets` allows for
+   * Buffers of different type/nbits to be backed by the same
+   * allocation.
+   */
+  Array<PrimExpr> elem_offsets;
   // Meta data
   /*! \brief optional name of the buffer */
   String name;
@@ -89,7 +99,7 @@ class BufferNode : public Object {
     v->Visit("dtype", &dtype);
     v->Visit("shape", &shape);
     v->Visit("strides", &strides);
-    v->Visit("elem_offset", &elem_offset);
+    v->Visit("elem_offsets", &elem_offsets);
     v->Visit("name", &name);
     v->Visit("data_alignment", &data_alignment);
     v->Visit("offset_factor", &offset_factor);
@@ -102,7 +112,7 @@ class BufferNode : public Object {
     // in its semantics, skip name as name is not important.
     return equal.DefEqual(data, other->data) && equal(dtype, other->dtype) &&
            equal.DefEqual(shape, other->shape) && equal.DefEqual(strides, other->strides) &&
-           equal.DefEqual(elem_offset, other->elem_offset) &&
+           equal.DefEqual(elem_offsets, other->elem_offsets) &&
            equal(data_alignment, other->data_alignment) && equal(buffer_type, other->buffer_type);
   }
 
@@ -111,7 +121,7 @@ class BufferNode : public Object {
     hash_reduce(dtype);
     hash_reduce.DefHash(shape);
     hash_reduce.DefHash(strides);
-    hash_reduce.DefHash(elem_offset);
+    hash_reduce.DefHash(elem_offsets);
     hash_reduce(data_alignment);
     hash_reduce(buffer_type);
   }

@@ -467,6 +467,7 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       p->stream << "buffer(" << op->name << ", " << op << ")";
     });
 
+TVM_REGISTER_NODE_TYPE(BufferParamsPerPhysicalAxisNode);
 TVM_REGISTER_NODE_TYPE(BufferNode);
 
 TVM_REGISTER_GLOBAL("tir.Buffer").set_body([](TVMArgs args, TVMRetValue* ret) {
