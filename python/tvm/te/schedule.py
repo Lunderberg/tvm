@@ -24,7 +24,7 @@ from tvm._ffi.base import string_types
 
 from tvm.runtime import Object, convert
 from tvm.ir import container as _container
-from tvm.tir import IterVar, Buffer, Var
+from tvm.tir import IterVar, Buffer, BufferParamsPerPhysicalAxis, Var
 
 from . import tensor as _tensor
 from . import _ffi_api
@@ -559,9 +559,28 @@ class Stage(Object):
 
         var_names = list(params)
         logical_index = [tvm.tir.Var(name, dtype="int32") for name in var_names]
-        physical_index = mapping_function(**dict(zip(var_names, logical_index)))
+        mapping = mapping_function(**dict(zip(var_names, logical_index)))
+
+        physical_index = []
+        physical_axis_separators = []
+        for val in mapping:
+            if isinstance(val, tvm.ir.PrimExpr):
+                physical_index.append(val)
+            elif val is PHYSICAL_AXIS_SEPARATOR:
+                physical_axis_separators.append(len(physical_index))
+            else:
+                raise TypeError(
+                    "Expected mapping function to return list of "
+                    "either tvm.ir.PrimExpr or tvm.te.PHYSICAL_AXIS_SEPARATOR.  "
+                    "Instead received {val} of type {type(val)}."
+                )
 
         _ffi_api.StageSetPhysicalLayout(self, logical_index, physical_index)
+        if physical_axis_separators:
+            physical_axes = [BufferParamsPerPhysicalAxis(first_tensor_axis=0)]
+            for sep in physical_axis_separators:
+                physical_axes.append(BufferParamsPerPhysicalAxis(first_tensor_axis=sep))
+            _ffi_api.StageSetPhysicalAxisParams(self, physical_axes)
 
 
 @tvm._ffi.register_object
@@ -598,6 +617,12 @@ class SpecializedCondition(Object):
 
     def __exit__(self, ptype, value, trace):
         _ffi_api.ExitSpecializationScope(self)
+
+
+# Sentinel value used to indicate which groups of logical axes should
+# be used to generate multiple physical axes.  See
+# Stage.set_physical_layout for more details.
+PHYSICAL_AXIS_SEPARATOR = "physical_axis_separator"
 
 
 tvm._ffi._init_api("schedule", __name__)

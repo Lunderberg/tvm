@@ -423,10 +423,16 @@ Stage& Stage::double_buffer() {
   return *this;
 }
 
-Stage& Stage::set_physical_layout(const Array<Var>& logical_index, const Array<PrimExpr>& physical_index) {
+Stage& Stage::set_physical_layout(const Array<Var>& logical_index,
+                                  const Array<PrimExpr>& physical_index) {
   StageNode* self = operator->();
+  self->physical_layout = IndexMap(logical_index, physical_index);
+  return *this;
+}
 
-  self->physical_layout = IndexMap(logical_index, physical_index);;
+Stage& Stage::set_physical_axis_params(const Array<BufferParamsPerPhysicalAxis>& params) {
+  StageNode* self = operator->();
+  self->physical_axes = params;
   return *this;
 }
 
@@ -894,6 +900,9 @@ TVM_REGISTER_GLOBAL("te.StageStorageAlign").set_body_method(&Stage::storage_alig
 TVM_REGISTER_GLOBAL("te.StageDoubleBuffer").set_body_method(&Stage::double_buffer);
 
 TVM_REGISTER_GLOBAL("te.StageSetPhysicalLayout").set_body_method(&Stage::set_physical_layout);
+
+TVM_REGISTER_GLOBAL("te.StageSetPhysicalAxisParams")
+    .set_body_method(&Stage::set_physical_axis_params);
 
 TVM_REGISTER_GLOBAL("te.ScheduleNormalize").set_body_method(&Schedule::normalize);
 

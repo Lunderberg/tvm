@@ -270,6 +270,15 @@ class Stage : public ObjectRef {
    */
   TVM_DLL Stage& set_physical_layout(const Array<Var>& logical_index,
                                      const Array<PrimExpr>& physical_index);
+  /*! \brief Defines separators between groups of axes.
+   *
+   * Used to define `BufferNode::physical_axes`, which has
+   * additional details.
+   *
+   * \param params A list of parameter sets, each describing one
+   * physical axis of the buffer.
+   */
+  TVM_DLL Stage& set_physical_axis_params(const Array<BufferParamsPerPhysicalAxis>& params);
   /*!
    * \brief whether the stage has been scheduled.
    * \return whether the stage has been scheduled.
@@ -514,6 +523,12 @@ class StageNode : public Object {
   bool double_buffer{false};
   /*! \brief The map from logical layout to physical layout. */
   IndexMap physical_layout;
+  /*! \brief List of axes after which to divide physical axes.
+   *
+   * Used to populate `BufferNode::physical_axes`, which has
+   * additional details.
+   */
+  Array<BufferParamsPerPhysicalAxis> physical_axes;
   /*!
    * \brief The parent group of the current stage.
    *  The stage cannot be assigned to stages outside the group.
@@ -537,6 +552,7 @@ class StageNode : public Object {
     v->Visit("is_output", &is_output);
     v->Visit("double_buffer", &double_buffer);
     v->Visit("physical_layout", &physical_layout);
+    v->Visit("physical_axes", &physical_axes);
     v->Visit("group", &group);
     v->Visit("num_child_stages", &num_child_stages);
   }
