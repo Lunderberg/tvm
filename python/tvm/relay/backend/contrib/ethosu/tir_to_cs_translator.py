@@ -170,7 +170,7 @@ def extract_buffer_info(
             allocate = stmt
             buffer_info[allocate.buffer_var] = BufferInfo(
                 None,
-                allocate.extents,
+                [allocate.extent],
                 allocate.dtype,
                 BufferType.scratch,
             )

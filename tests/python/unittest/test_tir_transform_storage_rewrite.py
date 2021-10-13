@@ -83,7 +83,7 @@ def test_alloc_seq():
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
             num_alloc[0] += 1
-            assert n.extents[0].value == 200
+            assert n.extent.value == 200
 
     tvm.tir.stmt_functor.post_order_visit(body, verify)
     assert num_alloc[0] == 1
@@ -133,7 +133,7 @@ def test_alloc_different_dtypes():
     def dtype_test(dtype_list, length):
         def verify(n):
             if isinstance(n, tvm.tir.Allocate):
-                assert n.extents[0].value == offset
+                assert n.extent.value == offset
 
         body = stmt_generater(dtype_list, length)
         offset = offset_generater(dtype_list, length)
@@ -210,7 +210,7 @@ def test_storage_combine():
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
             num_alloc[0] += 1
-            assert n.extents[0].value == 16
+            assert n.extent.value == 16
 
     tvm.tir.stmt_functor.post_order_visit(stmt, verify)
     assert num_alloc[0] == 1
@@ -498,7 +498,7 @@ def test_inplace_rule3():
     # verify inplace folding works
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
-            assert n.extents[0].value == 70
+            assert n.extent.value == 70
 
     tvm.tir.stmt_functor.post_order_visit(stmt, verify)
 
@@ -531,7 +531,7 @@ def test_alloc_seq_type():
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
             num_alloc[0] += 1
-            assert n.extents[0].value == 500
+            assert n.extent.value == 500
 
     tvm.tir.stmt_functor.post_order_visit(body, verify)
     assert num_alloc[0] == 1
@@ -566,7 +566,7 @@ def test_alloc_seq_type2():
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
             num_alloc[0] += 1
-            assert n.extents[0].value == 200
+            assert n.extent.value == 200
 
     tvm.tir.stmt_functor.post_order_visit(body, verify)
     assert num_alloc[0] == 1
@@ -600,7 +600,7 @@ def test_reuse_small_buffer():
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
             num_alloc[0] += 1
-            assert n.extents[0].value == 800
+            assert n.extent.value == 800
 
     tvm.tir.stmt_functor.post_order_visit(body, verify)
     assert num_alloc[0] == 1
@@ -641,7 +641,7 @@ def test_large_input():
 
     def verify(n):
         if isinstance(n, tvm.tir.Allocate):
-            assert n.extents[0].value == 268435456
+            assert n.extent.value == 268435456
 
     tvm.tir.stmt_functor.post_order_visit(stmt, verify)
 
