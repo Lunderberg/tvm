@@ -1155,9 +1155,11 @@ class StorageFlattener : public StmtExprMutator {
     if (create_bound_attributes_ && ShapeIsValid(e.buffer->shape)) {
       shape_collector_.push_back(std::make_pair(e.buffer->data, e.buffer->shape));
     }
-    // To create bound attribute collector should has at least one item.
+    // Only create bound attribute if collector has at least one item.
     if (create_bound_attributes_ && shape_collector_.size()) {
       for (size_t i = 0; i < shape_collector_.size(); ++i) {
+        // Determine the maximum value along each physical axis, in
+        // number of scalar elements.
         body = AttrStmt(shape_collector_[i].first, tir::attr::buffer_bound,
                         MakeBound(e.buffer->dtype, shape_collector_[i].second), body);
       }
@@ -1381,13 +1383,15 @@ class StorageFlattener : public StmtExprMutator {
     return true;
   }
 
-  PrimExpr MakeBound(const DataType& type, const Array<PrimExpr>& shape) {
-    // We have already checked the shape size to be greater then 0.
+  PrimExpr MakeBound(const DataType& type, Array<PrimExpr> shape) {
     PrimExpr bound = Mul(make_const(shape[0].dtype(), type.lanes()), shape[0]);
     for (size_t i = 1; i < shape.size(); ++i) {
       bound = Mul(bound, Mul(make_const(bound.dtype(), type.lanes()), shape[i]));
     }
-    return bound;
+
+    Array<PrimExpr> bounds{bound};
+
+    return Call(DataType::Handle(), builtin::tvm_tuple(), bounds);
   }
 
   // The buffer assignment map
