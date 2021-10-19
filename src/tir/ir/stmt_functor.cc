@@ -53,14 +53,14 @@ void StmtVisitor::VisitStmt_(const WhileNode* op) {
 }
 
 void StmtVisitor::VisitStmt_(const AllocateNode* op) {
-  this->VisitExpr(op->extent);
+  VisitArray(op->shape, [this](const PrimExpr& e) { this->VisitExpr(e); });
   this->VisitStmt(op->body);
   this->VisitExpr(op->condition);
 }
 
 void StmtVisitor::VisitStmt_(const StoreNode* op) {
   this->VisitExpr(op->value);
-  this->VisitExpr(op->index);
+  VisitArray(op->indices, [this](auto& e) { this->VisitExpr(e); });
   this->VisitExpr(op->predicate);
 }
 
@@ -304,15 +304,16 @@ Stmt StmtMutator::VisitStmt_(const WhileNode* op) {
 }
 
 Stmt StmtMutator::VisitStmt_(const AllocateNode* op) {
-  PrimExpr extent = this->VisitExpr(op->extent);
+  Array<PrimExpr> shape =
+      MutateArray(op->shape, [this](const PrimExpr& e) { return this->VisitExpr(e); });
   Stmt body = this->VisitStmt(op->body);
   PrimExpr condition = this->VisitExpr(op->condition);
 
-  if (extent.same_as(op->extent) && body.same_as(op->body) && condition.same_as(op->condition)) {
+  if (shape.same_as(op->shape) && body.same_as(op->body) && condition.same_as(op->condition)) {
     return GetRef<Stmt>(op);
   } else {
     auto n = CopyOnWrite(op);
-    n->extent = std::move(extent);
+    n->shape = std::move(shape);
     n->body = std::move(body);
     n->condition = std::move(condition);
     return Stmt(n);
@@ -340,14 +341,16 @@ Stmt StmtMutator::VisitStmt_(const IfThenElseNode* op) {
 
 Stmt StmtMutator::VisitStmt_(const StoreNode* op) {
   PrimExpr value = this->VisitExpr(op->value);
-  PrimExpr index = this->VisitExpr(op->index);
+  Array<PrimExpr> indices =
+      MutateArray(op->indices, [this](const PrimExpr& e) { return this->VisitExpr(e); });
   PrimExpr predicate = this->VisitExpr(op->predicate);
-  if (value.same_as(op->value) && index.same_as(op->index) && predicate.same_as(op->predicate)) {
+  if (value.same_as(op->value) && indices.same_as(op->indices) &&
+      predicate.same_as(op->predicate)) {
     return GetRef<Stmt>(op);
   } else {
     auto n = CopyOnWrite(op);
     n->value = std::move(value);
-    n->index = std::move(index);
+    n->indices = std::move(indices);
     n->predicate = std::move(predicate);
     return Stmt(n);
   }
@@ -648,7 +651,7 @@ class IRSubstitute : public StmtExprMutator {
     PrimExpr ret = StmtExprMutator::VisitExpr_(op);
     op = ret.as<LoadNode>();
     if (auto mapped_var = vmap_(op->buffer_var)) {
-      return Load(op->dtype, Downcast<Var>(mapped_var.value()), op->index, op->predicate);
+      return Load(op->dtype, Downcast<Var>(mapped_var.value()), op->indices, op->predicate);
     } else {
       return ret;
     }
@@ -658,7 +661,7 @@ class IRSubstitute : public StmtExprMutator {
     Stmt ret = StmtExprMutator::VisitStmt_(op);
     op = ret.as<StoreNode>();
     if (auto mapped_var = vmap_(op->buffer_var)) {
-      return Store(Downcast<Var>(mapped_var.value()), op->value, op->index, op->predicate);
+      return Store(Downcast<Var>(mapped_var.value()), op->value, op->indices, op->predicate);
     } else {
       return ret;
     }

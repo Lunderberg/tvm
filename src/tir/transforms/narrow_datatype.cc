@@ -29,6 +29,7 @@
 
 #include "../../arith/ir_mutator_with_analyzer.h"
 #include "../../arith/ir_visitor_with_analyzer.h"
+#include "ir_utils.h"
 
 namespace tvm {
 namespace tir {
@@ -207,9 +208,10 @@ class DataTypeRewriter : public StmtExprMutator {
   Stmt VisitStmt_(const StoreNode* op) final {
     PrimExpr value = this->VisitExpr(op->value);
     is_index_ = true;
-    PrimExpr index = this->VisitExpr(op->index);
+    Array<PrimExpr> indices =
+        UpdateArray(op->indices, [this](const auto& index) { return this->VisitExpr(index); });
     is_index_ = false;
-    Stmt s = Store(op->buffer_var, op->value, index, op->predicate);
+    Stmt s = Store(op->buffer_var, op->value, indices, op->predicate);
     return StmtExprMutator::VisitStmt_(s.as<StoreNode>());
   }
 
@@ -265,9 +267,10 @@ class DataTypeRewriter : public StmtExprMutator {
 
   PrimExpr VisitExpr_(const LoadNode* op) final {
     is_index_ = true;
-    PrimExpr index = this->VisitExpr(op->index);
+    Array<PrimExpr> indices =
+        UpdateArray(op->indices, [this](const auto& index) { return this->VisitExpr(index); });
     is_index_ = false;
-    PrimExpr e = Load(op->dtype, op->buffer_var, index, op->predicate);
+    PrimExpr e = Load(op->dtype, op->buffer_var, indices, op->predicate);
     return StmtExprMutator::VisitExpr_(e.as<LoadNode>());
   }
 

@@ -681,13 +681,16 @@ Load::Load(DataType dtype, Var buffer_var, Array<PrimExpr> indices, PrimExpr pre
 }
 
 TVM_REGISTER_GLOBAL("tir.Load").set_body([](TVMArgs args, TVMRetValue* ret) {
-  DataType t = args[0];
-  if (args.size() == 3) {
-    *ret = Load(t, args[1], args[2], const_true(t.lanes()), Span());
-  } else if (args.size() == 4) {
-    *ret = Load(t, args[1], args[2], args[3], Span());
+  DataType dtype = args[0];
+  Var buffer_var = args[1];
+  ObjectRef index = args[2];
+  PrimExpr predicate = args.size() > 3 ? args[3] : const_true(dtype.lanes());
+  Span span = args.size() > 4 ? args[4] : Span();
+
+  if (index->IsInstance<PrimExprNode>()) {
+    *ret = Load(dtype, buffer_var, Downcast<PrimExpr>(index), predicate, span);
   } else {
-    *ret = Load(t, args[1], args[2], args[3], args[4]);
+    *ret = Load(dtype, buffer_var, Downcast<Array<PrimExpr>>(index), predicate, span);
   }
 });
 
@@ -696,9 +699,8 @@ TVM_REGISTER_NODE_TYPE(LoadNode);
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<LoadNode>([](const ObjectRef& node, ReprPrinter* p) {
       auto* op = static_cast<const LoadNode*>(node.get());
-      p->stream << op->buffer_var << "[";
-      p->Print(op->index);
-      p->stream << "]";
+      p->stream << op->buffer_var;
+      p->Print(op->indices);
       if (!is_one(op->predicate)) {
         p->stream << " if ";
         p->Print(op->predicate);

@@ -290,13 +290,16 @@ Store::Store(Var buffer_var, PrimExpr value, Array<PrimExpr> indices, PrimExpr p
 }
 
 TVM_REGISTER_GLOBAL("tir.Store").set_body([](TVMArgs args, TVMRetValue* ret) {
+  Var buffer_var = args[0];
   PrimExpr value = args[1];
-  if (args.size() == 3) {
-    *ret = Store(args[0], value, args[2], const_true(value.dtype().lanes()), Span());
-  } else if (args.size() == 4) {
-    *ret = Store(args[0], value, args[2], args[3], Span());
+  ObjectRef index = args[2];
+  PrimExpr predicate = args.size() > 3 ? args[3] : const_true(value.dtype().lanes());
+  Span span = args.size() > 4 ? args[4] : Span();
+
+  if (index->IsInstance<PrimExprNode>()) {
+    *ret = Store(buffer_var, value, Downcast<PrimExpr>(index), predicate, span);
   } else {
-    *ret = Store(args[0], value, args[2], args[3], args[4]);
+    *ret = Store(buffer_var, value, Downcast<Array<PrimExpr>>(index), predicate, span);
   }
 });
 
@@ -306,9 +309,9 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<StoreNode>([](const ObjectRef& node, ReprPrinter* p) {
       auto* op = static_cast<const StoreNode*>(node.get());
       p->PrintIndent();
-      p->stream << op->buffer_var << "[";
-      p->Print(op->index);
-      p->stream << "] = ";
+      p->stream << op->buffer_var;
+      p->Print(op->indices);
+      p->stream << " = ";
       p->Print(op->value);
       if (!is_one(op->predicate)) {
         p->stream << " if ";
@@ -417,8 +420,12 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       ICHECK(ptr_type) << "The provided variable is not of pointer type";
       p->PrintIndent();
       p->stream << "allocate " << op->buffer_var << "[" << op->dtype;
-      p->stream << " * ";
-      p->Print(op->extent);
+      p->stream << "* ";
+      if (op->shape.size() == 1) {
+        p->Print(op->shape[0]);
+      } else {
+        p->Print(op->shape);
+      }
       p->stream << "], storage_scope = " << ptr_type->storage_scope;
       if (!is_one(op->condition)) {
         p->stream << " if ";

@@ -116,11 +116,11 @@ class WarpStoreCoeffFinder : private StmtVisitor {
   void VisitStmt_(const StoreNode* op) final {
     if (op->buffer_var.get() == buffer_) {
       if (op->value.dtype().lanes() == 1) {
-        UpdatePattern(op->index);
+        UpdatePattern(op->flat_index());
       } else {
         arith::PVar<PrimExpr> base;
-        ICHECK(arith::ramp(base, 1, op->value.dtype().lanes()).Match(op->index))
-            << "LowerWarpMemory failed due to store index=" << op->index
+        ICHECK(arith::ramp(base, 1, op->value.dtype().lanes()).Match(op->flat_index()))
+            << "LowerWarpMemory failed due to store index=" << op->flat_index()
             << ", can only handle continuous store";
         UpdatePattern(base.Eval());
       }
@@ -240,7 +240,7 @@ class WarpAccessRewriter : protected StmtExprMutator {
   Stmt VisitStmt_(const StoreNode* op) override {
     if (op->buffer_var.get() == buffer_) {
       PrimExpr local_index, group;
-      std::tie(local_index, group) = SplitIndexByGroup(op->index);
+      std::tie(local_index, group) = SplitIndexByGroup(op->flat_index());
       PrimExpr new_value = VisitExpr(op->value);
       return Store(op->buffer_var, new_value, local_index, op->predicate);
     } else {
@@ -251,10 +251,10 @@ class WarpAccessRewriter : protected StmtExprMutator {
   PrimExpr VisitExpr_(const LoadNode* op) override {
     if (op->buffer_var.get() == buffer_) {
       PrimExpr local_index, group;
-      std::tie(local_index, group) = SplitIndexByGroup(op->index);
+      std::tie(local_index, group) = SplitIndexByGroup(op->flat_index());
       // invariance: local index must do not contain warp id
       ICHECK(!UsesVar(local_index, [this](const VarNode* var) { return var == warp_index_.get(); }))
-          << "LowerWarpMemory failed to rewrite load to shuffle for index " << op->index
+          << "LowerWarpMemory failed to rewrite load to shuffle for index " << op->flat_index()
           << " local_index=" << local_index;
       PrimExpr load_value = Load(op->dtype, op->buffer_var, local_index, op->predicate);
       if (analyzer_->CanProveEqual(group, warp_index_)) {
@@ -369,6 +369,7 @@ class WarpMemoryRewriter : private StmtMutator {
     auto ret = StmtMutator::VisitStmt_(op);
     op = ret.as<AllocateNode>();
     if (GetPtrStorageScope(op->buffer_var) == "warp") {
+      ICHECK_EQ(op->shape.size(), 1) << "Warp memory should use flat 1-d physical memory";
       new_storage_scopes_[op->buffer_var.get()] = "local";
       WarpAccessRewriter rewriter(warp_size_, &analyzer_);
       ret = rewriter.Rewrite(op);

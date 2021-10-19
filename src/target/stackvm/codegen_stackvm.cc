@@ -142,10 +142,10 @@ int CodeGenStackVM::GetVarID(const VarNode* v) const {
 void CodeGenStackVM::VisitExpr_(const LoadNode* op) {
   this->Push(op->buffer_var);
   StackVM::OpCode code = StackVM::GetLoad(op->dtype);
-  if (const IntImmNode* index = op->index.as<IntImmNode>()) {
+  if (const IntImmNode* index = op->flat_index().as<IntImmNode>()) {
     this->PushOp(code, index->value);
   } else {
-    this->Push(op->index);
+    this->Push(op->flat_index());
     this->PushOp(StackVM::PUSH_I64, op->dtype.element_of().bytes());
     this->PushOp(StackVM::MUL_I64);
     this->PushOp(StackVM::ADDR_ADD);
@@ -156,11 +156,11 @@ void CodeGenStackVM::VisitExpr_(const LoadNode* op) {
 void CodeGenStackVM::VisitStmt_(const StoreNode* op) {
   this->Push(op->buffer_var);
   StackVM::OpCode code = StackVM::GetStore(op->value.dtype());
-  if (const IntImmNode* index = op->index.as<IntImmNode>()) {
+  if (const IntImmNode* index = op->flat_index().as<IntImmNode>()) {
     this->Push(op->value);
     this->PushOp(code, index->value);
   } else {
-    this->Push(op->index);
+    this->Push(op->flat_index());
     this->PushOp(StackVM::PUSH_I64, op->value.dtype().element_of().bytes());
     this->PushOp(StackVM::MUL_I64);
     this->PushOp(StackVM::ADDR_ADD);
@@ -178,7 +178,7 @@ void CodeGenStackVM::VisitExpr_(const CallNode* op) {
     const LoadNode* l = op->args[0].as<LoadNode>();
     ICHECK(op->args.size() == 1 && l);
     this->PushOp(StackVM::LOAD_HEAP, GetVarID(l->buffer_var.get()));
-    this->Push(l->index);
+    this->Push(l->flat_index());
     this->PushOp(StackVM::PUSH_I64, l->dtype.element_of().bytes());
     this->PushOp(StackVM::MUL_I64);
     this->PushOp(StackVM::ADDR_ADD);

@@ -35,6 +35,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "ir_utils.h"
+
 namespace tvm {
 namespace tir {
 
@@ -67,7 +69,8 @@ class VecAllocAccess : public StmtExprMutator {
     PrimExpr expr = StmtExprMutator::VisitExpr_(op);
     op = expr.as<LoadNode>();
     if (op->buffer_var.get() == buf_) {
-      return Load(op->dtype, op->buffer_var, op->index * var_lanes_ + var_, op->predicate);
+      auto indices = op->indices;
+      return Load(op->dtype, op->buffer_var, UpdateIndices(op->indices), op->predicate);
     } else {
       return expr;
     }
@@ -77,13 +80,19 @@ class VecAllocAccess : public StmtExprMutator {
     Stmt stmt = StmtExprMutator::VisitStmt_(op);
     op = stmt.as<StoreNode>();
     if (op->buffer_var.get() == buf_) {
-      return Store(op->buffer_var, op->value, op->index * var_lanes_ + var_, op->predicate);
+      return Store(op->buffer_var, op->value, UpdateIndices(op->indices), op->predicate);
     } else {
       return stmt;
     }
   }
 
  private:
+  Array<PrimExpr> UpdateIndices(Array<PrimExpr> indices) {
+    size_t i_last = indices.size() - 1;
+    indices.Set(i_last, indices[i_last] * var_lanes_ + var_);
+    return indices;
+  }
+
   // buffer var
   const VarNode* buf_;
   // variable to be replaced
@@ -312,14 +321,16 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
   }
   // Load
   PrimExpr VisitExpr_(const LoadNode* op) final {
-    PrimExpr index = this->VisitExpr(op->index);
+    Array<PrimExpr> indices =
+        UpdateArray(op->indices, [this](const auto& index) { return this->VisitExpr(index); });
     PrimExpr pred = this->VisitExpr(op->predicate);
-    if (index.same_as(op->index) && pred.same_as(op->predicate)) {
+    if (indices.same_as(op->indices) && pred.same_as(op->predicate)) {
       return GetRef<PrimExpr>(op);
     } else {
-      int lanes = std::max(index.dtype().lanes(), pred.dtype().lanes());
-      return Load(op->dtype.with_lanes(lanes), op->buffer_var, BroadcastTo(index, lanes),
-                  BroadcastTo(pred, lanes));
+      size_t i_last = indices.size() - 1;
+      int lanes = std::max(indices[i_last].dtype().lanes(), pred.dtype().lanes());
+      indices.Set(i_last, BroadcastTo(indices[i_last], lanes));
+      return Load(op->dtype.with_lanes(lanes), op->buffer_var, indices, BroadcastTo(pred, lanes));
     }
   }
   // Let
@@ -353,15 +364,17 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
   // Store
   Stmt VisitStmt_(const StoreNode* op) final {
     PrimExpr value = this->VisitExpr(op->value);
-    PrimExpr index = this->VisitExpr(op->index);
+    Array<PrimExpr> indices =
+        UpdateArray(op->indices, [this](const auto& index) { return this->VisitExpr(index); });
     PrimExpr pred = this->VisitExpr(op->predicate);
-    if (value.same_as(op->value) && index.same_as(op->index)) {
+    if (value.same_as(op->value) && indices.same_as(op->indices)) {
       return GetRef<Stmt>(op);
     } else {
-      int lanes = std::max(value.dtype().lanes(), index.dtype().lanes());
+      size_t i_last = indices.size() - 1;
+      int lanes = std::max(value.dtype().lanes(), indices[i_last].dtype().lanes());
       lanes = std::max(lanes, pred.dtype().lanes());
-      return Store(op->buffer_var, BroadcastTo(value, lanes), BroadcastTo(index, lanes),
-                   BroadcastTo(pred, lanes));
+      indices.Set(i_last, BroadcastTo(indices[i_last], lanes));
+      return Store(op->buffer_var, BroadcastTo(value, lanes), indices, BroadcastTo(pred, lanes));
     }
   }
   // For
@@ -434,17 +447,20 @@ class Vectorizer : public StmtMutator, public ExprFunctor<PrimExpr(const PrimExp
       LOG(WARNING) << "Cannot handle vector extent in alloc ";
       return Scalarize(GetRef<Stmt>(op));
     }
-    PrimExpr extent = this->VisitExpr(op->extent);
-    if (extent.dtype().is_vector()) {
-      LOG(WARNING) << "Cannot handle vector extent in alloc ";
-      return Scalarize(GetRef<Stmt>(op));
+    Array<PrimExpr> shape =
+        UpdateArray(op->shape, [this](const auto& expr) { return this->VisitExpr(expr); });
+    for (const auto& dim : shape) {
+      if (dim.dtype().is_vector()) {
+        LOG(WARNING) << "Cannot handle vector extent in alloc ";
+        return Scalarize(GetRef<Stmt>(op));
+      }
     }
-    // place the vector lanes in least significant dimension.
-    extent *= var_lanes_;
+    // place the vector lanes in the last physical dimension.
+    shape.Set(shape.size() - 1, shape[shape.size() - 1] * var_lanes_);
     // rewrite access to buffer internally.
     Stmt body = VecAllocAccess(op->buffer_var.get(), var_, var_lanes_)(op->body);
     body = this->VisitStmt(body);
-    return Allocate(op->buffer_var, op->dtype, extent, condition, body);
+    return Allocate(op->buffer_var, op->dtype, shape, condition, body);
   }
 
   // scalarize the statment

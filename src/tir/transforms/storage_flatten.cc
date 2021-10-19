@@ -789,7 +789,7 @@ class BufferBindUnwrapper : public StmtExprMutator {
 
       ICHECK(it->second.as<VarNode>());
       Var new_buf_var = Downcast<Var>(it->second);
-      return Store(new_buf_var, op->value, op->index, op->predicate);
+      return Store(new_buf_var, op->value, op->indices, op->predicate);
     } else {
       return stmt;
     }
@@ -807,7 +807,7 @@ class BufferBindUnwrapper : public StmtExprMutator {
 
       ICHECK(it->second.as<VarNode>());
       Var new_buf_var = Downcast<Var>(it->second);
-      return Load(op->dtype, new_buf_var, op->index, op->predicate);
+      return Load(op->dtype, new_buf_var, op->indices, op->predicate);
     } else {
       return expr;
     }
@@ -1111,7 +1111,7 @@ class StorageFlattener : public StmtExprMutator {
     if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
       ICHECK(it->second.as<VarNode>());
       Var buf_var = Downcast<Var>(it->second);
-      return Store(buf_var, op->value, op->index, op->predicate);
+      return Store(buf_var, op->value, op->indices, op->predicate);
     } else {
       return stmt;
     }
@@ -1251,7 +1251,7 @@ class StorageFlattener : public StmtExprMutator {
     if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
       ICHECK(it->second.as<VarNode>());
       Var buf_var = Downcast<Var>(it->second);
-      return Load(op->dtype, buf_var, op->index, op->predicate);
+      return Load(op->dtype, buf_var, op->indices, op->predicate);
     } else {
       return expr;
     }

@@ -61,8 +61,8 @@ class StorageAccessVisitor : public StmtExprVisitor {
     Var buffer = NullValue<Var>();
     /*! \brief The access data type */
     DataType dtype;
-    /*! \brief The touched access range */
-    arith::IntSet touched;
+    /*! \brief The touched access range, in each physical dimension. */
+    Array<arith::IntSet> touched;
     /*! \brief The type of access */
     AccessType type;
     /*! \brief The storage scope */

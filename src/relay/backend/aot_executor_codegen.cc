@@ -496,7 +496,7 @@ class AOTExecutorCodegen : public MixedModeVisitor {
         // TODO(giuseros): we should allocate this once outside the PrimFunc
         // so we don't pay the price of allocation for every inference
         if (!allocated[sid]) {
-          body = tir::Allocate(sids_table_[sid], DataType::Int(8), {size}, tir::const_true(), body);
+          body = tir::Allocate(sids_table_[sid], DataType::Int(8), size, tir::const_true(), body);
         }
         allocated[sid] = true;
       }

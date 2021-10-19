@@ -594,7 +594,7 @@ class AllocateNode : public StmtNode {
    *        Otherwise return 0.
    * \return The result.
    */
-  int32_t constant_allocation_size() const { return constant_allocation_size(extent); }
+  int32_t constant_allocation_size() const { return constant_allocation_size(flat_size()); }
   /*!
    * \brief If the buffer size is constant, return the size.
    *        Otherwise return 0.

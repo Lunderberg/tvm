@@ -104,7 +104,9 @@ class VarTouchedAnalysis : public StmtVisitor {
   void VisitStmt_(const StoreNode* op) final {
     ExprTouched tc(touched_var_, false);
     tc(op->value);
-    tc(op->index);
+    for (const auto& index : op->indices) {
+      tc(index);
+    }
     Record(op->buffer_var.get(), tc);
   }
   void VisitStmt_(const ForNode* op) final {
@@ -124,7 +126,9 @@ class VarTouchedAnalysis : public StmtVisitor {
   }
   void VisitStmt_(const AllocateNode* op) final {
     ExprTouched tc(touched_var_, false);
-    tc(op->extent);
+    for (const auto& dim : op->shape) {
+      tc(dim);
+    }
     tc.VisitExpr(op->condition);
     Record(op->buffer_var.get(), tc);
     this->VisitStmt(op->body);
@@ -199,8 +203,10 @@ class VTInjector : public StmtExprMutator {
     }
     return GetRef<PrimExpr>(op);
   }
-  PrimExpr RewriteIndex(PrimExpr index, PrimExpr alloc_extent) const {
-    return index + var_ * alloc_extent;
+  Array<PrimExpr> RewriteIndex(Array<PrimExpr> indices, PrimExpr alloc_extent) const {
+    // The virtual thread is injected at the first physical dimension.
+    indices.Set(0, indices[0] + var_ * alloc_extent);
+    return indices;
   }
   // Load
   PrimExpr VisitExpr_(const LoadNode* op) final {
@@ -211,7 +217,7 @@ class VTInjector : public StmtExprMutator {
     }
     auto it = alloc_remap_.find(op->buffer_var.get());
     if (it != alloc_remap_.end()) {
-      return Load(op->dtype, op->buffer_var, RewriteIndex(op->index, it->second), op->predicate);
+      return Load(op->dtype, op->buffer_var, RewriteIndex(op->indices, it->second), op->predicate);
     } else {
       return expr;
     }
@@ -250,7 +256,7 @@ class VTInjector : public StmtExprMutator {
     trigger_base_inject_ = !allow_share_;
     auto it = alloc_remap_.find(op->buffer_var.get());
     if (it != alloc_remap_.end()) {
-      return Store(op->buffer_var, op->value, RewriteIndex(op->index, it->second), op->predicate);
+      return Store(op->buffer_var, op->value, RewriteIndex(op->indices, it->second), op->predicate);
     } else {
       return stmt;
     }
@@ -357,7 +363,8 @@ class VTInjector : public StmtExprMutator {
       return InjectVTLoop(GetRef<Stmt>(op), true);
     }
 
-    PrimExpr extent = this->VisitExpr(op->extent);
+    Array<PrimExpr> shape =
+        UpdateArray(op->shape, [this](const auto& dim) { return this->VisitExpr(dim); });
     if (visit_touched_var_ && !vt_loop_injected_) {
       return InjectVTLoop(GetRef<Stmt>(op), true);
     }
@@ -367,9 +374,16 @@ class VTInjector : public StmtExprMutator {
     Stmt body;
     // always rewrite if not allow sharing.
     if (touched_var_.count(op->buffer_var.get()) || !allow_share_) {
-      // place v on highest dimension.
-      PrimExpr stride = mul(op->extent, op->dtype.lanes());
-      extent = mul(extent, num_threads_);
+      // Place v on the physical dimension 0.
+
+      // TODO(Lunderberg): Move pass to apply before StorageFlatten,
+      // acting on BufferRealize instead of AllocateNode.  Would
+      // rewrite the Buffer to add the injected virtual thread as the
+      // outermost logical dimension, rewrite
+      // `BufferNode::physical_layout`.
+      PrimExpr stride = mul(op->shape[0], op->dtype.lanes());
+
+      shape.Set(0, mul(shape[0], num_threads_));
       // mark this buffer get touched.
       alloc_remap_[op->buffer_var.get()] = stride;
     }
@@ -377,10 +391,10 @@ class VTInjector : public StmtExprMutator {
     // Mutate the body.
     body = this->VisitStmt(op->body);
 
-    if (extent.same_as(op->extent) && body.same_as(op->body) && condition.same_as(op->condition)) {
+    if (shape.same_as(op->shape) && body.same_as(op->body) && condition.same_as(op->condition)) {
       return GetRef<Stmt>(op);
     } else {
-      return Allocate(op->buffer_var, op->dtype, extent, condition, body);
+      return Allocate(op->buffer_var, op->dtype, shape, condition, body);
     }
   }
 

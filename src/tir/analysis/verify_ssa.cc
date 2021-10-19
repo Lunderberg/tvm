@@ -109,7 +109,11 @@ class SSAVerifier final : public StmtExprVisitor {
         this->VisitExpr(buffer->strides[i]);
       }
     }
-    this->VisitExpr(buffer->elem_offset);
+    if (buffer->physical_axes.defined()) {
+      for (const auto& params : buffer->physical_axes) {
+        this->VisitExpr(params->elem_offset);
+      }
+    }
 
     match_scope_ = false;
   }

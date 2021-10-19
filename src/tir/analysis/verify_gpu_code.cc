@@ -198,14 +198,15 @@ class GPUCodeVerifier : public StmtExprVisitor {
   }
 
   void VisitStmt_(const StoreNode* op) {
-    if (op->index->dtype.lanes() > 1) {
-      if (static_cast<size_t>(op->index->dtype.lanes() * op->index->dtype.bytes()) >
-          max_vector_bytes_) {
-        std::stringstream s;
-        s << "Number of lanes (" << op->index->dtype.lanes() << ") times number of bytes ("
-          << op->index->dtype.bytes() << ") for dtype " << op->index->dtype
-          << " is greater than the maximum number of vector bytes (" << max_vector_bytes_ << ")";
-        errors_.push_back(s.str());
+    for (const auto& index : op->indices) {
+      if (index->dtype.lanes() > 1) {
+        if (static_cast<size_t>(index->dtype.lanes() * index->dtype.bytes()) > max_vector_bytes_) {
+          std::stringstream s;
+          s << "Number of lanes (" << index->dtype.lanes() << ") times number of bytes ("
+            << index->dtype.bytes() << ") for dtype " << index->dtype
+            << " is greater than the maximum number of vector bytes (" << max_vector_bytes_ << ")";
+          errors_.push_back(s.str());
+        }
       }
     }
     StmtVisitor::VisitStmt_(op);

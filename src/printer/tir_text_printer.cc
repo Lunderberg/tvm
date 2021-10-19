@@ -217,17 +217,35 @@ Doc TIRTextPrinter::PrintProducer(const DataProducerNode* op) {
 Doc TIRTextPrinter::BufferNode2Doc(const BufferNode* buf, Doc doc) {
   doc << Doc::Text(": Buffer(") << Print(buf->data) << ", " << PrintDType(buf->dtype) << ", "
       << Print(buf->shape) << ", " << Print(buf->strides);
-  if (!is_zero(buf->elem_offset)) {
-    doc << ", elem_offset=" << Print(buf->elem_offset);
+
+  doc << ", physical_axes=[";
+  for (size_t i = 0; i < buf->physical_axes.size(); i++) {
+    const auto& params = buf->physical_axes[i];
+
+    if (i != 0) {
+      doc << ", ";
+    }
+
+    doc << "axis(" << params->first_tensor_axis << ":";
+    if (i + 1 < buf->physical_axes.size()) {
+      doc << buf->physical_axes[i + 1]->first_tensor_axis;
+    }
+
+    if (!is_zero(params->elem_offset)) {
+      doc << ", elem_offset=" << Print(params->elem_offset);
+    }
+    if (params->offset_factor != 1) {
+      doc << ", offset_factor=" << params->offset_factor;
+    }
+    doc << ")";
   }
+  doc << "]";
+
   if (GetRef<Buffer>(buf).scope() != "global") {
     doc << ", scope=" << Doc::StrLiteral(GetRef<Buffer>(buf).scope());
   }
   if (buf->data_alignment != 128) {
     doc << ", align=" << buf->data_alignment;
-  }
-  if (buf->offset_factor != 1) {
-    doc << ", offset_factor=" << buf->offset_factor;
   }
   if (buf->buffer_type != 1) {
     doc << ", type=" << Doc::StrLiteral("auto");
@@ -361,8 +379,7 @@ Doc TIRTextPrinter::VisitExpr_(const ProducerLoadNode* op) {
 
 Doc TIRTextPrinter::VisitExpr_(const LoadNode* op) {
   Doc doc;
-  doc << "(" << PrintDType(op->dtype) << "*)" << Print(op->buffer_var) << "[" << Print(op->index)
-      << "]";
+  doc << "(" << PrintDType(op->dtype) << "*)" << Print(op->buffer_var) << Print(op->indices);
   if (!is_one(op->predicate)) {
     doc << " if " << Print(op->predicate);
   }
@@ -446,7 +463,7 @@ Doc TIRTextPrinter::VisitStmt_(const AssertStmtNode* op) {
 
 Doc TIRTextPrinter::VisitStmt_(const StoreNode* op) {
   Doc doc;
-  doc << Print(op->buffer_var) << "[" << Print(op->index) << "] = " << Print(op->value);
+  doc << Print(op->buffer_var) << Print(op->indices) << " = " << Print(op->value);
   if (!is_one(op->predicate)) {
     doc << " if " << Print(op->predicate);
   }
@@ -482,8 +499,14 @@ Doc TIRTextPrinter::VisitStmt_(const ProducerRealizeNode* op) {
 Doc TIRTextPrinter::VisitStmt_(const AllocateNode* op) {
   Doc doc;
   auto scope = GetPtrStorageScope(op->buffer_var);
-  doc << "allocate(" << Print(op->buffer_var) << ", " << PrintDType(op->dtype) << ", "
-      << Print(op->extent) << "), storage_scope = " << scope;
+  doc << "allocate(" << Print(op->buffer_var) << ", " << PrintDType(op->dtype) << ", ";
+  if (op->shape.size() == 1) {
+    doc << Print(op->shape[0]);
+  } else {
+    doc << Print(op->shape);
+  }
+  doc << ")";
+  doc << ", storage_scope = " << scope;
   if (!op->annotations.empty()) {
     std::vector<Doc> attr_docs;
     for (const auto& it : op->annotations) {

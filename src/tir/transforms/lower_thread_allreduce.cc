@@ -53,7 +53,7 @@ class UpdatePointerStorageScopeAllReduce final : public UpdatePointerStorageScop
         // use volatile access to shared buffer.
         body = AttrStmt(remapped, attr::volatile_scope, 1, body);
       }
-      return Allocate(remapped, op->dtype, op->extent, op->condition, body);
+      return Allocate(remapped, op->dtype, op->shape, op->condition, body);
     }
     return StmtExprMutator::VisitStmt_(op);
   }
@@ -98,10 +98,10 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
     if (it != alloc_remap_.end()) {
       const AllocateNode* repl = it->second.as<AllocateNode>();
       if (warp_allocs_.count(repl)) {
-        stmt = Allocate(repl->buffer_var, repl->dtype, repl->extent, repl->condition, op->body);
+        stmt = Allocate(repl->buffer_var, repl->dtype, repl->shape, repl->condition, op->body);
         new_storage_scopes_[repl->buffer_var.get()] = "local";
       } else {
-        stmt = Allocate(repl->buffer_var, repl->dtype, repl->extent, repl->condition, op->body);
+        stmt = Allocate(repl->buffer_var, repl->dtype, repl->shape, repl->condition, op->body);
         new_storage_scopes_[repl->buffer_var.get()] = "shared";
       }
       return stmt;
@@ -112,7 +112,7 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
   PrimExpr VisitExpr_(const LoadNode* op) final {
     auto it = load_remap_.find(op->buffer_var.get());
     if (it != load_remap_.end()) {
-      ICHECK(is_zero(op->index));
+      ICHECK(is_zero(op->flat_index()));
       return it->second;
     } else {
       return StmtExprMutator::VisitExpr_(op);
@@ -122,7 +122,7 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
   Stmt VisitStmt_(const StoreNode* op) final {
     auto it = store_remap_.find(op->buffer_var.get());
     if (it != store_remap_.end()) {
-      ICHECK(is_zero(op->index));
+      ICHECK(is_zero(op->flat_index()));
       auto value = StmtExprMutator::VisitExpr(op->value);
       return Store(it->second, value, 0, op->predicate);
     } else {
@@ -391,7 +391,7 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
     for (auto var : local_vars) {
       const AllocateNode* repl = var.as<AllocateNode>();
       if (repl) {
-        body = Allocate(repl->buffer_var, repl->dtype, repl->extent, repl->condition, body);
+        body = Allocate(repl->buffer_var, repl->dtype, repl->shape, repl->condition, body);
         new_storage_scopes_[repl->buffer_var.get()] = "local";
       }
     }

@@ -131,7 +131,9 @@ class LinearAccessPatternFinder final : public StmtExprVisitor {
   void VisitExpr_(const CallNode* op) final {
     if (op->op.same_as(builtin::address_of())) {
       const LoadNode* l = op->args[0].as<LoadNode>();
-      this->VisitExpr(l->index);
+      for (const auto& index : l->indices) {
+        this->VisitExpr(index);
+      }
     } else {
       StmtExprVisitor::VisitExpr_(op);
     }
@@ -267,7 +269,9 @@ class InplaceOpVerifier : public StmtExprVisitor {
 
   void VisitStmt_(const StoreNode* op) final {
     ++mem_nest_;
-    this->VisitExpr(op->index);
+    for (const auto& index : op->indices) {
+      this->VisitExpr(index);
+    }
     --mem_nest_;
     if (op->buffer_var.get() == dst_) {
       store_ = op;
@@ -302,10 +306,19 @@ class InplaceOpVerifier : public StmtExprVisitor {
       return;
     }
     if (src_ == buf) {
-      if (store_ == nullptr || store_->value.dtype() != op->dtype ||
-          !tir::ExprDeepEqual()(store_->index, op->index)) {
+      if (store_ == nullptr || store_->value.dtype() != op->dtype) {
         result_ = false;
         return;
+      }
+      if (store_->indices.size() != op->indices.size()) {
+        result_ = false;
+        return;
+      }
+      for (size_t i = 0; i < store_->indices.size(); i++) {
+        if (!tir::ExprDeepEqual()(store_->indices[i], op->indices[i])) {
+          result_ = false;
+          return;
+        }
       }
     }
     ++mem_nest_;
@@ -361,15 +374,15 @@ class StoragePlanRewriter : public StmtExprMutator {
     auto it = alloc_map_.find(op->buffer_var.get());
     if (it == alloc_map_.end()) return stmt;
     return Store(it->second->alloc_var, op->value,
-                 RemapIndex(op->value.dtype(), op->index, it->second), op->predicate);
+                 RemapIndex(op->value.dtype(), op->flat_index(), it->second), op->predicate);
   }
   PrimExpr VisitExpr_(const LoadNode* op) final {
     PrimExpr expr = StmtExprMutator::VisitExpr_(op);
     op = expr.as<LoadNode>();
     auto it = alloc_map_.find(op->buffer_var.get());
     if (it == alloc_map_.end()) return expr;
-    return Load(op->dtype, it->second->alloc_var, RemapIndex(op->dtype, op->index, it->second),
-                op->predicate);
+    return Load(op->dtype, it->second->alloc_var,
+                RemapIndex(op->dtype, op->flat_index(), it->second), op->predicate);
   }
   PrimExpr VisitExpr_(const VarNode* op) final {
     auto it = alloc_map_.find(op);
@@ -551,7 +564,7 @@ class StoragePlanRewriter : public StmtExprMutator {
 
         if (e->allocs.size() == 1) {
           // simply use the original allocation.
-          e->new_alloc = Allocate(e->alloc_var, alloc_type, e->allocs[0]->extent,
+          e->new_alloc = Allocate(e->alloc_var, alloc_type, e->allocs[0]->shape,
                                   e->allocs[0]->condition, Evaluate(0));
           if (IsSpecialTaggedMemory(e->scope)) {
             MemoryInfo info = GetMemoryInfo(e->scope.to_string());
@@ -563,7 +576,7 @@ class StoragePlanRewriter : public StmtExprMutator {
           // Build a merged allocation
           PrimExpr combo_size;
           for (const AllocateNode* op : e->allocs) {
-            PrimExpr sz = op->extent;
+            PrimExpr sz = op->flat_size();
             auto nbits = op->dtype.bits() * op->dtype.lanes();
             if (const auto* imm = sz.as<IntImmNode>()) {
               if (imm->value > std::numeric_limits<int>::max() / nbits) {
@@ -632,7 +645,7 @@ class StoragePlanRewriter : public StmtExprMutator {
     }
     uint64_t type_bits = e->elem_type.bits() * e->elem_type.lanes();
     PrimExpr alloc_size =
-        make_const(e->allocs[0]->extent.dtype(), (total_bits + type_bits - 1) / type_bits);
+        make_const(e->allocs[0]->flat_size().dtype(), (total_bits + type_bits - 1) / type_bits);
     e->new_alloc = Allocate(e->alloc_var, e->elem_type, alloc_size, const_true(), Evaluate(0));
     if (info.defined()) {
       ICHECK_LE(total_bits, info->max_num_bits)
@@ -985,8 +998,7 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
       Buffer& buffer = it.second;
       Var buffer_var = buffer->data;
       DataType dtype = buffer->dtype;
-      PrimExpr extent = buffer->shape.size() ? buffer->shape[buffer->shape.size() - 1] : 0;
-      OnArrayDeclaration(buffer_var, dtype, extent, BufferVarInfo::kPrimFuncParam);
+      OnArrayDeclaration(buffer_var, dtype, buffer->shape, BufferVarInfo::kPrimFuncParam);
     }
 
     // If a pointer parameter isn't in the buffer map, then we want to
@@ -996,18 +1008,18 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
       if (pointer_type.first && (buffer_map.count(buffer_var) == 0)) {
         DataType dtype = pointer_type.second;
         PrimExpr extent = 0;
-        OnArrayDeclaration(buffer_var, dtype, extent, BufferVarInfo::kPrimFuncBufferMap);
+        OnArrayDeclaration(buffer_var, dtype, {extent}, BufferVarInfo::kPrimFuncBufferMap);
       }
     }
   }
 
   void VisitExpr_(const LoadNode* op) final {
-    OnArrayAccess(op->dtype, op->buffer_var.get(), op->index, op->predicate);
+    OnArrayAccess(op->dtype, op->buffer_var.get(), op->indices, op->predicate);
     StmtExprVisitor::VisitExpr_(op);
   }
 
   void VisitStmt_(const StoreNode* op) final {
-    OnArrayAccess(op->value.dtype(), op->buffer_var.get(), op->index, op->predicate);
+    OnArrayAccess(op->value.dtype(), op->buffer_var.get(), op->indices, op->predicate);
     StmtExprVisitor::VisitStmt_(op);
   }
   void VisitExpr_(const CallNode* op) final {
@@ -1015,13 +1027,13 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
       DataType dtype = op->args[0].dtype();
       const VarNode* buffer = op->args[1].as<VarNode>();
       PrimExpr index = op->args[2];
-      OnArrayAccess(dtype, buffer, index, const_true(dtype.lanes()));
+      OnArrayAccess(dtype, buffer, {index}, const_true(dtype.lanes()));
     }
     StmtExprVisitor::VisitExpr_(op);
   }
 
   void VisitStmt_(const AllocateNode* op) final {
-    OnArrayDeclaration(op->buffer_var, op->dtype, op->extent, BufferVarInfo::kAllocateNode);
+    OnArrayDeclaration(op->buffer_var, op->dtype, op->shape, BufferVarInfo::kAllocateNode);
 
     StmtExprVisitor::VisitStmt_(op);
   }
@@ -1040,9 +1052,9 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
     if (let_var->dtype.is_handle()) {
       auto pointer_type = GetPointerType(let_var->type_annotation);
       if (pointer_type.first) {
-        OnArrayDeclaration(let_var, pointer_type.second, 0, BufferVarInfo::kLetNode);
+        OnArrayDeclaration(let_var, pointer_type.second, {0}, BufferVarInfo::kLetNode);
       } else if (allow_untyped_pointers_) {
-        OnArrayDeclaration(let_var, let_var->dtype, 0, BufferVarInfo::kLetNode);
+        OnArrayDeclaration(let_var, let_var->dtype, {0}, BufferVarInfo::kLetNode);
       } else {
         LOG(FATAL) << "Let statement of variable " << let_var->name_hint
                    << " is missing a type annotation, "
@@ -1064,7 +1076,7 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
    * @param declaration_location How the buffer was allocated, so that
    * some locations can be rewritten without others.
    */
-  void OnArrayDeclaration(Var buffer, DataType element_dtype, PrimExpr extent,
+  void OnArrayDeclaration(Var buffer, DataType element_dtype, Array<PrimExpr> shape,
                           BufferVarInfo::DeclarationLocation declaration_location) {
     ICHECK(info_map_.find(buffer.get()) == info_map_.end())
         << "Array declaration of " << buffer->name_hint << " occurred multiple times.";
@@ -1073,7 +1085,12 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
       element_dtype = DataType::Int(8).with_lanes(element_dtype.lanes());
     }
 
-    info_map_[buffer.get()] = {buffer, element_dtype, extent, declaration_location};
+    PrimExpr vectorizable_size = 0;
+    if (shape.size() > 0) {
+      vectorizable_size = shape[shape.size() - 1];
+    }
+
+    info_map_[buffer.get()] = {buffer, element_dtype, vectorizable_size, declaration_location};
   }
 
   /* Update the type map for a buffer based on its usage
@@ -1087,7 +1104,7 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
    *
    * @param predicate The predicate used for the store/load.
    */
-  void OnArrayAccess(DataType value_dtype, const VarNode* buffer, const PrimExpr& index,
+  void OnArrayAccess(DataType value_dtype, const VarNode* buffer, const Array<PrimExpr>& indices,
                      const PrimExpr& predicate) {
     auto it = info_map_.find(buffer);
     ICHECK(it != info_map_.end()) << "Load/Store of buffer " << buffer->name_hint << " (" << buffer
@@ -1114,8 +1131,9 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
     // necessary because the C-based codegens do not yet support vectorized
     // pointer types (e.g. float16x4*).  Once they do, this if statement should
     // instead be replaced by the below ICHECK_EQ.
-    if (index.dtype().lanes() * var_info.element_dtype.lanes() != value_dtype.lanes()) {
-      ICHECK_EQ(index.dtype().lanes(), value_dtype.lanes());
+    if (indices[indices.size() - 1].dtype().lanes() * var_info.element_dtype.lanes() !=
+        value_dtype.lanes()) {
+      ICHECK_EQ(indices[indices.size() - 1].dtype().lanes(), value_dtype.lanes());
       lanes_used = 1;
       var_info.element_dtype = var_info.element_dtype.with_lanes(1);
     }
@@ -1135,7 +1153,7 @@ class VectorTypeAccessChecker : public StmtExprVisitor {
     // divisible by the number of number of lanes, and the predicate
     // does not apply any masking, then this array access could be
     // vectorized.
-    const RampNode* ramp_index = index.as<RampNode>();
+    const RampNode* ramp_index = indices[indices.size() - 1].as<RampNode>();
     if (ramp_index && is_one(ramp_index->stride) && is_one(predicate)) {
       arith::ModularSet me = analyzer_.modular_set(ramp_index->base);
       if ((me->coeff % ramp_index->lanes == 0) && (me->base % ramp_index->lanes == 0)) {
@@ -1253,14 +1271,16 @@ class VectorTypeRewriter : public StmtExprMutator {
 
     DataType out_dtype_base = info.new_element_dtype.element_of();
 
-    const RampNode* ramp_index = op->index.as<RampNode>();
+    const RampNode* ramp_index = op->indices[op->indices.size() - 1].as<RampNode>();
     if (ramp_index && is_one(ramp_index->stride)) {
-      PrimExpr new_index =
+      Array<PrimExpr> new_indices = op->indices;
+      PrimExpr new_last_index =
           ramp_index->base / make_const(ramp_index->base.dtype(), ramp_index->lanes);
-      return Load(out_dtype_base.with_lanes(op->dtype.lanes()), info.new_buffer_var, new_index,
-                  const_true(new_index.dtype().lanes()), op->span);
+      new_indices.Set(new_indices.size() - 1, new_last_index);
+      return Load(out_dtype_base.with_lanes(op->dtype.lanes()), info.new_buffer_var, new_indices,
+                  const_true(new_last_index.dtype().lanes()), op->span);
     } else {
-      return Load(out_dtype_base, info.new_buffer_var, op->index, op->predicate);
+      return Load(out_dtype_base, info.new_buffer_var, op->indices, op->predicate);
     }
   }
 
@@ -1278,14 +1298,16 @@ class VectorTypeRewriter : public StmtExprMutator {
     }
     const auto& info = it->second;
 
-    const RampNode* ramp_index = op->index.as<RampNode>();
+    const RampNode* ramp_index = op->indices[op->indices.size() - 1].as<RampNode>();
     if (ramp_index && is_one(ramp_index->stride)) {
-      PrimExpr new_index =
+      Array<PrimExpr> new_indices = op->indices;
+      PrimExpr new_last_index =
           ramp_index->base / make_const(ramp_index->base.dtype(), ramp_index->lanes);
-      return Store(info.new_buffer_var, op->value, new_index, const_true(new_index.dtype().lanes()),
-                   op->span);
+      new_indices.Set(new_indices.size() - 1, new_last_index);
+      return Store(info.new_buffer_var, op->value, new_indices,
+                   const_true(new_last_index.dtype().lanes()), op->span);
     } else {
-      return Store(info.new_buffer_var, op->value, op->index, op->predicate, op->span);
+      return Store(info.new_buffer_var, op->value, op->indices, op->predicate, op->span);
     }
   }
 
@@ -1336,8 +1358,12 @@ class VectorTypeRewriter : public StmtExprMutator {
 
     int factor = info.new_element_dtype.lanes() / op->dtype.lanes();
 
-    PrimExpr extent = op->extent / make_const(op->extent.dtype(), factor);
-    return Allocate(new_buffer_var, info.new_element_dtype, extent, op->condition, op->body);
+    Array<PrimExpr> shape = op->shape;
+    PrimExpr last_physical_index = shape[shape.size() - 1];
+    shape.Set(shape.size() - 1,
+              last_physical_index / make_const(last_physical_index.dtype(), factor));
+
+    return Allocate(new_buffer_var, info.new_element_dtype, shape, op->condition, op->body);
   }
 
   /* Update the parameters and all remaining variable references
