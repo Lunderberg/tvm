@@ -27,14 +27,15 @@ For example, you can use addexp.a to get the left operand of an Add node.
   assert(isinstance(y, tvm.tir.Add))
   assert(y.a == x)
 """
+from numbers import Integral
 from typing import Optional, Union
-from tvm import ir
-import tvm._ffi
-from tvm.ir.base import Span
 
-from tvm.runtime import Object, ObjectGeneric, DataType, DataTypeCode, const
-from tvm.ir import PrimExpr, Op
+import tvm._ffi
 import tvm.ir._ffi_api
+from tvm import ir
+from tvm.ir import PrimExpr, Op, Span
+from tvm.runtime import Object, ObjectGeneric, DataType, DataTypeCode, const
+
 from . import generic as _generic
 from . import _ffi_api
 
@@ -1018,22 +1019,63 @@ class Load(PrimExprWithOp):
     buffer_var : Var
         The buffer variable in the load expression.
 
-    index : PrimExpr
-        The index in the load.
+    indices : Union[PrimExpr, List[PrimExpr]]
+
+        The index in the load expression.  Passing a PrimExpr, or a
+        list with a single PrimExpr, represents access into flat 1-D
+        memory.  Additional indices represent access into N-D memory,
+        with runtime-specific implementation.
+
+        The dimension of the physical indices must match the dimension
+        of the buffer's physical layout.
 
     predicate : PrimExpr
         The load predicate.
 
     span : Optional[Span]
         The location of this itervar in the source code.
+
     """
 
-    def __init__(self, dtype, buffer_var, index, predicate=None, span=None):
+    def __init__(self, dtype, buffer_var, indices, predicate=None, span=None):
+        if isinstance(indices, (tvm.tir.PrimExpr, Integral)):
+            indices = [indices]
+
         if predicate is None:
             predicate = _ffi_api.const_true(dtype, span)  # type: ignore
+
         self.__init_handle_by_constructor__(
-            _ffi_api.Load, dtype, buffer_var, index, predicate, span  # type: ignore
+            _ffi_api.Load, dtype, buffer_var, indices, predicate, span  # type: ignore
         )
+
+    @property
+    def index(self):
+        """Returns the index of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring to allow allow N-d indices
+
+        """
+        indices = self.indices
+        if not indices:
+            return None
+        elif len(indices) > 1:
+            raise RuntimeError("Can only use Load.index on flat 1-d memory")
+        else:
+            return indices[0]
+
+    @index.setter
+    def index(self, value):
+        """Sets the index of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring to allow allow N-d indices
+        """
+        indices = self.indices
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Load.index on flat 1-d memory")
+        else:
+            physical_axes[0].index = value
 
 
 @tvm._ffi.register_object("tir.BufferLoad")

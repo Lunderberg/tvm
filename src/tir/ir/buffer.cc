@@ -27,6 +27,7 @@
 #include <tvm/tir/buffer.h>
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
+#include <tvm/ir/expr.h>
 #include <tvm/tir/op.h>
 
 #include <iterator>
@@ -558,21 +559,27 @@ Buffer::Buffer(Var ptr, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> s
     : Buffer(ptr, dtype, shape, strides, name, data_alignment,
              {BufferParamsPerPhysicalAxis(0, elem_offset, offset_factor)}, buffer_type, span) {}
 
+TVM_REGISTER_NODE_TYPE(BufferParamsPerPhysicalAxisNode);
+TVM_REGISTER_GLOBAL("tir.BufferParamsPerPhysicalAxis")
+    .set_body_typed([](int first_tensor_axis, PrimExpr elem_offset, int offset_factor) {
+      return BufferParamsPerPhysicalAxis(first_tensor_axis, elem_offset, offset_factor);
+    });
+
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<BufferNode>([](const ObjectRef& node, ReprPrinter* p) {
       auto* op = static_cast<const BufferNode*>(node.get());
       p->stream << "buffer(" << op->name << ", " << op << ")";
     });
 
-TVM_REGISTER_NODE_TYPE(BufferParamsPerPhysicalAxisNode);
 TVM_REGISTER_NODE_TYPE(BufferNode);
 
 TVM_REGISTER_GLOBAL("tir.Buffer").set_body([](TVMArgs args, TVMRetValue* ret) {
-  ICHECK_EQ(args.size(), 10);
-  auto buffer_type = args[8].operator String();
+  ICHECK_EQ(args.size(), 9);
+
+  auto buffer_type = args[7].operator String();
   BufferType type = (buffer_type == "auto_broadcast") ? kAutoBroadcast : kDefault;
-  *ret =
-      Buffer(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], type, args[9]);
+
+  *ret = Buffer(args[0], args[1], args[2], args[3], args[4], args[5], args[6], type, args[8]);
 });
 
 TVM_REGISTER_GLOBAL("tir.BufferAccessPtr").set_body_method(&Buffer::access_ptr);

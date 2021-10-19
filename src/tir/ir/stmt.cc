@@ -406,9 +406,9 @@ int32_t AllocateNode::constant_allocation_size(const PrimExpr& extent) {
 }
 
 TVM_REGISTER_GLOBAL("tir.Allocate")
-    .set_body_typed([](Var buffer_var, DataType type, PrimExpr extent, PrimExpr condition,
+    .set_body_typed([](Var buffer_var, DataType type, Array<PrimExpr> shape, PrimExpr condition,
                        Stmt body, Map<String, ObjectRef> annotations, Span span) {
-      return Allocate(buffer_var, type, extent, condition, body, annotations, span);
+      return Allocate(buffer_var, type, shape, condition, body, annotations, span);
     });
 
 TVM_REGISTER_NODE_TYPE(AllocateNode);
