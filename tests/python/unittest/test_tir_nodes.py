@@ -481,7 +481,7 @@ def test_tir_allocate():
     allocate = tvm.tir.Allocate(
         buffer_var=a,
         dtype=dtype,
-        extent=4,
+        shape=4,
         condition=tvm.get_global_func("tir.const_true")(dtype, None),
         body=tvm.tir.Evaluate(2 + 1),
         annotations={

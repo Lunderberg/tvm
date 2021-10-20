@@ -161,7 +161,8 @@ def test_in_bounds_const_loop_partition_ir():
         if (
             isinstance(x, tvm.tir.AttrStmt)
             and x.attr_key == "buffer_bound"
-            and str(x.value) == str(n)
+            and len(x.value.args) == 1
+            and str(x.value.args[0]) == str(n)
         ):
             return True
         return False
