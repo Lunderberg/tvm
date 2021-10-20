@@ -122,7 +122,32 @@ class ArgBinder {
   const Map<Var, PrimExpr>& def_handle_dtype() const { return def_handle_dtype_; }
 
  private:
-  // Internal bind function
+  /*! \brief Internal bind function
+   *
+   * Binds argument `arg` to the value `value`.  If `arg` is a VarNode
+   * without a previous definition, this can be done through direct
+   * substitution.  Otherwise, this is done by asserting that `arg`
+   * and `value` are equal.  This assertion will be checked at
+   * compile-time if possible, or at runtime otherwise.
+   *
+   * \param arg The argument that should be replaced within some expression.
+   *
+   * \param value The value that should replace `value` in an expression.
+   *
+   * \param arg_name The name of the argument being replaced.  Used to
+   * generate appropriate error messages.  These error message may
+   * appear either at compile time or at runtime, depending on whether
+   * the condition can be statically checked.
+   *
+   * \param with_lets Changes how VarNode arguments are bound.  Only
+   * has effect if `arg` specifies a Var.  If true, the `arg` will
+   * continue to appear within the expression, but will have a Let()
+   * statement to define it.  If false, `arg` will be replaced by
+   * `value` within the expression.
+   *
+   * \returns is_new_variable_definition True if the binding resulted
+   * in a new definition of a variable, and false otherwise.
+   */
   bool Bind_(const PrimExpr& arg, const PrimExpr& value, const std::string& arg_name,
              bool with_lets);
   /*! \brief The definition map, can be uses to substitute */

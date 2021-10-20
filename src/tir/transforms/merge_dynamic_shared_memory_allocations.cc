@@ -65,11 +65,12 @@ class DynamicSharedMemoryRewriter : public StmtExprMutator {
       int align = 1;
       for (const auto& alloc : dyn_shmem_allocs_) {
         ICHECK_EQ(alloc->dtype.lanes(), 1) << "vector dtype allocation not supported.";
+        ICHECK_EQ(alloc->shape.size(), 1) << "N-d physical indices not supported.";
         align = std::max(align, alloc->dtype.bytes());
       }
       for (const auto& alloc : dyn_shmem_allocs_) {
         buffer_byte_offsets_[alloc->buffer_var.get()] = merged_alloc_size_;
-        merged_alloc_size_ += alloc->extent * align;
+        merged_alloc_size_ += alloc->shape[0] * align;
       }
 
       allocated = true;
@@ -90,8 +91,10 @@ class DynamicSharedMemoryRewriter : public StmtExprMutator {
   PrimExpr VisitExpr_(const LoadNode* op) final {
     if (IsDynamicSharedMemory(op->buffer_var)) {
       auto offset = GetBufferOffset(op->buffer_var, op->dtype);
-      auto index = StmtExprMutator::VisitExpr(op->index);
-      return Load(op->dtype, merged_buf_var_, offset + index, op->predicate, op->span);
+      auto indices = UpdateArray(op->indices, [&](const auto& index) {
+        return offset + StmtExprMutator::VisitExpr(index);
+      });
+      return Load(op->dtype, merged_buf_var_, indices, op->predicate, op->span);
     }
     return StmtExprMutator::VisitExpr_(op);
   }
@@ -99,9 +102,11 @@ class DynamicSharedMemoryRewriter : public StmtExprMutator {
   Stmt VisitStmt_(const StoreNode* op) final {
     if (IsDynamicSharedMemory(op->buffer_var)) {
       auto offset = GetBufferOffset(op->buffer_var, op->value->dtype);
-      auto index = StmtExprMutator::VisitExpr(op->index);
+      auto indices = UpdateArray(op->indices, [&](const auto& index) {
+        return offset + StmtExprMutator::VisitExpr(index);
+      });
       auto value = StmtExprMutator::VisitExpr(op->value);
-      return Store(merged_buf_var_, value, offset + index, op->predicate, op->span);
+      return Store(merged_buf_var_, value, indices, op->predicate, op->span);
     }
     return StmtExprMutator::VisitStmt_(op);
   }

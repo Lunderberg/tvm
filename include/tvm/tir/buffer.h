@@ -44,6 +44,72 @@ enum BufferType : int {
   kAutoBroadcast = 2,
 };
 
+/*! \brief Contains information on how to generate each physical axis
+ *
+ * Intended only for use as the `BufferNode::physical_axes` member
+ * variable.
+ */
+class BufferParamsPerPhysicalAxisNode : public Object {
+ public:
+  /*! \brief The first tensor axis to be used when generating the physical axis.
+   *
+   * Each physical axis is generated from a row-major traversal of all
+   * logical tensor axes starting at `first_tensor_axis`, and
+   * continuing until either the `first_tensor_axis` parameter of the
+   * next element in `BufferNode::physical_axes` if there is a next
+   * element, or to the last logical tensor axis otherwise.
+   */
+  int first_tensor_axis{0};
+
+  /*! \brief The offset in terms of number of dtype elements (including lanes)
+   *
+   * Note: This functionality cannot be entirely reproduced using
+   * buffer_bind/MatchBufferRegion.  `elem_offset` allows for Buffers
+   * of different type/nbits to be backed by the same allocation.
+   */
+  PrimExpr elem_offset;
+
+  /*!
+   * \brief Factor of elem_offset field.
+   *
+   *  elem_offset is guaranteed to be multiple of offset_factor.
+   */
+  int offset_factor{1};
+
+  void VisitAttrs(AttrVisitor* v) {
+    v->Visit("first_tensor_axis", &first_tensor_axis);
+    v->Visit("elem_offset", &elem_offset);
+    v->Visit("offset_factor", &offset_factor);
+  }
+
+  bool SEqualReduce(const BufferParamsPerPhysicalAxisNode* other, SEqualReducer equal) const {
+    return equal(this->first_tensor_axis, other->first_tensor_axis) &&
+           equal.DefEqual(this->elem_offset, other->elem_offset) &&
+           equal(this->offset_factor, other->offset_factor);
+  }
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce(first_tensor_axis);
+    hash_reduce.DefHash(elem_offset);
+    hash_reduce(offset_factor);
+  }
+
+  static constexpr const char* _type_key = "tir.BufferParamsPerPhysicalAxis";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
+  static constexpr const bool _type_has_method_shash_reduce = true;
+  TVM_DECLARE_FINAL_OBJECT_INFO(BufferParamsPerPhysicalAxisNode, Object);
+};
+
+class BufferParamsPerPhysicalAxis : public ObjectRef {
+ public:
+  TVM_DLL BufferParamsPerPhysicalAxis(int first_tensor_axis, PrimExpr elem_offset,
+                                      int offset_factor);
+
+  TVM_DEFINE_OBJECT_REF_METHODS(BufferParamsPerPhysicalAxis, ObjectRef,
+                                BufferParamsPerPhysicalAxisNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(BufferParamsPerPhysicalAxisNode);
+};
+
 /*! \brief Node to represent a buffer */
 class BufferNode : public Object {
  public:
@@ -53,27 +119,36 @@ class BufferNode : public Object {
    * \sa data_alignment The alignment of data in bytes.
    */
   Var data;
+
   /*! \brief data type in the content of the tensor */
   DataType dtype;
+
   /*! \brief The shape of the buffer */
   Array<PrimExpr> shape;
+
   /*!
    * \brief The strides of each dimension
    *  This can be an empty array, indicating array is contiguous
    */
   Array<PrimExpr> strides;
-  /*! \brief The offset in terms of number of dtype elements (including lanes) */
-  PrimExpr elem_offset;
+
+  /*! \brief Parameters used to generate the physical axes
+   *
+   * Each element of `physical_axes` specifies a physical axis to be
+   * generated, and parameters specific to that axis.  If undefined or
+   * empty, defaults to a single physical axis with
+   * `first_tensor_axis==0`.
+   *
+   * This list must be sorted by `first_tensor_axis`, and the first
+   * element must have `first_tensor_axis==0`.
+   */
+  Array<BufferParamsPerPhysicalAxis> physical_axes;
+
   // Meta data
   /*! \brief optional name of the buffer */
   String name;
   /*! \brief Alignment requirement of data pointer in bytes. */
   int data_alignment;
-  /*!
-   * \brief Factor of elem_offset field,
-   *  elem_offset is guaranteed to be multiple of offset_factor.
-   */
-  int offset_factor;
   /*! \brief buffer type */
   BufferType buffer_type;
   /*!
@@ -89,10 +164,9 @@ class BufferNode : public Object {
     v->Visit("dtype", &dtype);
     v->Visit("shape", &shape);
     v->Visit("strides", &strides);
-    v->Visit("elem_offset", &elem_offset);
+    v->Visit("physical_axes", &physical_axes);
     v->Visit("name", &name);
     v->Visit("data_alignment", &data_alignment);
-    v->Visit("offset_factor", &offset_factor);
     v->Visit("buffer_type", &buffer_type);
     v->Visit("span", &span);
   }
@@ -102,7 +176,7 @@ class BufferNode : public Object {
     // in its semantics, skip name as name is not important.
     return equal.DefEqual(data, other->data) && equal(dtype, other->dtype) &&
            equal.DefEqual(shape, other->shape) && equal.DefEqual(strides, other->strides) &&
-           equal.DefEqual(elem_offset, other->elem_offset) &&
+           equal.DefEqual(physical_axes, other->physical_axes) &&
            equal(data_alignment, other->data_alignment) && equal(buffer_type, other->buffer_type);
   }
 
@@ -111,7 +185,7 @@ class BufferNode : public Object {
     hash_reduce(dtype);
     hash_reduce.DefHash(shape);
     hash_reduce.DefHash(strides);
-    hash_reduce.DefHash(elem_offset);
+    hash_reduce.DefHash(physical_axes);
     hash_reduce(data_alignment);
     hash_reduce(buffer_type);
   }
@@ -127,7 +201,7 @@ class BufferNode : public Object {
    * without adjusting for number of lanes.  (e.g. The number of
    * float16x4 elements in a buffer of type float16x4.)
    */
-  PrimExpr ElemOffset(Array<PrimExpr> index) const;
+  Array<PrimExpr> ElemOffset(Array<PrimExpr> index) const;
 
   /*! \brief Return number of elements in the buffer
    *
@@ -149,10 +223,22 @@ class BufferNode : public Object {
  */
 class Buffer : public ObjectRef {
  public:
-  // User can specify data_alignment and offset_factor to be 0
-  // A default value will be picked.
+  /*! \brief Construct a Buffer object that will be lowered to flat
+   *   physical memory.
+   *
+   * If data_alignment or offset_factor are 0, a default value will be
+   * selected.
+   *
+   */
   TVM_DLL Buffer(Var ptr, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> strides,
                  PrimExpr elem_offset, String name, int data_alignment, int offset_factor,
+                 BufferType buffer_type, Span span = Span());
+
+  /*! \brief Construct a Buffer object that will be lowered to N-d
+   *   physical memory.
+   */
+  TVM_DLL Buffer(Var ptr, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> strides,
+                 String name, int data_alignment, Array<BufferParamsPerPhysicalAxis> physical_axes,
                  BufferType buffer_type, Span span = Span());
 
   /*!

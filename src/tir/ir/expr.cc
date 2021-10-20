@@ -611,11 +611,24 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       p->stream << ")";
     });
 
+PrimExpr LoadNode::flat_index() const {
+  ICHECK_EQ(indices.size(), 1) << "Cannot access " << indices.size() << "-d buffer "
+                               << buffer_var->name_hint << " as flat 1-d memory.";
+  return indices[0];
+}
+
 // Load
-Load::Load(DataType dtype, Var buffer_var, PrimExpr index, PrimExpr predicate, Span span) {
+Load::Load(DataType dtype, Var buffer_var, PrimExpr flat_index, PrimExpr predicate, Span span)
+    : Load(dtype, buffer_var, Array<PrimExpr>{flat_index}, predicate, span) {}
+
+Load::Load(DataType dtype, Var buffer_var, Array<PrimExpr> indices, PrimExpr predicate, Span span) {
   ICHECK(buffer_var.defined());
   ICHECK(predicate.defined());
-  ICHECK(index.defined());
+  ICHECK(indices.defined());
+  ICHECK(indices.size());
+  for (const auto& index : indices) {
+    ICHECK(index.defined());
+  }
 
   // Assume that the array elements have 1 lane, unless a type
   // annotation tells us otherwise.
@@ -648,15 +661,19 @@ Load::Load(DataType dtype, Var buffer_var, PrimExpr index, PrimExpr predicate, S
   // vectorized/non-vectorized arrays as needed.  Ideally, these
   // should be changed to explicit casts in the TIR graph, rather than
   // being handled at the code-gen level.
-  ICHECK((dtype.lanes() == element_lanes * index.dtype().lanes()) ||
-         (dtype.lanes() == index.dtype().lanes()));
+  int index_lanes = 1;
+  for (const auto& index : indices) {
+    index_lanes *= index.dtype().lanes();
+  }
+
+  ICHECK((dtype.lanes() == element_lanes * index_lanes) || (dtype.lanes() == index_lanes));
   ICHECK((dtype.lanes() == element_lanes * predicate.dtype().lanes()) ||
-         (dtype.lanes() == index.dtype().lanes()));
+         (dtype.lanes() == index_lanes));
 
   ObjectPtr<LoadNode> node = make_object<LoadNode>();
   node->dtype = dtype;
   node->buffer_var = std::move(buffer_var);
-  node->index = std::move(index);
+  node->indices = std::move(indices);
   node->predicate = std::move(predicate);
   node->span = std::move(span);
 
@@ -664,13 +681,16 @@ Load::Load(DataType dtype, Var buffer_var, PrimExpr index, PrimExpr predicate, S
 }
 
 TVM_REGISTER_GLOBAL("tir.Load").set_body([](TVMArgs args, TVMRetValue* ret) {
-  DataType t = args[0];
-  if (args.size() == 3) {
-    *ret = Load(t, args[1], args[2], const_true(t.lanes()), Span());
-  } else if (args.size() == 4) {
-    *ret = Load(t, args[1], args[2], args[3], Span());
+  DataType dtype = args[0];
+  Var buffer_var = args[1];
+  ObjectRef index = args[2];
+  PrimExpr predicate = args.size() > 3 ? args[3] : const_true(dtype.lanes());
+  Span span = args.size() > 4 ? args[4] : Span();
+
+  if (index->IsInstance<PrimExprNode>()) {
+    *ret = Load(dtype, buffer_var, Downcast<PrimExpr>(index), predicate, span);
   } else {
-    *ret = Load(t, args[1], args[2], args[3], args[4]);
+    *ret = Load(dtype, buffer_var, Downcast<Array<PrimExpr>>(index), predicate, span);
   }
 });
 
@@ -679,9 +699,8 @@ TVM_REGISTER_NODE_TYPE(LoadNode);
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<LoadNode>([](const ObjectRef& node, ReprPrinter* p) {
       auto* op = static_cast<const LoadNode*>(node.get());
-      p->stream << op->buffer_var << "[";
-      p->Print(op->index);
-      p->stream << "]";
+      p->stream << op->buffer_var;
+      p->Print(op->indices);
       if (!is_one(op->predicate)) {
         p->stream << " if ";
         p->Print(op->predicate);

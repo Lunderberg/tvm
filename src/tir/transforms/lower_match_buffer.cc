@@ -164,11 +164,16 @@ class MatchBufferLower : public StmtExprMutator {
                    << " required_alignment=" << buffer->data_alignment
                    << ", provided_alignment=" << source_buffer->data_alignment;
     }
-    if (is_zero(buffer->elem_offset)) {
-      ICHECK(is_zero(source_buffer->elem_offset))
-          << "Trying to bind a Buffer with offset into one without offset "
-          << " required elem_offset=" << buffer->elem_offset
-          << ", provided elem_offset=" << source_buffer->elem_offset;
+
+    ICHECK_EQ(buffer->physical_axes.size(), source_buffer->physical_axes.size())
+        << "Cannot bind with different number of physical axes";
+    for (size_t i = 0; i < buffer->physical_axes.size(); i++) {
+      if (is_zero(buffer->physical_axes[i]->elem_offset)) {
+        ICHECK(is_zero(source_buffer->physical_axes[i]->elem_offset))
+            << "Trying to bind a Buffer with offset into one without offset "
+            << " required elem_offset=" << buffer->physical_axes[i]->elem_offset
+            << ", provided elem_offset=" << source_buffer->physical_axes[i]->elem_offset;
+      }
     }
 
     // Step.2. Update
@@ -186,10 +191,17 @@ class MatchBufferLower : public StmtExprMutator {
       }
 
       Load load = Downcast<Load>(source_buffer.vload(indices, source_buffer->dtype));
-      Bind(buffer->elem_offset, load->index, buffer->name + ".elem_offset");
-      CHECK(analyzer_.CanProve(truncmod(buffer->elem_offset, buffer->offset_factor) == 0))
-          << "The source elem_offset " << load->index << " does not satisfy the offset_factor "
-          << buffer->offset_factor << ".";
+
+      ICHECK_EQ(load->indices.size(), buffer->physical_axes.size());
+      for (size_t i = 0; i < load->indices.size(); i++) {
+        Bind(buffer->physical_axes[i]->elem_offset, load->indices[i],
+             buffer->name + ".elem_offset");
+        CHECK(analyzer_.CanProve(truncmod(buffer->physical_axes[i]->elem_offset,
+                                          buffer->physical_axes[i]->offset_factor) == 0))
+            << "The source elem_offset " << load->indices[i]
+            << " does not satisfy the offset_factor " << buffer->physical_axes[i]->offset_factor
+            << ".";
+      }
     }
 
     // Step 2.3. Check and update strides

@@ -87,9 +87,19 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     Stmt stmt = Parent::VisitStmt_(op);
     op = stmt.as<StoreNode>();
     if (const LoadNode* load = op->value.as<LoadNode>()) {
-      if (load->buffer_var.same_as(op->buffer_var) &&
-          tir::ExprDeepEqual()(load->index, op->index)) {
-        return Evaluate(0);
+      if (load->buffer_var.same_as(op->buffer_var)) {
+        bool all_equal = true;
+        ICHECK_EQ(op->indices.size(), load->indices.size())
+            << "Buffer var " << op->buffer_var << " access with inconsistent physical dimension.";
+        for (size_t i = 0; i < op->indices.size(); i++) {
+          if (!tir::ExprDeepEqual()(load->indices[0], op->indices[0])) {
+            all_equal = false;
+            break;
+          }
+        }
+        if (all_equal) {
+          return Evaluate(0);
+        }
       }
     }
     return GetRef<Stmt>(op);

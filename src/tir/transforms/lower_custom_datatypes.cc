@@ -96,7 +96,7 @@ class CustomDatatypesLowerer : public StmtExprMutator {
       Stmt stmt = StmtExprMutator::VisitStmt_(allocate);
       allocate = stmt.as<AllocateNode>();
 
-      return Allocate(new_buffer_var, new_allocate_type, allocate->extent, allocate->condition,
+      return Allocate(new_buffer_var, new_allocate_type, allocate->shape, allocate->condition,
                       allocate->body);
     } else {
       return StmtExprMutator::VisitStmt_(allocate);
@@ -114,7 +114,7 @@ class CustomDatatypesLowerer : public StmtExprMutator {
       if (it != var_remap_.end()) {
         buffer_var = it->second;
       }
-      return Load(new_load_type, buffer_var, load->index, load->predicate);
+      return Load(new_load_type, buffer_var, load->indices, load->predicate);
     }
     return expr;
   }
@@ -125,7 +125,7 @@ class CustomDatatypesLowerer : public StmtExprMutator {
 
     auto it = var_remap_.find(op->buffer_var);
     if (it != var_remap_.end()) {
-      return Store(it->second, op->value, op->index, op->predicate);
+      return Store(it->second, op->value, op->indices, op->predicate);
     } else {
       return ret;
     }

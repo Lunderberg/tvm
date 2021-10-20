@@ -43,7 +43,12 @@ class UnsafeExprDetector : public ExprFunctor<bool(const PrimExpr& n)> {
       return VisitExpr(op->args[0]);
     } else if (op->op.same_as(builtin::address_of())) {
       const LoadNode* l = op->args[0].as<LoadNode>();
-      return this->VisitExpr(l->index);
+      for (const auto& index : l->indices) {
+        if (this->VisitExpr(index)) {
+          return true;
+        }
+      }
+      return false;
     } else if (auto* ptr_op = op->op.as<OpNode>()) {
       auto effect_kind = op_call_effect_[GetRef<Op>(ptr_op)];
       if (effect_kind == CallEffectKind::kPure || effect_kind == CallEffectKind::kExprAnnotation) {

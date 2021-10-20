@@ -31,6 +31,7 @@
 #include <unordered_map>
 
 #include "../../runtime/thread_storage_scope.h"
+#include "../ir/functor_common.h"
 #include "ir_utils.h"
 
 namespace tvm {
@@ -60,20 +61,28 @@ PrimExpr UpdatePointerStorageScope::VisitExpr_(const VarNode* op) {
 
 PrimExpr UpdatePointerStorageScope::VisitExpr_(const LoadNode* op) {
   auto remapped = StmtExprMutator::VisitExpr(op->buffer_var);
-  return Load(op->dtype, Downcast<Var>(remapped), StmtExprMutator::VisitExpr(op->index),
+  auto indices = VisitArray(op->indices);
+  return Load(op->dtype, Downcast<Var>(remapped), indices,
               StmtExprMutator::VisitExpr(op->predicate));
 }
 
 Stmt UpdatePointerStorageScope::VisitStmt_(const AllocateNode* op) {
   auto remapped = Downcast<Var>(StmtExprMutator::VisitExpr(op->buffer_var));
-  return Allocate(remapped, op->dtype, op->extent, StmtExprMutator::VisitExpr(op->condition),
+  auto shape = VisitArray(op->shape);
+  return Allocate(remapped, op->dtype, shape, StmtExprMutator::VisitExpr(op->condition),
                   StmtExprMutator::VisitStmt(op->body));
 }
 
 Stmt UpdatePointerStorageScope::VisitStmt_(const StoreNode* op) {
   auto remapped = StmtExprMutator::VisitExpr(op->buffer_var);
-  return Store(Downcast<Var>(remapped), StmtExprMutator::VisitExpr(op->value),
-               StmtExprMutator::VisitExpr(op->index), StmtExprMutator::VisitExpr(op->predicate));
+  auto indices = VisitArray(op->indices);
+  return Store(Downcast<Var>(remapped), StmtExprMutator::VisitExpr(op->value), indices,
+               StmtExprMutator::VisitExpr(op->predicate));
+}
+
+Array<PrimExpr> UpdatePointerStorageScope::VisitArray(const Array<PrimExpr>& arr) {
+  auto fmutate = [this](const PrimExpr& e) { return this->VisitExpr(e); };
+  return MutateArray(arr, fmutate);
 }
 
 }  // namespace tir

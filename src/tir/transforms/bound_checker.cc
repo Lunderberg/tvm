@@ -43,25 +43,27 @@ class BoundCollector : public StmtVisitor {
 
   void VisitStmt_(const AttrStmtNode* op) final {
     if (op->attr_key == tir::attr::buffer_bound) {
-      if (const VarNode* key = op->node.as<VarNode>()) {
-        mem_to_shape[key] = op->value;
+      const VarNode* key = op->node.as<VarNode>();
+      const CallNode* container = op->value.as<CallNode>();
+      if (key && container) {
+        mem_to_shape[key] = container->args;
       }
     }
     StmtVisitor::VisitStmt_(op);
   }
   // Hashtable which maps buffer_var to shape.
-  std::unordered_map<const VarNode*, PrimExpr> mem_to_shape;
+  std::unordered_map<const VarNode*, Array<PrimExpr>> mem_to_shape;
 };
 
 class BoundChecker : public StmtExprMutator {
  public:
-  explicit BoundChecker(const std::unordered_map<const VarNode*, PrimExpr>& mem_to_shape)
+  explicit BoundChecker(const std::unordered_map<const VarNode*, Array<PrimExpr>>& mem_to_shape)
       : mem_to_shape_(mem_to_shape) {}
 
   Stmt VisitStmt_(const AllocateNode* op) final {
     // If the shape was updated we should update the hashtable.
     if (UpdateIsNeeded(op->buffer_var)) {
-      Update(op->buffer_var, op->extent, op->dtype);
+      Update(op->buffer_var, op->shape, op->dtype);
     }
     return StmtExprMutator::VisitStmt_(op);
   }
@@ -79,15 +81,15 @@ class BoundChecker : public StmtExprMutator {
     unsafe_rewritten_ = false;
     StmtExprMutator::VisitStmt_(op);
     process_store_ = false;
-    if (CanInstrument(op->index, op->buffer_var)) {
-      Collect(op->index, op->buffer_var);
+    if (CanInstrument(op->indices, op->buffer_var)) {
+      Collect(op->indices, op->buffer_var);
     }
-    // The collector should has at least one item.
+    // The collector should have at least one item.
     if (store_scope_bound_collector_.size()) {
       PrimExpr condition = MakeCondition();
       if (!condition.as<StringImmNode>()) {
         Stmt nop = Evaluate(1);
-        Stmt then_case = Store(op->buffer_var, op->value, op->index, op->predicate);
+        Stmt then_case = GetRef<Stmt>(op);
         Stmt else_case = AssertStmt(condition, StringImm(error_message_), nop);
         Stmt body = IfThenElse(condition, then_case, else_case);
         return body;
@@ -97,8 +99,8 @@ class BoundChecker : public StmtExprMutator {
   }
 
   PrimExpr VisitExpr_(const LoadNode* op) final {
-    if (CanInstrument(op->index, op->buffer_var)) {
-      Collect(op->index, op->buffer_var);
+    if (CanInstrument(op->indices, op->buffer_var)) {
+      Collect(op->indices, op->buffer_var);
     }
     return StmtExprMutator::VisitExpr_(op);
   }
@@ -108,65 +110,106 @@ class BoundChecker : public StmtExprMutator {
     return (buffer_var.defined() && mem_to_shape_.count(buffer_var.get()));
   }
 
-  void Update(const Var& buffer_var, const PrimExpr new_extent, const DataType& type) {
+  void Update(const Var& buffer_var, Array<PrimExpr> new_shape, const DataType& type) {
     // Sanity check at first.
-    if (!new_extent.defined() || !new_extent.dtype().is_scalar() || is_negative_const(new_extent)) {
+    if (!ShapeIsValid(new_shape)) {
       return;
     }
 
-    // Define the extent including lanes.
-    mem_to_shape_[buffer_var.get()] = Mul(make_const(DataType::UInt(64), type.lanes()), new_extent);
+    // Define the shape including lanes.
+    new_shape.MutateByApply([&](const PrimExpr& dim) {
+      return Mul(make_const(DataType::UInt(64), type.lanes()), dim);
+    });
+    mem_to_shape_[buffer_var.get()] = new_shape;
   }
 
-  bool IndexIsValid(const PrimExpr& index) const {
-    if (!index.defined()) {
+  bool ShapeIsValid(const Array<PrimExpr>& shape) const {
+    if (!shape.defined()) {
+      return false;
+    }
+    for (const auto& dim : shape) {
+      if (!IsValidScalar(dim) || is_negative_const(dim)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool IndicesAreValid(const Array<PrimExpr>& indices) const {
+    if (!indices.defined()) {
       return false;
     }
 
-    if (const RampNode* ramp_index = index.as<RampNode>()) {
-      return ramp_index->base.defined() && ramp_index->base.dtype().is_scalar() &&
-             ramp_index->stride.defined() && ramp_index->stride.dtype().is_scalar() &&
-             (ramp_index->lanes > 0);
+    for (const auto& index : indices) {
+      if (!index.defined()) {
+        return false;
+      }
+
+      if (const RampNode* ramp_index = index.as<RampNode>()) {
+        if (!IsValidScalar(ramp_index->base)) {
+          return false;
+        }
+        if (!IsValidScalar(ramp_index->stride)) {
+          return false;
+        }
+        if (ramp_index->lanes == 0) {
+          return false;
+        }
+      }
     }
     return true;
   }
 
-  bool CanInstrument(const PrimExpr& index, const Var& buffer_var) const {
-    return buffer_var.defined() && mem_to_shape_.count(buffer_var.get()) && IndexIsValid(index) &&
-           !unsafe_rewritten_;
+  bool IsValidScalar(const PrimExpr& expr) const {
+    return expr.defined() && expr.dtype().is_scalar();
   }
 
-  void Collect(PrimExpr index, Var buffer_var) {
-    store_scope_bound_collector_.push_back(std::make_pair(index, mem_to_shape_[buffer_var.get()]));
+  bool CanInstrument(const Array<PrimExpr>& indices, const Var& buffer_var) const {
+    return buffer_var.defined() && mem_to_shape_.count(buffer_var.get()) &&
+           IndicesAreValid(indices) && !unsafe_rewritten_;
+  }
+
+  void Collect(Array<PrimExpr> indices, Var buffer_var) {
+    store_scope_bound_collector_.push_back(
+        std::make_pair(indices, mem_to_shape_[buffer_var.get()]));
   }
 
   PrimExpr MakeCondition() {
     PrimExpr condition;
-    for (size_t i = 0; i < store_scope_bound_collector_.size(); ++i) {
-      std::pair<PrimExpr, PrimExpr> buffer_to_mem = store_scope_bound_collector_[i];
-      PrimExpr index = buffer_to_mem.first;
-      PrimExpr upper_bound = buffer_to_mem.second;
+    for (const auto& pair : store_scope_bound_collector_) {
+      Array<PrimExpr> indices = pair.first;
+      Array<PrimExpr> shape = pair.second;
 
-      if (const RampNode* ramp_index = index.as<RampNode>()) {
-        // In case index is base + stride * i.
-        // Non inclusive range.
-        index = Add(ramp_index->base, Mul(ramp_index->stride, make_const(ramp_index->stride.dtype(),
-                                                                         ramp_index->lanes - 1)));
+      ICHECK_EQ(indices.size(), shape.size())
+          << "Mismatch between dimension of physical shape and physical indices";
+
+      for (size_t i = 0; i < indices.size(); i++) {
+        PrimExpr index = indices[i];
+        PrimExpr upper_bound = shape[i];
+
+        if (const RampNode* ramp_index = index.as<RampNode>()) {
+          // In case index is base + stride * i.
+          // Non inclusive range.
+          index = Add(ramp_index->base,
+                      Mul(ramp_index->stride,
+                          make_const(ramp_index->stride.dtype(), ramp_index->lanes - 1)));
+        }
+
+        // Try to simplify index and bound.
+        index = analyzer_.Simplify(index);
+        upper_bound = analyzer_.Simplify(upper_bound);
+
+        // Cast to the same type - signed, to be able to check lower bound.
+        index = Cast(DataType::Int(64), index);
+        upper_bound = Cast(DataType::Int(64), upper_bound);
+
+        // Looks like a lower bound should always be zero after normalization.
+        PrimExpr lower_bound = make_zero(DataType::Int(64));
+
+        PrimExpr current_condition = And(GE(index, lower_bound), LT(index, upper_bound));
+        condition = condition.defined() ? And(condition, current_condition) : current_condition;
       }
-
-      // Try to simplify index and bound.
-      index = analyzer_.Simplify(index);
-      upper_bound = analyzer_.Simplify(upper_bound);
-
-      // Cast to the same type - signed, to be able to check lower bound.
-      index = Cast(DataType::Int(64), index);
-      upper_bound = Cast(DataType::Int(64), upper_bound);
-
-      // Looks like a lower bound should always be zero after normalization.
-      PrimExpr lower_bound = make_zero(DataType::Int(64));
-
-      PrimExpr current_condition = And(GE(index, lower_bound), LT(index, upper_bound));
-      condition = !i ? current_condition : And(condition, current_condition);
     }
     return condition;
   }
@@ -175,12 +218,12 @@ class BoundChecker : public StmtExprMutator {
   bool process_store_{false};
   // Whether we face tvm_if_then_else intrinsic.
   bool unsafe_rewritten_{false};
-  // Pool which collects the pair of index and shape for specific store/load.
-  std::vector<std::pair<PrimExpr, PrimExpr>> store_scope_bound_collector_;
+  // Pool which collects the pair of indices and shape for specific store/load.
+  std::vector<std::pair<Array<PrimExpr>, Array<PrimExpr>>> store_scope_bound_collector_;
   // Error message.
   const char* const error_message_ = "OUT OF THE BOUNDS";
   // Hashtable which maps buffer_var to shape.
-  std::unordered_map<const VarNode*, PrimExpr> mem_to_shape_;
+  std::unordered_map<const VarNode*, Array<PrimExpr>> mem_to_shape_;
   // internal analyzer
   arith::Analyzer analyzer_;
 };

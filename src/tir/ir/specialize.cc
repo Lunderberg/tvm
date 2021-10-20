@@ -205,14 +205,22 @@ class PrimFuncSpecializer : public StmtExprMutator {
     Array<PrimExpr> strides =
         MutateArray(buffer->strides, [this](const PrimExpr& e) { return VisitExpr(e); });
 
-    PrimExpr elem_offset = VisitExpr(buffer->elem_offset);
+    Array<BufferParamsPerPhysicalAxis> physical_axes =
+        MutateArray(buffer->physical_axes, [this](auto params) {
+          PrimExpr elem_offset = VisitExpr(params->elem_offset);
+          if (!elem_offset.same_as(params->elem_offset)) {
+            auto write_ptr = params.CopyOnWrite();
+            write_ptr->elem_offset = elem_offset;
+          }
+          return params;
+        });
 
-    if (buffer->elem_offset.same_as(elem_offset) && buffer->shape.same_as(shape) &&
+    if (buffer->physical_axes.same_as(physical_axes) && buffer->shape.same_as(shape) &&
         buffer->strides.same_as(strides)) {
       return buffer;
     } else {
       auto n = make_object<BufferNode>(*buffer.get());
-      n->elem_offset = std::move(elem_offset);
+      n->physical_axes = std::move(physical_axes);
       n->shape = std::move(shape);
       n->strides = std::move(strides);
       return Buffer(n);
@@ -313,6 +321,11 @@ void UpdateSpecializeVarMap(const PrimFunc& func, const Var& param, const Buffer
       << "ValueError: The buffer strides dimensions mismatched" << buf_to_specialize->strides.size()
       << " vs. " << specific_buf->strides.size() << ".";
 
+  CHECK(specific_buf->physical_axes.size() == buf_to_specialize->physical_axes.size())
+      << "ValueError: The buffer physical_axes dimensions mismatched"
+      << buf_to_specialize->physical_axes.size() << " vs. " << specific_buf->physical_axes.size()
+      << ".";
+
   // Updating var mapping using specific_expr
   for (size_t i = 0; i < specific_buf->shape.size(); ++i) {
     build_var_mapping(specific_buf->shape[i], buf_to_specialize->shape[i]);
@@ -320,17 +333,28 @@ void UpdateSpecializeVarMap(const PrimFunc& func, const Var& param, const Buffer
   for (size_t i = 0; i < specific_buf->strides.size(); ++i) {
     build_var_mapping(specific_buf->strides[i], buf_to_specialize->strides[i]);
   }
-  build_var_mapping(specific_buf->elem_offset, buf_to_specialize->elem_offset);
+  for (size_t i = 0; i < specific_buf->physical_axes.size(); ++i) {
+    build_var_mapping(specific_buf->physical_axes[i]->elem_offset,
+                      buf_to_specialize->physical_axes[i]->elem_offset);
+
+    CHECK_EQ(specific_buf->physical_axes[i]->offset_factor,
+             buf_to_specialize->physical_axes[i]->offset_factor)
+        << "ValueError: The buffer offset_factor[" << i << "] mismatched"
+        << buf_to_specialize->physical_axes[i]->offset_factor << " vs. "
+        << specific_buf->physical_axes[i]->offset_factor << ".";
+
+    CHECK_EQ(specific_buf->physical_axes[i]->first_tensor_axis,
+             buf_to_specialize->physical_axes[i]->first_tensor_axis)
+        << "ValueError: The buffer first_tensor_axis[" << i << "]  mismatched"
+        << buf_to_specialize->physical_axes[i]->first_tensor_axis << " vs. "
+        << specific_buf->physical_axes[i]->first_tensor_axis << ".";
+  }
 
   // Check data_alignment and offset_factor.
   // These two signatures are int, so we do not need map them.
   CHECK_EQ(specific_buf->data_alignment, buf_to_specialize->data_alignment)
       << "ValueError: The buffer data_alignment mismatched" << buf_to_specialize->data_alignment
       << " vs. " << specific_buf->data_alignment << ".";
-
-  CHECK_EQ(specific_buf->offset_factor, buf_to_specialize->offset_factor)
-      << "ValueError: The buffer offset_factor mismatched" << buf_to_specialize->offset_factor
-      << " vs. " << specific_buf->offset_factor << ".";
 }
 
 /*!

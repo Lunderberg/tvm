@@ -36,6 +36,14 @@ namespace tir {
 
 using runtime::PackedFunc;
 
+/* \brief Identify/replace memory copies with DMA intrinsics.
+ *
+ * Copying from one buffer to another is typically done with nested
+ * For loops that Load from an input buffer and Store to an output
+ * buffer.  If such a copy is annotated with a custom pragma statement,
+ *
+ *
+ */
 class CopyIntrinInjector : public StmtMutator {
  public:
   CopyIntrinInjector(const std::string& pragma_key, const PackedFunc& flower_copy_fromto)
@@ -90,8 +98,14 @@ class CopyIntrinInjector : public StmtMutator {
     for (const ForNode* op : loops) {
       loop_vars.push_back(op->loop_var);
     }
-    Array<PrimExpr> store_strides = arith::DetectLinearEquation(store->index, loop_vars);
-    Array<PrimExpr> load_strides = arith::DetectLinearEquation(load->index, loop_vars);
+
+    ICHECK_EQ(store->indices.size(), 1)
+        << "InjectCopyIntrin only implemented for flat memory buffers";
+    ICHECK_EQ(load->indices.size(), 1)
+        << "InjectCopyIntrin only implemented for flat memory buffers";
+
+    Array<PrimExpr> store_strides = arith::DetectLinearEquation(store->indices[0], loop_vars);
+    Array<PrimExpr> load_strides = arith::DetectLinearEquation(load->indices[0], loop_vars);
     if (load_strides.size() == 0 || store_strides.size() == 0) return false;
     Array<PrimExpr> dst_shape;
     const size_t loop_var_size = loop_vars.size();

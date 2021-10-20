@@ -711,30 +711,43 @@ class LoadNode : public PrimExprNode {
  public:
   /*! \brief The buffer variable. */
   Var buffer_var;
-  /*! \brief The index locations to be loaded. */
-  PrimExpr index;
+  /*! \brief The physical index location to be stored.
+   *
+   * For flat memory (e.g. RAM memory), `indices` will be a 1-d value
+   * regardless of the logical shape of the original tensor.  If
+   * `indices.size() > 1`, the interpretation is runtime-specific.
+   * For example, OpenCL runtimes may use a 2-d shape to represent
+   * texture memory, which is allocated and accessed with 2 indices.
+   *
+   * If a runtime supports only 1-d buffer shapes and indices, it
+   * should use `LoadNode::flat_index()` to assert flat memory and
+   * access the index into the buffer.
+   */
+  Array<PrimExpr> indices;
   /*! \brief The predicate to mask which lanes would be loaded. */
   PrimExpr predicate;
 
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
     v->Visit("buffer_var", &buffer_var);
-    v->Visit("index", &index);
+    v->Visit("indices", &indices);
     v->Visit("predicate", &predicate);
     v->Visit("span", &span);
   }
 
   bool SEqualReduce(const LoadNode* other, SEqualReducer equal) const {
     return equal(dtype, other->dtype) && equal(buffer_var, other->buffer_var) &&
-           equal(index, other->index) && equal(predicate, other->predicate);
+           equal(indices, other->indices) && equal(predicate, other->predicate);
   }
 
   void SHashReduce(SHashReducer hash_reduce) const {
     hash_reduce(dtype);
     hash_reduce(buffer_var);
-    hash_reduce(index);
+    hash_reduce(indices);
     hash_reduce(predicate);
   }
+
+  PrimExpr flat_index() const;
 
   static constexpr const char* _type_key = "tir.Load";
   TVM_DECLARE_FINAL_OBJECT_INFO(LoadNode, PrimExprNode);
@@ -748,6 +761,10 @@ class Load : public PrimExpr {
  public:
   TVM_DLL Load(DataType dtype, Var buffer_var, PrimExpr index, PrimExpr predicate,
                Span span = Span());
+
+  TVM_DLL Load(DataType dtype, Var buffer_var, Array<PrimExpr> indices, PrimExpr predicate,
+               Span span = Span());
+
   TVM_DEFINE_OBJECT_REF_METHODS(Load, PrimExpr, LoadNode);
 };
 

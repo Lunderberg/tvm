@@ -94,9 +94,13 @@ class VarUseDefAnalysis : public StmtExprMutator {
     this->HandleDef(op->buffer_var.get());
     auto storage_scope = runtime::StorageScope::Create(GetPtrStorageScope(op->buffer_var));
     if (storage_scope.rank == runtime::StorageRank::kShared && storage_scope.tag == ".dyn") {
-      ICHECK_EQ(use_dyn_shmem_, false) << "Only one dynamic shared memory allocation is allowed.";
-      ICHECK(op->extent.defined());
-      dyn_shmem_size_ = op->extent * op->dtype.bytes();
+      ICHECK_EQ(use_dyn_shmem_, false)
+          << "Only one dynamic shared memory allocation is allowed.  "
+          << "Please run tir.transform.MergeDynamicSharedMemoryAllocations.";
+      ICHECK_EQ(op->shape.size(), 1)
+          << "N-d physical indices for dynamic shared memory not supported.";
+      ICHECK(op->shape[0].defined());
+      dyn_shmem_size_ = op->shape[0] * op->dtype.bytes();
       use_dyn_shmem_ = true;
     }
     return StmtExprMutator::VisitStmt_(op);

@@ -34,15 +34,20 @@ namespace tvm {
 namespace tir {
 
 void BinderAddAssert(arith::Analyzer* ana, PrimExpr cond, const std::string& arg_name,
-                     std::vector<Stmt>* asserts) {
+                     std::vector<Stmt>* asserts, std::string extra_info = "") {
   PrimExpr scond = ana->Simplify(cond);
+
+  if (extra_info.length()) {
+    extra_info = ", " + extra_info;
+  }
+
   if (is_zero(scond)) {
     LOG(FATAL) << "Bind have an unmet assertion: " << cond << ", "
-               << " on argument " << arg_name;
+               << " on argument " << arg_name << extra_info;
   }
   if (!is_one(scond)) {
     std::ostringstream os;
-    os << "Argument " << arg_name << " has an unsatisfied constraint: " << cond;
+    os << "Argument " << arg_name << " has an unsatisfied constraint: " << cond << extra_info;
     asserts->emplace_back(AssertStmt(scond, tvm::tir::StringImm(os.str()), Evaluate(0)));
   }
 }
@@ -96,24 +101,37 @@ void ArgBinder::BindBuffer(const Buffer& arg, const Buffer& value, const std::st
                  << " required_alignment=" << arg->data_alignment
                  << ", provided_alignment=" << value->data_alignment;
   }
-  // bind pointer and offset.
-  if (is_zero(arg->elem_offset)) {
-    ICHECK(is_zero(value->elem_offset))
-        << "Trying to bind a Buffer with offset into one without offset "
-        << " required elem_offset=" << arg->elem_offset
-        << ", provided elem_offset=" << value->elem_offset;
-  }
+  // Bind offset.
 
-  this->Bind(arg->data, value->data, arg_name + ".data");
-  if (Bind_(arg->elem_offset, value->elem_offset, arg_name + ".elem_offset", false)) {
-    if (arg->offset_factor > 1) {
-      PrimExpr offset = value->elem_offset;
-      PrimExpr factor = make_const(offset.dtype(), arg->offset_factor);
-      PrimExpr zero = make_zero(offset.dtype());
-      BinderAddAssert(&analyzer_, truncmod(offset, factor) == zero, arg_name + ".elem_offset",
-                      &asserts_);
+  // TODO(Lunderberg): Is this conditional necessary?  Should there be
+  // a special case if one or both of these is an empty array?
+  ICHECK_EQ(arg->physical_axes.size(), value->physical_axes.size())
+      << "Cannot bind with different number of physical axes";
+  for (size_t i = 0; i < arg->physical_axes.size(); i++) {
+    PrimExpr arg_elem_offset = arg->physical_axes[i]->elem_offset;
+    int arg_offset_factor = arg->physical_axes[i]->offset_factor;
+    PrimExpr value_elem_offset = value->physical_axes[i]->elem_offset;
+
+    if (is_zero(arg_elem_offset)) {
+      ICHECK(is_zero(value_elem_offset))
+          << "Trying to bind a Buffer with offset into one without offset "
+          << " required elem_offset=" << arg_elem_offset
+          << ", provided elem_offset=" << value_elem_offset;
+    }
+
+    if (Bind_(arg_elem_offset, value_elem_offset, arg_name + ".elem_offset", false)) {
+      if (arg_offset_factor > 1) {
+        PrimExpr offset = value_elem_offset;
+        PrimExpr factor = make_const(offset.dtype(), arg_offset_factor);
+        PrimExpr zero = make_zero(offset.dtype());
+        BinderAddAssert(&analyzer_, truncmod(offset, factor) == zero, arg_name + ".elem_offset",
+                        &asserts_);
+      }
     }
   }
+
+  // Bind data pointer
+  this->Bind(arg->data, value->data, arg_name + ".data");
 
   if (arg->shape.size() < value->shape.size()) {
     ICHECK(fuzzy_match) << "Argument " << arg_name << " size mismatch";
@@ -267,19 +285,26 @@ void ArgBinder::BindDLTensor(const Buffer& buffer, const PrimExpr& device_type,
   // Byte_offset field.
   int data_bytes = GetVectorBytes(buffer->dtype);
 
-  if (const auto* const_offset = buffer->elem_offset.as<IntImmNode>()) {
-    Bind_(make_const(DataType::UInt(64), const_offset->value * data_bytes),
-          TVMArrayGet(DataType::UInt(64), handle, builtin::kArrByteOffset),
+  PrimExpr tensor_byte_offset = TVMArrayGet(DataType::UInt(64), handle, builtin::kArrByteOffset);
+  PrimExpr buffer_elem_offset = buffer->physical_axes[0]->elem_offset;
+  int buffer_offset_factor = buffer->physical_axes[0]->offset_factor;
+
+  if (buffer->physical_axes.size() > 1) {
+    BinderAddAssert(&analyzer_, tensor_byte_offset == 0, arg_name + ".byte_offset", &asserts_,
+                    "Binding tensor with non-zero byte_offset, a 1-d parameter, to buffer with "
+                    "multi-dimensional physical layout not supported.");
+  } else if (const auto* const_offset = buffer_elem_offset.as<IntImmNode>()) {
+    Bind_(make_const(DataType::UInt(64), const_offset->value * data_bytes), tensor_byte_offset,
           arg_name + ".byte_offset", true);
   } else {
-    if (Bind_(buffer->elem_offset,
-              cast(buffer->elem_offset.dtype(),
+    if (Bind_(buffer_elem_offset,
+              cast(buffer_elem_offset.dtype(),
                    (TVMArrayGet(DataType::UInt(64), handle, builtin::kArrByteOffset) /
                     make_const(DataType::UInt(64), data_bytes))),
               arg_name + ".elem_offset", true)) {
-      if (buffer->offset_factor > 1) {
-        PrimExpr offset = buffer->elem_offset;
-        PrimExpr factor = make_const(offset.dtype(), buffer->offset_factor);
+      if (buffer_offset_factor > 1) {
+        PrimExpr offset = buffer_elem_offset;
+        PrimExpr factor = make_const(offset.dtype(), buffer_offset_factor);
         PrimExpr zero = make_zero(offset.dtype());
         BinderAddAssert(&analyzer_, truncmod(offset, factor) == zero, arg_name + ".elem_offset",
                         &asserts_);

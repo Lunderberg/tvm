@@ -113,6 +113,8 @@ inline Array<Tensor> make_extern(const Array<Array<PrimExpr> >& out_shapes,
  */
 inline PrimExpr pack_buffer(Buffer buf) {
   ICHECK_GT(buf->shape.size(), 0) << "buf shape must have at least one element";
+  ICHECK_EQ(buf->physical_axes.size(), 1)
+      << "Buffers used for extern calls should be backed by flat memory.";
   auto shape =
       tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), buf->shape);
   PrimExpr strides;
@@ -127,7 +129,7 @@ inline PrimExpr pack_buffer(Buffer buf) {
                             strides,
                             make_const(DataType::Int(32), static_cast<int64_t>(buf->shape.size())),
                             make_const(buf->dtype, 0),
-                            buf->elem_offset};
+                            buf->physical_axes[0]->elem_offset};
   return tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_array(), pack_args);
 }
 

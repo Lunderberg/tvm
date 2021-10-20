@@ -16,12 +16,14 @@
 # under the License.
 """Abstraction for array data structures."""
 from numbers import Integral
-import tvm._ffi
+from typing import Optional
 
+import tvm._ffi
 from tvm._ffi.base import string_types
 from tvm.runtime import Object, convert
 from tvm.ir import PrimExpr, PointerType, PrimType
 from . import _ffi_api
+from .expr import Var
 
 
 @tvm._ffi.register_object("tir.Buffer")
@@ -143,6 +145,62 @@ class Buffer(Object):
         """
         return _ffi_api.BufferStorageScope(self)  # type: ignore
 
+    @property
+    def elem_offset(self):
+        """Returns the elem_offset of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring parameters for each physical axis
+        into `physical_axes`.
+        """
+        physical_axes = self.physical_axes
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Buffer.elem_offset on flat 1-d memory")
+        else:
+            return physical_axes[0].elem_offset
+
+    @elem_offset.setter
+    def elem_offset(self, value):
+        """Sets the elem_offset of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring parameters for each physical axis
+        into `physical_axes`.
+        """
+        physical_axes = self.physical_axes
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Buffer.elem_offset on flat 1-d memory")
+        else:
+            physical_axes[0].elem_offset = value
+
+    @property
+    def offset_factor(self):
+        """Returns the offset_factor of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring parameters for each physical axis
+        into `physical_axes`.
+        """
+        physical_axes = self.physical_axes
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Buffer.offset_factor on flat 1-d memory")
+        else:
+            return physical_axes[0].offset_factor
+
+    @offset_factor.setter
+    def offset_factor(self, value):
+        """Sets the offset_factor of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring parameters for each physical axis
+        into `physical_axes`.
+        """
+        physical_axes = self.physical_axes
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Buffer.offset_factor on flat 1-d memory")
+        else:
+            physical_axes[0].offset_factor = value
+
 
 def decl_buffer(
     shape,
@@ -156,6 +214,7 @@ def decl_buffer(
     offset_factor=0,
     buffer_type="",
     span=None,
+    physical_axes=None,
 ):
     """Declare a new symbolic buffer.
 
@@ -166,46 +225,65 @@ def decl_buffer(
 
     Parameters
     ----------
-    shape : tuple of Expr
-        The shape of the buffer.
+    shape : Union[tvm.tir.PrimExpr, Tuple[tvm.tir.PrimExpr]]
+        The logical shape of the buffer.
 
-    dtype : str, optional
+    dtype : Optional[str]
         The data type of the buffer.
 
-    name : str, optional
+    name : Optional[str]
         The name of the buffer.
 
-    data : Var, optional
+    data : Optional[tvm.tir.Var]
         The data pointer in the buffer.
 
-    strides: array of Expr
+    strides: Optional[List[tvm.tir.PrimExpr]]
         The stride of the buffer.
 
-    elem_offset: Expr, optional
+    elem_offset: Optional[PrimExpr]
         The beginning offset of the array to data.
         In terms of number of elements of dtype.
 
-    scope: str, optional
-        The storage scope of the buffer, if not global.
-        If scope equals empty string, it means it is global memory.
+        If `elem_offset` is specified, `physical_axes` may not be
+        specified.
 
-    data_alignment: int, optional
-        The alignment of data pointer in bytes.
-        If -1 is passed, the alignment will be set to TVM's internal default.
+    scope: Optional[str]
 
-    offset_factor: int, optional
-        The factor of elem_offset field, when set,
-        elem_offset is required to be multiple of offset_factor.
-        If 0 is pssed, the alignment will be set to 1.
-        if non-zero is passed, we will created a Var for elem_offset if elem_offset is not None.
+        The storage scope of the buffer.  If unset, or set as the
+        empty string, the scope defaults to "global".
 
-    buffer_type: str, optional, {"", "auto_broadcast"}
-        auto_broadcast buffer allows one to implement broadcast computation
+    data_alignment: Optional[int]
+
+        The alignment of data pointer in bytes.  If -1 is passed, the
+        alignment will be set to TVM's internal default,
+        `kAllocAlignment`.
+
+    offset_factor: int
+
+        The factor of elem_offset field.  When set, `elem_offset` is
+        required to be multiple of `offset_factor`.  If 0 is passed,
+        the alignment will be set to 1.  if non-zero is passed, we
+        will created a Var for elem_offset if elem_offset is not None.
+
+        If `offset_factor` is specified as non-zero, `physical_axes` may not
+        be specified.
+
+    buffer_type: Optional[str], optional, {"", "auto_broadcast"}
+
+        Must be either empty string or "auto_broadcast".  An
+        auto_broadcast buffer can be used in a broadcast computation
         without considering whether dimension size equals to one.
-        TVM maps buffer[i][j][k] -> buffer[i][0][k] if dimension j's shape equals 1.
+        That is, for an auto_broadcast buffer, TVM maps `buffer[i, j,
+        k]` to `buffer[i, 0, k]` if dimension `j`'s shape equals 1.
 
     span: Optional[Span]
         The location of the decl_buffer creation in the source.
+
+    physical_axes : Optional[List[BufferParamsPerPhysicalAxis]]
+
+        A list of tuples describing the N-d physical axes of the
+        allocation that will back this buffer.  If passed, neither
+        `elem_offset` nor `offset_factor` may be specified.
 
     Returns
     -------
@@ -247,33 +325,80 @@ def decl_buffer(
     for the DLTensor that is compact and aligned.
     If user pass a fully generic symbolic array to the strides,
     then the resulting function becomes fully generic.
+
     """
-    # pylint: disable=import-outside-toplevel
-    from .expr import Var
 
     shape = (shape,) if isinstance(shape, (PrimExpr, Integral)) else shape
     dtype = "float32" if dtype is None else dtype
     strides = () if strides is None else strides
-    if offset_factor != 0 and elem_offset is None:
-        shape_dtype = shape[0].dtype if shape and hasattr(shape[0], "dtype") else "int32"
-        elem_offset = Var("%s_elem_offset" % name, shape_dtype)
+
+    shape_dtype = shape[0].dtype if shape and hasattr(shape[0], "dtype") else "int32"
+
+    if physical_axes is None:
+        physical_axes = [BufferParamsPerPhysicalAxis(0, elem_offset, offset_factor)]
+    elif elem_offset is not None:
+        raise TypeError("elem_offset may not be specified if physical_axes is specified")
+    elif offset_factor != 0:
+        raise TypeError("offset_factor may not be specified if physical_axes is specified")
+
     if data is None:
         # Bool is represented as uint1 in the IR, but stored as int8
         storage_type = PrimType(dtype)
         storage_type = PrimType("int8") if storage_type.dtype == "bool" else storage_type
         data = Var(name, PointerType(storage_type, scope), span)
+
     return _ffi_api.Buffer(  # type: ignore
         data,
         dtype,
         shape,
         strides,
-        elem_offset,
         name,
         data_alignment,
-        offset_factor,
+        physical_axes,
         buffer_type,
         span,
     )
+
+
+@tvm._ffi.register_object("tir.BufferParamsPerPhysicalAxis")
+class BufferParamsPerPhysicalAxis(Object):
+    def __init__(
+        self,
+        first_tensor_axis: int = 0,
+        elem_offset: Optional[PrimExpr] = None,
+        offset_factor: int = 0,
+    ):
+        """Parameters
+        ----------
+        first_tensor_axis: int
+
+            The ``first_tensor_axis`` to be used to generate a physical axis.
+            That is, the ``i``-th physical axis is generated using a row-major
+            traversal of all tensor axes from ``physical_axes[i][0]``
+            (inclusive) to ``physical_axis[i+1][0]`` (exclusive), or to the
+            last tensor axis for the last physical axis.
+            ``physical_axes[0][0]`` must equal zero.  `physical_axes` must be
+            sorted in increasing order of the ``first_tensor_axis``.
+
+        elem_offset: Optional[PrimExpr]
+
+            Interpreted identically to `elem_offset` argument to
+            `decl_buffer`.
+
+        offset_factor: Optional[PrimExpr]
+
+            Interpreted identically to `offset_factor` argument to
+            `decl_buffer`.
+
+        """
+        # shape_dtype = shape[0].dtype if shape and hasattr(shape[0], "dtype") else "int32"
+        shape_dtype = "int32"
+
+        if offset_factor != 0 and elem_offset is None:
+            elem_offset = Var("elem_offset", shape_dtype)
+        self.__init_handle_by_constructor__(
+            _ffi_api.BufferParamsPerPhysicalAxis, first_tensor_axis, elem_offset, offset_factor
+        )
 
 
 @tvm._ffi.register_object("tir.DataProducer")

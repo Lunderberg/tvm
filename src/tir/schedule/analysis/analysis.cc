@@ -892,17 +892,19 @@ class PatternMatcher : public ExprVisitor {
     const auto* ptr = expr_to_match_.as<LoadNode>();
     if (ptr == nullptr) {
       match_success_ = false;
+    } else if (!op->buffer_var.same_as(ptr->buffer_var)) {
+      match_success_ = false;
+    } else if (op->indices.size() != ptr->indices.size()) {
+      match_success_ = false;
     } else {
-      if (!op->buffer_var.same_as(ptr->buffer_var)) {
-        match_success_ = false;
-      } else {
-        PrimExpr tmp = expr_to_match_;
-        expr_to_match_ = ptr->predicate;
-        VisitExpr(op->predicate);
-        expr_to_match_ = ptr->index;
-        VisitExpr(op->index);
-        std::swap(expr_to_match_, tmp);
+      PrimExpr tmp = expr_to_match_;
+      expr_to_match_ = ptr->predicate;
+      VisitExpr(op->predicate);
+      for (size_t i = 0; i < op->indices.size(); i++) {
+        expr_to_match_ = ptr->indices[i];
+        VisitExpr(op->indices[i]);
       }
+      std::swap(expr_to_match_, tmp);
     }
   }
 

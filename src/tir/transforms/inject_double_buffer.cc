@@ -107,10 +107,10 @@ class DoubleBufferInjector : public StmtExprMutator {
     auto it = dbuffer_info_.find(buf);
     if (it != dbuffer_info_.end()) {
       it->second.scope = GetPtrStorageScope(op->buffer_var);
-      it->second.stride = op->extent * op->dtype.lanes();
+      it->second.stride = op->flat_size() * op->dtype.lanes();
       Stmt stmt = StmtExprMutator::VisitStmt_(op);
       op = stmt.as<AllocateNode>();
-      PrimExpr new_extent = mul(make_const(op->extent.dtype(), 2), op->extent);
+      PrimExpr new_extent = mul(make_const(op->flat_size().dtype(), 2), op->flat_size());
       ICHECK(it->second.loop != nullptr);
       auto& alloc_nest = loop_allocs_[it->second.loop];
       alloc_nest.emplace_back(
@@ -173,7 +173,7 @@ class DoubleBufferInjector : public StmtExprMutator {
       const StorageEntry& e = it->second;
       ICHECK(in_double_buffer_scope_);
       ICHECK(e.stride.defined());
-      return Store(op->buffer_var, op->value, e.switch_write_var * e.stride + op->index,
+      return Store(op->buffer_var, op->value, e.switch_write_var * e.stride + op->flat_index(),
                    op->predicate);
     } else {
       return stmt;
@@ -188,7 +188,7 @@ class DoubleBufferInjector : public StmtExprMutator {
       const StorageEntry& e = it->second;
       ICHECK(e.stride.defined());
       ICHECK(e.switch_read_var.defined());
-      return Load(op->dtype, op->buffer_var, e.switch_read_var * e.stride + op->index,
+      return Load(op->dtype, op->buffer_var, e.switch_read_var * e.stride + op->flat_index(),
                   op->predicate);
     } else {
       return expr;

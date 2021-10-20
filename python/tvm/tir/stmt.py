@@ -27,6 +27,7 @@ Each statement node have subfields that can be visited from python side.
     assert(st.buffer_var == a)
 """
 from enum import IntEnum
+from numbers import Integral
 from typing import List, Mapping, Optional, Union
 
 import tvm._ffi
@@ -201,22 +202,63 @@ class Store(Stmt):
     value : PrimExpr
         The value we want to store.
 
-    index : PrimExpr
-        The index in the store expression.
+    indices : Union[PrimExpr, List[PrimExpr]]
+
+        The index in the store expression.  Passing a PrimExpr, or a
+        list with a single PrimExpr, represents access into flat 1-D
+        memory.  Additional indices represent access into N-D memory,
+        with runtime-specific implementation.
+
+        The dimension of the physical indices must match the dimension
+        of the buffer's physical layout.
 
     predicate : PrimExpr
         The store predicate.
 
     span : Optional[Span]
         The location of this itervar in the source code.
+
     """
 
-    def __init__(self, buffer_var, value, index, predicate=None, span=None):
+    def __init__(self, buffer_var, value, indices, predicate=None, span=None):
+        if isinstance(indices, (tvm.tir.PrimExpr, Integral)):
+            indices = [indices]
+
         if predicate is None:
             predicate = _ffi_api.const_true(value.dtype, span)  # type: ignore
+
         self.__init_handle_by_constructor__(
-            _ffi_api.Store, buffer_var, value, index, predicate, span  # type: ignore
+            _ffi_api.Store, buffer_var, value, indices, predicate, span  # type: ignore
         )
+
+    @property
+    def index(self):
+        """Returns the index of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring to allow allow N-d indices
+
+        """
+        indices = self.indices
+        if not indices:
+            return None
+        elif len(indices) > 1:
+            raise RuntimeError("Can only use Store.index on flat 1-d memory")
+        else:
+            return indices[0]
+
+    @index.setter
+    def index(self, value):
+        """Sets the index of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring to allow allow N-d indices
+        """
+        indices = self.indices
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Store.index on flat 1-d memory")
+        else:
+            physical_axes[0].index = value
 
 
 @tvm._ffi.register_object("tir.BufferStore")
@@ -309,8 +351,11 @@ class Allocate(Stmt):
     dtype : str
         The data type of the buffer.
 
-    extent : Expr
-        The number of elements to allocate
+    shape : Union[Expr, List[Expr]]
+        The number of elements to allocate.  Passing a PrimExpr, or a
+        list with a single PrimExpr, represents allocation of flat 1-D
+        memory.  Lists with additional elements represent allocation
+        of N-D memory, with runtime-specific implementation.
 
     condition : PrimExpr
         The condition.
@@ -323,21 +368,54 @@ class Allocate(Stmt):
 
     span : Optional[Span]
         The location of this itervar in the source code.
+
     """
 
-    def __init__(self, buffer_var, dtype, extent, condition, body, annotations=None, span=None):
+    def __init__(self, buffer_var, dtype, shape, condition, body, annotations=None, span=None):
+        if isinstance(shape, (tvm.tir.PrimExpr, Integral)):
+            shape = [shape]
+
         if annotations is None:
             annotations = dict()
         self.__init_handle_by_constructor__(
             _ffi_api.Allocate,  # type: ignore
             buffer_var,
             dtype,
-            extent,
+            shape,
             condition,
             body,
             annotations,
             span,
         )
+
+    @property
+    def extent(self):
+        """Returns the size of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring to allow allow N-d allocations
+
+        """
+        shape = self.shape
+        if not shape:
+            return None
+        elif len(shape) > 1:
+            raise RuntimeError("Can only use Allocate.extent on flat 1-d memory")
+        else:
+            return shape[0]
+
+    @extent.setter
+    def extent(self, value):
+        """Sets the size of a flat array
+
+        Backwards compatibility function for interaction with 1-d
+        memory, prior to refactoring to allow allow N-d allocations
+        """
+        shape = self.shape
+        if len(physical_axes) > 1:
+            raise RuntimeError("Can only use Allocate.extent on flat 1-d memory")
+        else:
+            physical_axes[0].index = value
 
 
 @tvm._ffi.register_object("tir.AttrStmt")

@@ -220,7 +220,7 @@ class BF16LowerRewriter : public StmtExprMutator {
       DataType dtype = DataType::UInt(16, op->dtype.lanes());
       Var buffer_var = Var(op->buffer_var->name_hint, PointerType(PrimType(dtype)));
       var_remap_[op->buffer_var] = buffer_var;
-      return VisitStmt(Allocate(buffer_var, dtype, op->extent, op->condition, op->body));
+      return VisitStmt(Allocate(buffer_var, dtype, op->shape, op->condition, op->body));
     } else {
       return StmtExprMutator::VisitStmt_(op);
     }
@@ -275,7 +275,7 @@ class BF16LowerRewriter : public StmtExprMutator {
 
     auto it = var_remap_.find(op->buffer_var);
     if (it != var_remap_.end()) {
-      return Store(it->second, op->value, op->index, op->predicate);
+      return Store(it->second, op->value, op->indices, op->predicate);
     } else {
       return ret;
     }
@@ -300,7 +300,7 @@ class BF16LowerRewriter : public StmtExprMutator {
     if (op->dtype.is_bfloat16()) {
       auto it = var_remap_.find(op->buffer_var);
       ICHECK(it != var_remap_.end()) << "bfloat* var needs to be remapped";
-      return Load(DataType::UInt(16, op->dtype.lanes()), it->second, op->index, op->predicate);
+      return Load(DataType::UInt(16, op->dtype.lanes()), it->second, op->indices, op->predicate);
     } else {
       return ret;
     }
@@ -322,9 +322,12 @@ class BF16LowerRewriter : public StmtExprMutator {
       if (oldbuf->dtype.is_bfloat16()) {
         DataType dtype = DataType::UInt(16, oldbuf->dtype.lanes());
         Var buffer_var = Var(oldbuf->data->name_hint, PointerType(PrimType(dtype)));
-        auto newbuf = Buffer(buffer_var, dtype, oldbuf->shape, oldbuf->strides, oldbuf->elem_offset,
-                             oldbuf->name, oldbuf->data_alignment, oldbuf->offset_factor,
-                             oldbuf->buffer_type);
+
+        Buffer newbuf = oldbuf;
+        auto write_ptr = newbuf.CopyOnWrite();
+        write_ptr->data = buffer_var;
+        write_ptr->dtype = dtype;
+
         buffer_remap_[oldbuf] = newbuf;
         var_remap_[oldbuf->data] = buffer_var;
         changes.emplace_back(itr.first, newbuf);

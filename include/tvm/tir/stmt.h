@@ -232,30 +232,43 @@ class StoreNode : public StmtNode {
   Var buffer_var;
   /*! \brief The value to be stored. */
   PrimExpr value;
-  /*! \brief The index locations to be stored. */
-  PrimExpr index;
+  /*! \brief The physical index location to be stored.
+   *
+   * For flat memory (e.g. RAM memory), `indices` will be a 1-d value
+   * regardless of the logical shape of the original tensor.  If
+   * `indices.size() > 1`, the interpretation is runtime-specific.
+   * For example, OpenCL runtimes may use a 2-d shape to represent
+   * texture memory, which is allocated and accessed with 2 indices.
+   *
+   * If a runtime supports only 1-d buffer shapes and indices, it
+   * should use `StoreNode::flat_index()` to assert flat memory and
+   * access the index into the buffer.
+   */
+  Array<PrimExpr> indices;
   /*! \brief The predicate to mask which lanes would be stored. */
   PrimExpr predicate;
 
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("buffer_var", &buffer_var);
     v->Visit("value", &value);
-    v->Visit("index", &index);
+    v->Visit("indices", &indices);
     v->Visit("predicate", &predicate);
     v->Visit("span", &span);
   }
 
   bool SEqualReduce(const StoreNode* other, SEqualReducer equal) const {
     return equal(buffer_var, other->buffer_var) && equal(value, other->value) &&
-           equal(index, other->index) && equal(predicate, other->predicate);
+           equal(indices, other->indices) && equal(predicate, other->predicate);
   }
 
   void SHashReduce(SHashReducer hash_reduce) const {
     hash_reduce(buffer_var);
     hash_reduce(value);
-    hash_reduce(index);
+    hash_reduce(indices);
     hash_reduce(predicate);
   }
+
+  PrimExpr flat_index() const;
 
   static constexpr const char* _type_key = "tir.Store";
   TVM_DECLARE_FINAL_OBJECT_INFO(StoreNode, StmtNode);
@@ -267,7 +280,10 @@ class StoreNode : public StmtNode {
  */
 class Store : public Stmt {
  public:
-  TVM_DLL Store(Var buffer_var, PrimExpr value, PrimExpr index, PrimExpr predicate,
+  TVM_DLL Store(Var buffer_var, PrimExpr value, PrimExpr flat_index, PrimExpr predicate,
+                Span span = Span());
+
+  TVM_DLL Store(Var buffer_var, PrimExpr value, Array<PrimExpr> indices, PrimExpr predicate,
                 Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(Store, Stmt, StoreNode);
@@ -515,8 +531,19 @@ class AllocateNode : public StmtNode {
   Var buffer_var;
   /*! \brief The type of the buffer. */
   DataType dtype;
-  /*! \brief The extent of the buffer. */
-  PrimExpr extent;
+  /*! \brief The physical shape of the buffer
+   *
+   * For flat memory (e.g. RAM memory), `shape` will be a 1-d value
+   * regardless of the logical shape of the original tensor.  If
+   * `shape.size() > 1`, the interpretation is runtime-specific.  For
+   * example, OpenCL runtimes may use a 2-d shape to represent texture
+   * memory, which is allocated and accessed with 2 indices.
+   *
+   * If a runtime supports only 1-d buffer shapes and indices, it
+   * should use `AllocateNode::flat_size()` to assert flat memory and
+   * access the buffer size.
+   */
+  Array<PrimExpr> shape;
   /*! \brief Only allocate buffer when condition is satisfied. */
   PrimExpr condition;
   /*! \brief The body to be executed. */
@@ -532,7 +559,7 @@ class AllocateNode : public StmtNode {
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("buffer_var", &buffer_var);
     v->Visit("dtype", &dtype);
-    v->Visit("extent", &extent);
+    v->Visit("shape", &shape);
     v->Visit("condition", &condition);
     v->Visit("body", &body);
     v->Visit("annotations", &annotations);
@@ -541,25 +568,33 @@ class AllocateNode : public StmtNode {
 
   bool SEqualReduce(const AllocateNode* other, SEqualReducer equal) const {
     return equal.DefEqual(buffer_var, other->buffer_var) && equal(dtype, other->dtype) &&
-           equal(extent, other->extent) && equal(condition, other->condition) &&
+           equal(shape, other->shape) && equal(condition, other->condition) &&
            equal(body, other->body) && equal(annotations, other->annotations);
   }
 
   void SHashReduce(SHashReducer hash_reduce) const {
     hash_reduce.DefHash(buffer_var);
     hash_reduce(dtype);
-    hash_reduce(extent);
+    hash_reduce(shape);
     hash_reduce(condition);
     hash_reduce(body);
     hash_reduce(annotations);
   }
+
+  /*! \brief Return the size of flat memory, in number of elements, to be allocated
+   *
+   * This is a utility function to verify that the AllocateNode
+   * represents flat memory, and to return the number of elements in
+   * the buffer.
+   */
+  PrimExpr flat_size() const;
 
   /*!
    * \brief If the buffer size is constant, return the size.
    *        Otherwise return 0.
    * \return The result.
    */
-  int32_t constant_allocation_size() const { return constant_allocation_size(extent); }
+  int32_t constant_allocation_size() const { return constant_allocation_size(flat_size()); }
   /*!
    * \brief If the buffer size is constant, return the size.
    *        Otherwise return 0.
@@ -578,8 +613,12 @@ class AllocateNode : public StmtNode {
  */
 class Allocate : public Stmt {
  public:
-  TVM_DLL Allocate(Var buffer_var, DataType dtype, PrimExpr extent, PrimExpr condition, Stmt body,
-                   Map<String, ObjectRef> annotations = Map<String, ObjectRef>(),
+  TVM_DLL Allocate(Var buffer_var, DataType dtype, PrimExpr flat_size, PrimExpr condition,
+                   Stmt body, Map<String, ObjectRef> annotations = Map<String, ObjectRef>(),
+                   Span span = Span());
+
+  TVM_DLL Allocate(Var buffer_var, DataType dtype, Array<PrimExpr> shape, PrimExpr condition,
+                   Stmt body, Map<String, ObjectRef> annotations = Map<String, ObjectRef>(),
                    Span span = Span());
 
   TVM_DEFINE_OBJECT_REF_METHODS(Allocate, Stmt, AllocateNode);

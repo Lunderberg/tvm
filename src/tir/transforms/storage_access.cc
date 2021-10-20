@@ -42,7 +42,11 @@ void StorageAccessVisitor::VisitExpr_(const LoadNode* op) {
     e.threads = env_threads();
     e.buffer = op->buffer_var;
     e.dtype = op->dtype.element_of();
-    e.touched = arith::IntSet::Vector(op->index);
+
+    for (const auto& index : op->indices) {
+      e.touched.push_back(arith::IntSet::Vector(index));
+    }
+
     e.type = kRead;
     e.scope = scope;
     curr_stmt_.access.emplace_back(std::move(e));
@@ -62,7 +66,9 @@ void StorageAccessVisitor::VisitStmt_(const StoreNode* op) {
     e.threads = env_threads();
     e.buffer = op->buffer_var;
     e.dtype = op->value.dtype().element_of();
-    e.touched = arith::IntSet::Vector(op->index);
+    for (const auto& index : op->indices) {
+      e.touched.push_back(arith::IntSet::Vector(index));
+    }
     e.type = kWrite;
     e.scope = scope;
     curr_stmt_.access.emplace_back(std::move(e));
@@ -152,7 +158,9 @@ void StorageAccessVisitor::VisitStmt_(const ForNode* op) {
     for (AccessEntry& e : s.access) {
       if (e.buffer.defined()) {
         ICHECK(e.touched.defined());
-        e.touched = arith::EvalSet(e.touched, relax_map);
+        e.touched = UpdateArray(e.touched, [&](auto& index_touched) {
+          return arith::EvalSet(index_touched, relax_map);
+        });
       }
     }
   }
@@ -213,7 +221,7 @@ void StorageAccessVisitor::VisitExpr_(const CallNode* op) {
       e.threads = env_threads();
       e.dtype = dtype;
       e.buffer = Downcast<Var>(op->args[1]);
-      e.touched = arith::IntSet::FromRange(Range::FromMinExtent(offset, extent));
+      e.touched = {arith::IntSet::FromRange(Range::FromMinExtent(offset, extent))};
       e.scope = scope;
       if (flag->value & 1) {
         e.type = kRead;

@@ -381,7 +381,7 @@ void CodeGenOpenCL::VisitExpr_(const CallNode* op, std::ostream& os) {
     }
     this->PrintType(load->dtype.element_of(), os);
     os << " *)" << this->GetVarID(load->buffer_var.get()) << " + ";
-    this->PrintExpr(load->index, os);
+    this->PrintExpr(load->flat_index(), os);
     os << ')';
   } else if (op->op.same_as(builtin::texture2d_store())) {
     auto* ptr_type = op->args[0].as<VarNode>()->type_annotation.as<PointerTypeNode>();

@@ -333,7 +333,6 @@ Doc TVMScriptPrinter::AllocVar(const Var& var) {
 
 Doc TVMScriptPrinter::AllocBufferDeclaration(const Buffer& buf) {
   Doc doc = Print(buf->shape);
-  bool print_factor_explicitly = false;
   doc << ", dtype=" << PrintDType(buf->dtype);
   if (memo_var_.find(buf->data) != memo_var_.end()) {
     doc << ", data=" << Print(buf->data);
@@ -345,30 +344,41 @@ Doc TVMScriptPrinter::AllocBufferDeclaration(const Buffer& buf) {
   if (!buf->strides.empty()) {
     doc << ", strides=" << Print(buf->strides);
   }
-  if (buf->elem_offset->IsInstance<VarNode>()) {
-    Var elem_offset = Downcast<Var>(buf->elem_offset);
-    if (memo_var_.find(elem_offset) != memo_var_.end()) {
-      doc << ", elem_offset=" << Print(buf->elem_offset);
-    } else {
-      // implicitly define elem_offset
-      memo_var_[elem_offset] = Doc::Text(memo_buf_[buf].str() + ".elem_offset");
-      var_not_in_headers_.insert(elem_offset.get());
-      print_factor_explicitly = true;
+
+  doc << ", physical_axes=[";
+  for (size_t i = 0; i < buf->physical_axes.size(); i++) {
+    const auto& params = buf->physical_axes[i];
+
+    if (i != 0) {
+      doc << ", ";
     }
-  } else if (buf->elem_offset->IsInstance<IntImmNode>()) {
-    IntImm elem_offset = Downcast<IntImm>(buf->elem_offset);
-    if (elem_offset->value != 0) {
-      doc << ", elem_offset=" << Print(buf->elem_offset);
+
+    doc << "(" << params->first_tensor_axis << ", ";
+
+    if (params->elem_offset->IsInstance<VarNode>()) {
+      Var elem_offset = Downcast<Var>(params->elem_offset);
+      if (memo_var_.find(elem_offset) != memo_var_.end()) {
+        doc << Print(elem_offset);
+      } else {
+        // Define elem_offset
+        std::stringstream var_name;
+        var_name << memo_buf_[buf].str() << "_elem_offset_" << i;
+        memo_var_[elem_offset] = Doc::Text(var_name.str());
+        doc << Print(elem_offset);
+      }
+
+    } else if (params->elem_offset->IsInstance<IntImmNode>()) {
+      doc << Print(params->elem_offset);
     }
+    doc << ", " << params->offset_factor << ")";
   }
+  doc << "]";
+
   if (buf.scope() != "global") {
     doc << ", scope=" << Doc::StrLiteral(buf.scope());
   }
   if (buf->data_alignment != runtime::kAllocAlignment) {
     doc << ", align=" << buf->data_alignment;
-  }
-  if (buf->offset_factor != 1 || print_factor_explicitly) {
-    doc << ", offset_factor=" << buf->offset_factor;
   }
   if (buf->buffer_type != 1) {
     doc << ", type=" << Doc::StrLiteral("auto");
@@ -603,10 +613,10 @@ Doc TVMScriptPrinter::VisitExpr_(const LoadNode* op, ExprPrecedence* out_precede
   Doc doc;
   if (op->dtype == DataType::Float(32) && is_one(op->predicate) &&
       op->buffer_var->dtype == DataType::Float(32)) {
-    doc << Print(op->buffer_var) << "[" << Print(op->index) << "]";
+    doc << Print(op->buffer_var) << Print(op->indices);
   } else {
     doc << tir_prefix_ << ".load(" << PrintDType(op->dtype) << ", " << Print(op->buffer_var) << ", "
-        << Print(op->index);
+        << Print(op->indices);
     if (!is_one(op->predicate) || op->dtype.lanes() != 1) {
       doc << ", " << Print(op->predicate);
     }
@@ -760,7 +770,7 @@ Doc TVMScriptPrinter::VisitStmt_(const AssertStmtNode* op) {
 
 Doc TVMScriptPrinter::VisitStmt_(const StoreNode* op) {
   Doc doc;
-  doc << tir_prefix_ << ".store(" << Print(op->buffer_var) << ", " << Print(op->index) << ", "
+  doc << tir_prefix_ << ".store(" << Print(op->buffer_var) << ", " << Print(op->indices) << ", "
       << Print(op->value) << ", " << Print(op->predicate) << ")";
   return doc;
 }
@@ -775,9 +785,15 @@ Doc TVMScriptPrinter::VisitStmt_(const AllocateNode* op) {
   var_not_in_headers_.insert(op->buffer_var.get());
   Doc doc;
   auto storage_scope = GetPtrStorageScope(op->buffer_var);
-  if (current_num_ != num_child_ - 1) {
-    doc << "with " << tir_prefix_ << ".allocate(" << Print(op->extent) << ", "
-        << PrintDType(op->dtype) << ", " << Print(storage_scope);
+
+  auto print_definition = [&]() {
+    doc << tir_prefix_ << ".allocate(";
+    if (op->shape.size() == 1) {
+      doc << Print(op->shape[0]);
+    } else {
+      doc << Print(op->shape);
+    }
+    doc << ", " << PrintDType(op->dtype) << ", " << Print(storage_scope);
     if (!is_one(op->condition)) {
       doc << ", " << Print(op->condition);
     }
@@ -786,20 +802,18 @@ Doc TVMScriptPrinter::VisitStmt_(const AllocateNode* op) {
       doc << PrintAnnotations(op->annotations);
       doc << "}";
     }
-    doc << ") as " << Print(op->buffer_var) << ":";
+    doc << ")";
+  };
+
+  if (current_num_ != num_child_ - 1) {
+    doc << "with ";
+    print_definition();
+    doc << " as " << Print(op->buffer_var) << ":";
     doc << Doc::Indent(4, Doc::NewLine() << PrintBody(op->body));
   } else {
-    doc << Print(op->buffer_var) << " = " << tir_prefix_ << ".allocate(" << Print(op->extent)
-        << ", " << PrintDType(op->dtype) << ", " << Print(storage_scope);
-    if (!is_one(op->condition)) {
-      doc << ", " << Print(op->condition);
-    }
-    if (!op->annotations.empty()) {
-      doc << ", annotations={";
-      doc << PrintAnnotations(op->annotations);
-      doc << "}";
-    }
-    doc << ")" << Doc::NewLine() << PrintBody(op->body);
+    doc << Print(op->buffer_var) << " = ";
+    print_definition();
+    doc << Doc::NewLine() << PrintBody(op->body);
   }
   TryDeallocVar(op->buffer_var);
   return doc;

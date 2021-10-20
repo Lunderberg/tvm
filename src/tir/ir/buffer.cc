@@ -27,12 +27,14 @@
 #include <tvm/tir/buffer.h>
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
+#include <tvm/ir/expr.h>
 #include <tvm/tir/op.h>
 
 #include <iterator>
 #include <stack>
 
 #include "../../arith/pattern_match.h"
+#include "../transforms/ir_utils.h"
 
 namespace tvm {
 namespace tir {
@@ -243,52 +245,107 @@ inline PrimExpr MergeMulMod(arith::Analyzer* analyzer, const PrimExpr& base) {
   return no_opt_sum;
 }
 
+BufferParamsPerPhysicalAxis::BufferParamsPerPhysicalAxis(int first_tensor_axis,
+                                                         PrimExpr elem_offset, int offset_factor) {
+  if (!elem_offset.defined()) {
+    // TODO(Lunderberg): Have this reference the shape for this axis.
+    // Will need to be in the long-term changes, since then the buffer
+    // shape can be pulled into a per-axis definition.
+    elem_offset = make_const(DataType::Int(32), 0);
+  }
+  if (offset_factor == 0) {
+    offset_factor = 1;
+  }
+
+  auto n = make_object<BufferParamsPerPhysicalAxisNode>();
+  n->first_tensor_axis = first_tensor_axis;
+  n->elem_offset = elem_offset;
+  n->offset_factor = offset_factor;
+  data_ = std::move(n);
+}
+
 // The buffer offset in convention of number of elements of
 // original data ignoring number of lanes.
 // We also perform optimization to simplify the indexing expression.
-PrimExpr BufferNode::ElemOffset(Array<PrimExpr> index) const {
-  PrimExpr base = this->elem_offset;
+Array<PrimExpr> BufferNode::ElemOffset(Array<PrimExpr> index) const {
+  std::cout << std::endl;
+  ICHECK_GE(physical_axes.size(), 1) << "Expected at least one physical axis to be defined";
+  ICHECK_EQ(physical_axes[0]->first_tensor_axis, 0)
+      << "First physical axis must start at first tensor axis";
+
+  ICHECK_EQ(shape.size(), index.size())
+      << "Dimensionality of buffer must match dimensionality of index used to access it";
+
+  if (strides.size()) {
+    ICHECK_EQ(this->strides.size(), index.size())
+        << "If strides are defined, "
+        << "the index's dimensionality must match the dimensionality of the index given.";
+  }
+
+  Array<BufferParamsPerPhysicalAxis> physical_axes;
+  if (this->physical_axes.size()) {
+    physical_axes = this->physical_axes;
+  } else {
+    physical_axes = {BufferParamsPerPhysicalAxis(0, 0, 1)};
+  }
+
+  Array<PrimExpr> offsets;
+  for (size_t i = 0; i < physical_axes.size(); i++) {
+    offsets.push_back(0);
+  }
+
+  int current_physical_axis = -1;
+  int start_new_physical_axis = 0;
+
   arith::Analyzer ana;
-  if (this->strides.size() == 0) {
-    // Scalar case
-    if (this->shape.size() == 0 && index.size() == 1) {
-      auto is_int = index[0].as<IntImmNode>();
-      ICHECK(is_int && is_int->value == 0);
-      base = base + index[0];
-    } else {
-      ICHECK_EQ(this->shape.size(), index.size());
-      if (index.size() > 0) {
-        PrimExpr offset = index[0];
-        for (size_t i = 1; i < index.size(); ++i) {
-          offset = MergeMulMod(&ana, offset * this->shape[i] + index[i]);
-        }
-        base = base + offset;
+
+  for (int i = 0; i < int(index.size()); i++) {
+    if (i == start_new_physical_axis) {
+      current_physical_axis++;
+      if (current_physical_axis + 1 < int(physical_axes.size())) {
+        start_new_physical_axis = physical_axes[current_physical_axis + 1]->first_tensor_axis;
+      } else {
+        start_new_physical_axis = -1;
       }
     }
-  } else {
-    ICHECK_EQ(this->strides.size(), index.size());
-    if (is_zero(base)) {
-      base = MergeMulMod(&ana, index[0] * this->strides[0]);
+
+    PrimExpr current_offset = offsets[current_physical_axis];
+    if (strides.size()) {
+      current_offset = current_offset + index[i] * strides[i];
     } else {
-      base = MergeMulMod(&ana, base + index[0] * this->strides[0]);
+      current_offset = current_offset * this->shape[i] + index[i];
     }
-    for (size_t i = 1; i < index.size(); ++i) {
-      base = MergeMulMod(&ana, base + index[i] * this->strides[i]);
+    if (i > 0) {
+      current_offset = MergeMulMod(&ana, current_offset);
     }
+    offsets.Set(current_physical_axis, current_offset);
   }
-  return base;
+
+  for (size_t i = 0; i < physical_axes.size(); i++) {
+    offsets.Set(i, offsets[i] + physical_axes[i]->elem_offset);
+  }
+
+  return offsets;
 }
 
-inline PrimExpr BufferOffset(const BufferNode* n, Array<PrimExpr> index, DataType dtype) {
-  PrimExpr offset = n->ElemOffset(index);
+inline Array<PrimExpr> BufferOffset(const BufferNode* n, Array<PrimExpr> index, DataType dtype) {
+  Array<PrimExpr> offsets = n->ElemOffset(index);
+  // If the Buffer has element type with more than one lane, scale to
+  // get the offset in number of scalars.
   if (n->dtype.lanes() != 1) {
-    offset = offset * make_const(offset.dtype(), dtype.lanes());
+    PrimExpr last_offset = offsets[offsets.size() - 1];
+    offsets.Set(offsets.size() - 1, last_offset * make_const(last_offset.dtype(), dtype.lanes()));
   }
+
+  // If the requested type has more than one lane, make a RampNode at
+  // that offset.
   if (dtype.lanes() != 1) {
-    return tir::Ramp(offset, make_const(offset.dtype(), 1), dtype.lanes());
-  } else {
-    return offset;
+    PrimExpr last_offset = offsets[offsets.size() - 1];
+    PrimExpr stride = make_const(last_offset.dtype(), 1);
+    offsets.Set(offsets.size() - 1, tir::Ramp(last_offset, stride, dtype.lanes()));
   }
+
+  return offsets;
 }
 
 int32_t BufferNode::NumElements() const {
@@ -368,7 +425,20 @@ Buffer Buffer::MakeSlice(Array<PrimExpr> begins, Array<PrimExpr> extents) const 
   ICHECK(n != nullptr);
   arith::Analyzer ana;
   begins = SimplifyArray(&ana, begins);
-  PrimExpr elem_offset = ana.Simplify(n->ElemOffset(begins));
+
+  Array<PrimExpr> elem_offsets =
+      UpdateArray(n->ElemOffset(begins), [&](const auto& expr) { return ana.Simplify(expr); });
+
+  ICHECK_EQ(elem_offsets.size(), n->physical_axes.size());
+  Array<BufferParamsPerPhysicalAxis> physical_axes;
+  for (size_t i = 0; i < elem_offsets.size(); i++) {
+    auto params = n->physical_axes[i];
+    auto write_ptr = params.CopyOnWrite();
+    write_ptr->elem_offset = elem_offsets[i];
+    write_ptr->offset_factor = 1;
+    physical_axes.push_back(params);
+  }
+
   Array<PrimExpr> strides = n->strides;
   if (strides.size() == 0) {
     bool can_relax = true;
@@ -387,13 +457,17 @@ Buffer Buffer::MakeSlice(Array<PrimExpr> begins, Array<PrimExpr> extents) const 
       return MakeStrideView().MakeSlice(begins, extents);
     }
   }
-  return Buffer(n->data, n->dtype, extents, strides, elem_offset, n->name + "_slice",
-                n->data_alignment, 0, n->buffer_type);
+  return Buffer(n->data, n->dtype, extents, strides, n->name + "_slice", n->data_alignment,
+                physical_axes, n->buffer_type);
 }
 
 PrimExpr Buffer::access_ptr(int access_mask, DataType ptr_type, int content_lanes,
                             PrimExpr offset) const {
   const BufferNode* self = operator->();
+
+  ICHECK_LE(self->physical_axes.size(), 1)
+      << "Cannot make access_ptr for multi-dimensional buffer " << self->name;
+
   ICHECK(self != nullptr);
   PrimExpr e_dtype;
   PrimExpr extent;
@@ -407,11 +481,23 @@ PrimExpr Buffer::access_ptr(int access_mask, DataType ptr_type, int content_lane
                    make_const(DataType::Int(32), 1), self->shape) -
              offset;
   }
-  PrimExpr elem_offset = self->elem_offset + offset;
+
+  PrimExpr elem_offset;
+  DataType offset_dtype;
+  if (self->physical_axes.size() > 0) {
+    if (self->physical_axes[0]->elem_offset.defined()) {
+      elem_offset = offset + self->physical_axes[0]->elem_offset;
+    }
+    offset_dtype = self->physical_axes[0]->elem_offset.dtype();
+  } else {
+    elem_offset = offset;
+    offset_dtype = self->DefaultIndexType();
+  }
+
   if (content_lanes > 1) {
     e_dtype = tir::TypeAnnotation(self->dtype.with_lanes(content_lanes));
-    extent = extent / make_const(self->elem_offset.dtype(), content_lanes);
-    elem_offset = self->elem_offset / make_const(self->elem_offset.dtype(), content_lanes);
+    extent = extent / make_const(offset_dtype, content_lanes);
+    elem_offset = elem_offset / make_const(offset_dtype, content_lanes);
   } else {
     e_dtype = tir::TypeAnnotation(self->dtype);
   }
@@ -420,46 +506,64 @@ PrimExpr Buffer::access_ptr(int access_mask, DataType ptr_type, int content_lane
   return tir::Call(ptr_type, tir::builtin::tvm_access_ptr(), acc_args);
 }
 
-Buffer::Buffer(Var data, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> strides,
-               PrimExpr elem_offset, String name, int data_alignment, int offset_factor,
+Buffer::Buffer(Var ptr, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> strides, String name,
+               int data_alignment, Array<BufferParamsPerPhysicalAxis> physical_axes,
                BufferType buffer_type, Span span) {
   DataType storage_dtype = dtype;
   // specially handle bool
   if (storage_dtype == DataType::Bool()) {
     storage_dtype = DataType::Int(8);
   }
-  ICHECK(IsPointerType(data->type_annotation, storage_dtype))
+  ICHECK(IsPointerType(ptr->type_annotation, storage_dtype))
       << "Buffer data field expect to have the right pointer type annotation"
-      << " annotation=" << data->type_annotation << ", storage_dtype=" << storage_dtype;
+      << " annotation=" << ptr->type_annotation << ", storage_dtype=" << storage_dtype;
+
+  if (data_alignment <= 0) {
+    data_alignment = runtime::kAllocAlignment;
+  }
+
+  if (buffer_type == kAutoBroadcast && shape.size() > 0 && strides.empty()) {
+    for (size_t i = 0; i < shape.size(); ++i) {
+      strides.push_back(Var("stride", shape[i].dtype()));
+    }
+  }
 
   auto n = make_object<BufferNode>();
-  n->data = std::move(data);
+  n->data = std::move(ptr);
   n->dtype = dtype;
 
   n->shape = std::move(shape);
   n->strides = std::move(strides);
   n->name = std::move(name);
-  if (!elem_offset.defined()) {
-    elem_offset = make_const(n->DefaultIndexType(), 0);
-  }
-  if (data_alignment <= 0) {
-    data_alignment = runtime::kAllocAlignment;
-  }
-  if (offset_factor == 0) {
-    offset_factor = 1;
-  }
-  n->elem_offset = std::move(elem_offset);
   n->data_alignment = data_alignment;
-  n->offset_factor = offset_factor;
   n->buffer_type = buffer_type;
-  if (n->buffer_type == kAutoBroadcast && n->shape.size() > 0 && n->strides.empty()) {
-    for (size_t i = 0; i < n->shape.size(); ++i) {
-      n->strides.push_back(Var("stride", n->shape[i].dtype()));
-    }
-  }
   n->span = std::move(span);
+
+  n->physical_axes = UpdateArray(physical_axes, [&](BufferParamsPerPhysicalAxis params) {
+    auto write_ptr = params.CopyOnWrite();
+    if (params->offset_factor == 0) {
+      write_ptr->offset_factor = 1;
+    }
+    if (!params->elem_offset.defined()) {
+      write_ptr->elem_offset = make_const(n->DefaultIndexType(), 0);
+    }
+    return params;
+  });
+
   data_ = std::move(n);
 }
+
+Buffer::Buffer(Var ptr, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> strides,
+               PrimExpr elem_offset, String name, int data_alignment, int offset_factor,
+               BufferType buffer_type, Span span)
+    : Buffer(ptr, dtype, shape, strides, name, data_alignment,
+             {BufferParamsPerPhysicalAxis(0, elem_offset, offset_factor)}, buffer_type, span) {}
+
+TVM_REGISTER_NODE_TYPE(BufferParamsPerPhysicalAxisNode);
+TVM_REGISTER_GLOBAL("tir.BufferParamsPerPhysicalAxis")
+    .set_body_typed([](int first_tensor_axis, PrimExpr elem_offset, int offset_factor) {
+      return BufferParamsPerPhysicalAxis(first_tensor_axis, elem_offset, offset_factor);
+    });
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<BufferNode>([](const ObjectRef& node, ReprPrinter* p) {
@@ -470,11 +574,12 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 TVM_REGISTER_NODE_TYPE(BufferNode);
 
 TVM_REGISTER_GLOBAL("tir.Buffer").set_body([](TVMArgs args, TVMRetValue* ret) {
-  ICHECK_EQ(args.size(), 10);
-  auto buffer_type = args[8].operator String();
+  ICHECK_EQ(args.size(), 9);
+
+  auto buffer_type = args[7].operator String();
   BufferType type = (buffer_type == "auto_broadcast") ? kAutoBroadcast : kDefault;
-  *ret =
-      Buffer(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], type, args[9]);
+
+  *ret = Buffer(args[0], args[1], args[2], args[3], args[4], args[5], args[6], type, args[8]);
 });
 
 TVM_REGISTER_GLOBAL("tir.BufferAccessPtr").set_body_method(&Buffer::access_ptr);

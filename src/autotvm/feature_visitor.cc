@@ -98,13 +98,15 @@ void FeatureVisitor::VisitStmt_(const AttrStmtNode* op) {
 
 // memory access
 void FeatureVisitor::VisitExpr_(const LoadNode* op) {
-  EnterMem_(op->buffer_var, op->index);
+  ICHECK_EQ(op->indices.size(), 1) << "FeatureVisitor for N-d physica memory not yet implemented.";
+  EnterMem_(op->buffer_var, op->flat_index());
   StmtExprVisitor::VisitExpr_(op);
   ExitMem_();
 }
 
 void FeatureVisitor::VisitStmt_(const StoreNode* op) {
-  EnterMem_(op->buffer_var, op->index);
+  ICHECK_EQ(op->indices.size(), 1) << "FeatureVisitor for N-d physica memory not yet implemented.";
+  EnterMem_(op->buffer_var, op->flat_index());
   StmtExprVisitor::VisitStmt_(op);
   ExitMem_();
 }
