@@ -202,6 +202,7 @@ class BufferDeclare(SpecialStmt):
             align=-1,
             offset_factor=0,
             buffer_type="default",
+            physical_axes=None,
             span=None,
         ):
             if not isinstance(self.node, ast.Assign) or not len(self.node.lhs) == 1:
@@ -216,7 +217,29 @@ class BufferDeclare(SpecialStmt):
             offset_factor = convert_to_int(
                 offset_factor, "offset_factor", self.context.report_error, self.node.span
             )
+
             buffer_name: str = self.node.lhs[0].id.name
+
+            if physical_axes is not None:
+                physical_axes = [
+                    tvm.tir.BufferParamsPerPhysicalAxis(
+                        convert_to_int(
+                            first_tensor_axis,
+                            "first_tensor_axis",
+                            self.context.report_error,
+                            self.node.span,
+                        ),
+                        elem_offset,
+                        convert_to_int(
+                            offset_factor,
+                            "offset_factor",
+                            self.context.report_error,
+                            self.node.span,
+                        ),
+                    )
+                    for first_tensor_axis, elem_offset, offset_factor in physical_axes
+                ]
+
             buffer = tvm.tir.decl_buffer(
                 shape,
                 dtype,
@@ -228,6 +251,7 @@ class BufferDeclare(SpecialStmt):
                 align,
                 offset_factor,
                 buffer_type,
+                physical_axes=physical_axes,
                 span=span,
             )
             self.context.update_symbol(buffer_name, buffer, self.node)
