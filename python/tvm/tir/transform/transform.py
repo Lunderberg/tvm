@@ -74,6 +74,17 @@ def InjectPrefetch():
     return _ffi_api.InjectPrefetch()  # type: ignore
 
 
+def ApplyPhysicalLayout():
+    """Reshape buffers based on their `BufferNode::physical_layout`.
+
+    Returns
+    -------
+    fpass : tvm.transform.Pass
+        The result pass
+    """
+    return _ffi_api.ApplyPhysicalLayout()
+
+
 def StorageFlatten(cache_line_size, create_bound_attribute: bool = False):
     """Flatten the multi-dimensional read/write to 1D.
 

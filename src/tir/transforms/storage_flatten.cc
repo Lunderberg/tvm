@@ -1076,6 +1076,109 @@ class BufferBindUnwrapper : public StmtExprMutator {
   IRVisitorWithAnalyzer* bound_analyzer_;
 };
 
+class PhysicalLayoutApply : public StmtExprMutator {
+ public:
+  static transform::Pass Pass() {
+    auto pass_func = [](PrimFunc func, IRModule m, transform::PassContext ctx) {
+      auto fptr = func.CopyOnWrite();
+
+      auto mutator = PhysicalLayoutApply(fptr->buffer_map);
+      fptr->body = mutator(std::move(fptr->body));
+      fptr->buffer_map = mutator.UpdatedExternBufferMap();
+
+      return func;
+    };
+    return transform::CreatePrimFuncPass(pass_func, 0, "tir.PhysicalLayoutApply", {});
+  }
+
+  explicit PhysicalLayoutApply(const Map<tir::Var, Buffer>& buffer_map) {
+    for (auto it : buffer_map) {
+      Var var = it.first;
+      Buffer buf = it.second;
+      // Generate an updated buffer map.  This also defines the remaps
+      // to be applied within the function body for access into the
+      // external buffers.
+      updated_buffer_map_.Set(var, GetRemap(buf, true));
+    }
+  }
+
+  Map<tir::Var, Buffer> UpdatedExternBufferMap() const { return updated_buffer_map_; }
+
+  Stmt VisitStmt_(const BufferRealizeNode* op) final {
+    // Call once so that load/store nodes can read from the cached
+    // value.
+    GetRemap(op->buffer, true);
+
+    Stmt stmt = StmtExprMutator::VisitStmt_(op);
+    op = stmt.as<BufferRealizeNode>();
+    ICHECK(op);
+
+    const IndexMap& physical_layout = op->buffer->physical_layout;
+    if (physical_layout.defined()) {
+      Buffer remap = GetRemap(op->buffer, true);
+      Array<Range> bounds = physical_layout->map_ranges(op->bounds);
+      return BufferRealize(remap, bounds, op->condition, op->body, op->span);
+    }
+
+    return stmt;
+  }
+
+  Stmt VisitStmt_(const BufferStoreNode* op) final {
+    BufferStore store = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
+
+    IndexMap physical_layout = store->buffer->physical_layout;
+    if (physical_layout.defined()) {
+      auto write_ptr = store.CopyOnWrite();
+      write_ptr->buffer = GetRemap(store->buffer);
+      write_ptr->indices = physical_layout->map_indices(store->indices);
+    }
+
+    return Downcast<Stmt>(store);
+  }
+
+  PrimExpr VisitExpr_(const BufferLoadNode* op) final {
+    BufferLoad load = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
+
+    IndexMap physical_layout = load->buffer->physical_layout;
+    if (physical_layout.defined()) {
+      auto write_ptr = load.CopyOnWrite();
+      write_ptr->buffer = GetRemap(load->buffer);
+      write_ptr->indices = physical_layout->map_indices(load->indices);
+    }
+
+    return Downcast<PrimExpr>(load);
+  }
+
+ private:
+  //! \brief Given a buffer, return the buffer it should be remapped into.
+  Buffer GetRemap(Buffer buf, bool allow_alloc = false) {
+    if (!buf->physical_layout.defined()) {
+      return buf;
+    }
+
+    auto it = buf_map_.find(buf.get());
+    if (it != buf_map_.end()) {
+      return it->second;
+    }
+
+    ICHECK(allow_alloc) << "Buffer " << buf << " accessed before declaration.";
+
+    IndexMap physical_layout = buf->physical_layout;
+
+    Buffer remap_to = buf;
+    auto write_ptr = remap_to.CopyOnWrite();
+    write_ptr->physical_layout = IndexMap();
+    write_ptr->shape = physical_layout->map_shape(buf->shape);
+
+    buf_map_[buf.get()] = remap_to;
+    return remap_to;
+  }
+
+  std::unordered_map<const BufferNode*, Buffer> buf_map_;
+
+  Map<tir::Var, Buffer> updated_buffer_map_;
+};
+
 class StorageFlattener : public StmtExprMutator {
  public:
   static transform::Pass Pass(int cache_line_size, bool create_bound_attributes) {
@@ -1497,6 +1600,7 @@ PrimFunc StorageFlatten(PrimFunc func, int cache_line_size, bool create_bound_at
             BufferStrideLegalize::Pass(),
             ThreadScopePropagate::Pass(),
             BufferBindUnwrapper::Pass(),
+            PhysicalLayoutApply::Pass(),
             StorageFlattener::Pass(cache_line_size, create_bound_attributes),
             AssertSimplifier::Pass(),
         },
@@ -1511,6 +1615,8 @@ PrimFunc StorageFlatten(PrimFunc func, int cache_line_size, bool create_bound_at
 }
 
 namespace transform {
+
+TVM_REGISTER_GLOBAL("tir.transform.ApplyPhysicalLayout").set_body_typed(PhysicalLayoutApply::Pass);
 
 // TODO(tvm-team): consolidate configs to the PassContext
 Pass StorageFlatten(int cache_line_size, bool create_bound_attributes) {

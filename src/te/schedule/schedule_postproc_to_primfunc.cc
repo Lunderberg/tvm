@@ -42,6 +42,7 @@
 #include <tvm/tir/function.h>
 #include <tvm/tir/stmt_functor.h>
 
+#include <functional>
 #include <unordered_map>
 #include <utility>
 
@@ -55,6 +56,7 @@ Buffer CreateBufferFor(const Tensor& tensor, String storage_scope = "") {
     name += ".v" + std::to_string(tensor->value_index);
   }
   Buffer buffer = decl_buffer(tensor->shape, tensor->dtype, name, storage_scope);
+
   return buffer;
 }
 
@@ -85,6 +87,16 @@ class TensorToBufferMapper : public StmtExprMutator {
       Tensor tensor = Downcast<Tensor>(op->node);
       Buffer buffer = GetOrAllocBuffer(tensor);
       return AttrStmt(buffer, op->attr_key, op->value, op->body);
+    } else if (op->attr_key == tir::attr::physical_layout) {
+      auto arr = Downcast<Array<ObjectRef>>(op->node);
+      ICHECK_EQ(arr.size(), 2);
+
+      Stmt body = op->body;
+
+      Tensor tensor = Downcast<Tensor>(arr[0]);
+      Buffer buffer = GetBuffer(tensor);
+
+      return AttrStmt(Array<ObjectRef>{buffer, arr[1]}, op->attr_key, 1, body);
     } else {
       return ret;
     }
@@ -133,46 +145,205 @@ class TensorToBufferMapper : public StmtExprMutator {
     return buffer;
   }
 
-  // maps tensor to buffer.
+  // Maps tensor to buffer.
   std::unordered_map<Tensor, Buffer> buffer_map_;
+};
+
+/*! Collect the physical layout map of all tensors in the statement.
+ *
+ * Must be done before constructing the buffers, since the attributes could either apply to the
+ */
+class PhysicalLayoutAttrUnwrapper : StmtExprMutator {
+ public:
+  static tir::PrimFunc Apply(tir::PrimFunc func) {
+    // Collect the physical layout annotations in the body, which may
+    // refer to input arguments.
+    auto mapper = PhysicalLayoutAttrUnwrapper(PhysicalLayoutCollector::Collect(func->body));
+
+    auto write_ptr = func.CopyOnWrite();
+    write_ptr->body = mapper(func->body);
+    write_ptr->buffer_map = mapper.UpdateBufferMap(func->buffer_map);
+    return func;
+  }
+
+  struct BufferEntry {
+    IndexMap physical_layout;
+  };
+
+  PhysicalLayoutAttrUnwrapper(std::unordered_map<const BufferNode*, BufferEntry> layout_map)
+      : layout_map_(layout_map) {}
+
+  Map<tir::Var, Buffer> UpdateBufferMap(const Map<tir::Var, Buffer>& buffer_map) {
+    Map<tir::Var, Buffer> output;
+    for (auto it : buffer_map) {
+      output.Set(it.first, RemappedBuffer(it.second));
+    }
+    return output;
+  }
+
+  Stmt VisitStmt_(const AttrStmtNode* op) final {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<AttrStmtNode>();
+
+    if (op->attr_key == tir::attr::physical_layout) {
+      return op->body;
+    } else {
+      return ret;
+    }
+  }
+
+  Stmt VisitStmt_(const BufferRealizeNode* op) final {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<BufferRealizeNode>();
+
+    Buffer remap = RemappedBuffer(op->buffer);
+
+    if (op->buffer.same_as(remap)) {
+      return ret;
+    } else {
+      return BufferRealize(remap, op->bounds, op->condition, op->body, op->span);
+    }
+  }
+
+  Stmt VisitStmt_(const BufferStoreNode* op) final {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<BufferStoreNode>();
+
+    Buffer remap = RemappedBuffer(op->buffer);
+
+    if (op->buffer.same_as(remap)) {
+      return ret;
+    } else {
+      return BufferStore(remap, op->value, op->indices);
+    }
+  }
+
+  PrimExpr VisitExpr_(const BufferLoadNode* op) final {
+    auto ret = StmtExprMutator::VisitExpr_(op);
+    op = ret.as<BufferLoadNode>();
+
+    Buffer remap = RemappedBuffer(op->buffer);
+
+    if (op->buffer.same_as(remap)) {
+      return ret;
+    } else {
+      return BufferLoad(remap, op->indices);
+    }
+  }
+
+ private:
+  Buffer RemappedBuffer(Buffer orig) {
+    // If this buffer has already been remapped, then return the
+    // previous value.
+    {
+      auto it = buffer_remap_.find(orig.get());
+      if (it != buffer_remap_.end()) {
+        return it->second;
+      }
+    }
+
+    // Otherwise, check if we need to add a physical layout to this
+    // buffer.
+    Buffer buf = orig;
+    {
+      auto it = layout_map_.find(buf.get());
+      if (it != layout_map_.end()) {
+        auto write_ptr = buf.CopyOnWrite();
+        if (it->second.physical_layout.defined()) {
+          write_ptr->physical_layout = it->second.physical_layout;
+        }
+      }
+    }
+
+    // And cache the result for next time.
+    buffer_remap_[orig.get()] = buf;
+
+    return buf;
+  }
+
+  /*! Collect the physical layout information of all tensors in the statement.
+   *
+   * Must be done before constructing the buffers, since the
+   * attributes could either apply to the external buffers or to
+   * internal allocations.
+   */
+  class PhysicalLayoutCollector : StmtExprVisitor {
+   public:
+    static std::unordered_map<const BufferNode*, BufferEntry> Collect(Stmt stmt) {
+      PhysicalLayoutCollector collector;
+      collector(std::move(stmt));
+      return std::move(collector.layout_map_);
+    }
+
+    PhysicalLayoutCollector() {}
+
+    void VisitStmt_(const AttrStmtNode* op) final {
+      if (op->attr_key == tir::attr::physical_layout) {
+        auto arr = Downcast<Array<ObjectRef>>(op->node);
+        ICHECK_EQ(arr.size(), 2);
+
+        auto buffer = Downcast<Buffer>(arr[0]);
+        auto physical_layout = Downcast<IndexMap>(arr[1]);
+        layout_map_[buffer.get()].physical_layout = physical_layout;
+      }
+      StmtExprVisitor::VisitStmt_(op);
+    }
+
+   private:
+    std::unordered_map<const BufferNode*, BufferEntry> layout_map_;
+  };
+
+  std::unordered_map<const BufferNode*, Buffer> buffer_remap_;
+
+  std::unordered_map<const BufferNode*, BufferEntry> layout_map_;
 };
 
 PrimFunc SchedulePostProcToPrimFunc(Array<ObjectRef> arg_list, Stmt body,
                                     Optional<Map<Tensor, Buffer>> extern_buffer_opt) {
-  std::unordered_map<Tensor, Buffer> extern_buffer;
+  std::unordered_map<Tensor, Buffer> extern_tensor_map;
 
   if (extern_buffer_opt.defined()) {
     auto v = extern_buffer_opt.value();
-    extern_buffer = std::unordered_map<Tensor, Buffer>(v.begin(), v.end());
+    extern_tensor_map = std::unordered_map<Tensor, Buffer>(v.begin(), v.end());
   }
 
   Array<tir::Var> params;
   Map<tir::Var, tir::Buffer> buffer_map;
 
-  for (auto var : arg_list) {
-    if (auto* n = var.as<tir::VarNode>()) {
+  for (auto arg : arg_list) {
+    if (auto* n = arg.as<tir::VarNode>()) {
+      tir::Var var = GetRef<tir::Var>(n);
       params.push_back(GetRef<tir::Var>(n));
-    } else if (auto* n = var.as<te::TensorNode>()) {
+    } else if (auto* n = arg.as<te::TensorNode>()) {
       te::Tensor tensor = GetRef<te::Tensor>(n);
-      ICHECK(!extern_buffer.count(tensor));
+      ICHECK(!extern_tensor_map.count(tensor));
 
       tir::Buffer buffer = CreateBufferFor(tensor);
       tir::Var bptr(buffer->name, PrimType(DataType::Handle()));
       params.push_back(bptr);
       buffer_map.Set(bptr, buffer);
-      extern_buffer[tensor] = buffer;
-    } else {
-      tir::Buffer buffer = Downcast<tir::Buffer>(var);
+      extern_tensor_map[tensor] = buffer;
+    } else if (auto* n = arg.as<tir::BufferNode>()) {
+      tir::Buffer buffer = GetRef<tir::Buffer>(n);
       tir::Var bptr(buffer->name, PrimType(DataType::Handle()));
       params.push_back(bptr);
       buffer_map.Set(bptr, buffer);
+    } else {
+      LOG(FATAL) << "Expected argument to be Var, Tensor, or Buffer, but received "
+                 << arg->GetTypeKey();
     }
   }
 
-  body = TensorToBufferMapper(std::move(extern_buffer))(std::move(body));
+  body = TensorToBufferMapper(std::move(extern_tensor_map))(std::move(body));
+
+  PrimFunc func = tir::PrimFunc(params, body, VoidType(), buffer_map);
+
+  func = PhysicalLayoutAttrUnwrapper::Apply(std::move(func));
+
   // We mark this PrimFunc as coming from a TE schedule
-  return WithAttr(tir::PrimFunc(params, body, VoidType(), buffer_map), "from_legacy_te_schedule",
-                  Bool(true));
+  func = WithAttr(func, "from_legacy_te_schedule", Bool(true));
+
+  return func;
 }
 
 TVM_REGISTER_GLOBAL("schedule.SchedulePostProcToPrimFunc")
