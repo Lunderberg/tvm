@@ -87,7 +87,8 @@ class TensorToBufferMapper : public StmtExprMutator {
       Tensor tensor = Downcast<Tensor>(op->node);
       Buffer buffer = GetOrAllocBuffer(tensor);
       return AttrStmt(buffer, op->attr_key, op->value, op->body);
-    } else if (op->attr_key == tir::attr::physical_layout) {
+    } else if (op->attr_key == tir::attr::physical_layout ||
+               op->attr_key == tir::attr::physical_axis_params) {
       auto arr = Downcast<Array<ObjectRef>>(op->node);
       ICHECK_EQ(arr.size(), 2);
 
@@ -168,6 +169,7 @@ class PhysicalLayoutAttrUnwrapper : StmtExprMutator {
 
   struct BufferEntry {
     IndexMap physical_layout;
+    Array<BufferParamsPerPhysicalAxis> physical_axes;
   };
 
   PhysicalLayoutAttrUnwrapper(std::unordered_map<const BufferNode*, BufferEntry> layout_map)
@@ -185,7 +187,8 @@ class PhysicalLayoutAttrUnwrapper : StmtExprMutator {
     auto ret = StmtExprMutator::VisitStmt_(op);
     op = ret.as<AttrStmtNode>();
 
-    if (op->attr_key == tir::attr::physical_layout) {
+    if (op->attr_key == tir::attr::physical_layout ||
+        op->attr_key == tir::attr::physical_axis_params) {
       return op->body;
     } else {
       return ret;
@@ -252,6 +255,9 @@ class PhysicalLayoutAttrUnwrapper : StmtExprMutator {
         if (it->second.physical_layout.defined()) {
           write_ptr->physical_layout = it->second.physical_layout;
         }
+        if (it->second.physical_axes.size()) {
+          write_ptr->physical_axes = it->second.physical_axes;
+        }
       }
     }
 
@@ -285,6 +291,13 @@ class PhysicalLayoutAttrUnwrapper : StmtExprMutator {
         auto buffer = Downcast<Buffer>(arr[0]);
         auto physical_layout = Downcast<IndexMap>(arr[1]);
         layout_map_[buffer.get()].physical_layout = physical_layout;
+      } else if (op->attr_key == tir::attr::physical_axis_params) {
+        auto arr = Downcast<Array<ObjectRef>>(op->node);
+        ICHECK_EQ(arr.size(), 2);
+
+        auto buffer = Downcast<Buffer>(arr[0]);
+        auto physical_axes = Downcast<Array<BufferParamsPerPhysicalAxis>>(arr[1]);
+        layout_map_[buffer.get()].physical_axes = physical_axes;
       }
       StmtExprVisitor::VisitStmt_(op);
     }

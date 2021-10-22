@@ -40,19 +40,26 @@ namespace te {
 
 using namespace tir;
 
-// Annotate the statement with the physical layout of the stage.  This
-// annotation is removed during SchedulePostProcToPrimFunc, where it
-// becomes part of the BufferNode definition.
+// Annotate the statement with the physical layout and physical axis
+// separators of the stage.  This annotation is removed during
+// SchedulePostProcToPrimFunc, where it becomes part of the BufferNode
+// definition.
 Stmt WrapPhysicalLayout(const Stage& stage, Stmt body) {
   if (stage->physical_layout.defined()) {
     for (int i = 0; i < stage->op->num_outputs(); i++) {
       body = AttrStmt(Array<ObjectRef>{stage->op.output(i), stage->physical_layout},
                       tir::attr::physical_layout, 1, body);
     }
-    return body;
-  } else {
-    return body;
   }
+
+  if (stage->physical_axes.size()) {
+    for (int i = 0; i < stage->op->num_outputs(); i++) {
+      body = AttrStmt(Array<ObjectRef>{stage->op.output(i), stage->physical_axes},
+                      tir::attr::physical_axis_params, 1, body);
+    }
+  }
+
+  return body;
 }
 
 Stmt MakePipeline(const Stage& s, const std::unordered_map<IterVar, Range>& dom_map, Stmt consumer,
