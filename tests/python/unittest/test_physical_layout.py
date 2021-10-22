@@ -193,5 +193,28 @@ def test_internal_reshape(target, dev, n_items, reordered_shape, dtype, fphysica
     walk_buffer_interactions(body, check_shape(reordered_shape))
 
 
+def test_2d_physical(dtype):
+    logical_shape = (2, 3, 4)
+    A = te.placeholder(shape=logical_shape, dtype=dtype, name="A")
+    B = te.compute(shape=A.shape, fcompute=lambda i, j, k: A[i, j, k], name="B")
+
+    s = te.create_schedule(B.op)
+    s[B].set_physical_layout(lambda i, j, k: [i, j, te.PHYSICAL_AXIS_SEPARATOR, k])
+
+    mod = tvm.lower(s, [A, B])
+
+    def callback(node):
+        if type(node) in [tvm.tir.Load, tvm.tir.Store]:
+            name = node.buffer_var.name
+            if name == "A":
+                assert len(node.indices) == 1
+            elif name == "B":
+                assert len(node.indices) == 2
+            else:
+                raise RuntimeError(f"Unexpected buffer: {name}")
+
+    post_order_visit(mod["main"].body, callback)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(sys.argv))
