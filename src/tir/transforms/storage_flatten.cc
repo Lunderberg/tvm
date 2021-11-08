@@ -1322,7 +1322,9 @@ class StorageFlattener : public StmtExprMutator {
     for (size_t i = 1; i < shape.size(); ++i) {
       bound = Mul(bound, Mul(make_const(bound.dtype(), type.lanes()), shape[i]));
     }
-    return bound;
+    Array<PrimExpr> bounds{bound};
+
+    return Call(DataType::Handle(), builtin::tvm_tuple(), bounds);
   }
 
   // The buffer assignment map
