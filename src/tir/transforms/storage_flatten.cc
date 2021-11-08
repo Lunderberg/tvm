@@ -163,43 +163,48 @@ class BufferShapeLegalize : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
-    Stmt stmt = StmtExprMutator::VisitStmt_(op);
-    op = stmt.as<BufferStoreNode>();
-    ICHECK(op);
-
-    auto it = buf_map_.find(op->buffer);
-    if (it != buf_map_.end()) {
-      const BufferEntry& entry = it->second;
-      ICHECK(entry.in_scope) << "Cannot store to an out-of-scope buffer";
-
-      BufferStore updated = GetRef<BufferStore>(op);
-      auto write_ptr = updated.CopyOnWrite();
-      write_ptr->indices = update_indices(op->indices, entry.index_offsets);
-      write_ptr->buffer = entry.remap_to;
-      stmt = updated;
-    }
-
-    return stmt;
+    auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
+    return VisitBufferAccess(node);
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
-    PrimExpr expr = StmtExprMutator::VisitExpr_(op);
-    op = expr.as<BufferLoadNode>();
-    ICHECK(op);
+    auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
+    return VisitBufferAccess(node);
+  }
 
-    auto it = buf_map_.find(op->buffer);
+  template <typename Node>
+  Node VisitBufferAccess(Node node) {
+    auto it = buf_map_.find(node->buffer);
     if (it != buf_map_.end()) {
       const BufferEntry& entry = it->second;
-      ICHECK(entry.in_scope) << "Cannot read from an out-of-scope buffer";
+      ICHECK(entry.in_scope) << "Cannot access an out-of-scope buffer";
 
-      BufferLoad updated = GetRef<BufferLoad>(op);
-      auto write_ptr = updated.CopyOnWrite();
-      write_ptr->indices = update_indices(op->indices, entry.index_offsets);
+      Array<PrimExpr> indices = node->indices;
+      if (entry.index_offsets.size()) {
+        ICHECK_GE(entry.index_offsets.size(), indices.size())
+            << "Cannot bind buffer to a shape of lower dimension.";
+
+        Array<PrimExpr> new_indices;
+
+        // Pad leading indices with zero, matching the "fuzzy_match"
+        // behavior from ArgBinder::BindBuffer.
+        size_t diff = entry.index_offsets.size() - indices.size();
+        for (size_t i = 0; i < diff; i++) {
+          new_indices.push_back(0);
+        }
+
+        // Offset indices used to access buffers of a reduced size.
+        for (size_t i = 0; i < indices.size(); i++) {
+          PrimExpr offset = entry.index_offsets[i + diff];
+          new_indices.push_back(indices[i] - offset);
+        }
+      }
+
+      auto write_ptr = node.CopyOnWrite();
+      write_ptr->indices = indices;
       write_ptr->buffer = entry.remap_to;
-      expr = updated;
     }
-
-    return expr;
+    return node;
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
@@ -339,36 +344,6 @@ class BufferShapeLegalize : public StmtExprMutator {
 
     buf_map_.at(key).in_scope = false;
     return stmt;
-  }
-
-  Array<PrimExpr> update_indices(const Array<PrimExpr>& indices, const Array<PrimExpr>& offsets) {
-    // offsets come from BufferRealizeNode::bounds, which is allowed
-    // to be empty to indicate realization of the full shape of the
-    // buffer.  In that case, the indices do not need to be modified,
-    // but may need to be extended with leading zeroes.
-    if (offsets.size() == 0) {
-      return indices;
-    }
-
-    ICHECK_GE(offsets.size(), indices.size())
-        << "Cannot bind buffer to a shape of lower dimension.";
-
-    Array<PrimExpr> new_indices;
-
-    // Pad leading indices with zero, matching the "fuzzy_match"
-    // behavior from ArgBinder::BindBuffer.
-    size_t diff = offsets.size() - indices.size();
-    for (size_t i = 0; i < diff; i++) {
-      new_indices.push_back(0);
-    }
-
-    // Offset indices used to access buffers of a reduced size.
-    for (size_t i = 0; i < indices.size(); i++) {
-      PrimExpr offset = offsets[i + diff];
-      new_indices.push_back(indices[i] - offset);
-    }
-
-    return new_indices;
   }
 
   std::unordered_map<const VarNode*, PrimExpr> var_remap_;
@@ -778,39 +753,13 @@ class BufferBindUnwrapper : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const StoreNode* op) final {
-    Stmt stmt = StmtExprMutator::VisitStmt_(op);
-    op = stmt.as<StoreNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      // TODO(Lunderberg): Change from warning to error once all mixed
-      // use of physical/logical layouts is removed.
-      DLOG(WARNING) << op->buffer_var << " was declared as buffer (buffer_bind_scope), "
-                    << "but is accessed as a pointer (StoreNode).";
-
-      ICHECK(it->second.as<VarNode>());
-      Var new_buf_var = Downcast<Var>(it->second);
-      return Store(new_buf_var, op->value, op->index, op->predicate);
-    } else {
-      return stmt;
-    }
+    LOG(FATAL) << "Unexpected use of deprecated StoreNode.  Please use BufferStoreNode instead.";
+    return Stmt();
   }
 
   PrimExpr VisitExpr_(const LoadNode* op) final {
-    PrimExpr expr = StmtExprMutator::VisitExpr_(op);
-    op = expr.as<LoadNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      // TODO(Lunderberg): Change from warning to error once all mixed
-      // use of physical/logical layouts is removed.
-      DLOG(WARNING) << op->buffer_var << " was declared as buffer (buffer_bind_scope), "
-                    << "but is accessed as a pointer (LoadNode).";
-
-      ICHECK(it->second.as<VarNode>());
-      Var new_buf_var = Downcast<Var>(it->second);
-      return Load(op->dtype, new_buf_var, op->index, op->predicate);
-    } else {
-      return expr;
-    }
+    LOG(FATAL) << "Unexpected use of deprecated LoadNode.  Please use BufferLoadNode instead.";
+    return PrimExpr();
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
@@ -1105,16 +1054,13 @@ class StorageFlattener : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const StoreNode* op) final {
-    Stmt stmt = StmtExprMutator::VisitStmt_(op);
-    op = stmt.as<StoreNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      ICHECK(it->second.as<VarNode>());
-      Var buf_var = Downcast<Var>(it->second);
-      return Store(buf_var, op->value, op->index, op->predicate);
-    } else {
-      return stmt;
-    }
+    LOG(FATAL) << "Unexpected use of deprecated StoreNode.  Please use BufferStoreNode instead.";
+    return Stmt();
+  }
+
+  PrimExpr VisitExpr_(const LoadNode* op) final {
+    LOG(FATAL) << "Unexpected use of deprecated LoadNode.  Please use BufferLoadNode instead.";
+    return PrimExpr();
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
@@ -1241,19 +1187,6 @@ class StorageFlattener : public StmtExprMutator {
                        MakeBound(e.buffer->dtype, e.buffer->shape), ret);
       }
       return ret;
-    }
-  }
-
-  PrimExpr VisitExpr_(const LoadNode* op) final {
-    PrimExpr expr = StmtExprMutator::VisitExpr_(op);
-    op = expr.as<LoadNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      ICHECK(it->second.as<VarNode>());
-      Var buf_var = Downcast<Var>(it->second);
-      return Load(op->dtype, buf_var, op->index, op->predicate);
-    } else {
-      return expr;
     }
   }
 
