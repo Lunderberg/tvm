@@ -398,12 +398,6 @@ class AOTExecutorCodegen : public MixedModeVisitor {
    * copy-on-write fashion.
    */
   void CopyToOutput(PrimExpr out, PrimExpr in, bool pack_input, size_t size) {
-    // Define intermediate DLTensor to load/store the data
-    auto tmp0 = te::Var("tmp0", DataType::Handle());
-    auto tmp1 = te::Var("tmp1", DataType::Handle());
-    te::Var loop_idx("i", DataType::Int(32));
-    auto retval_i = tir::Load(DataType::UInt(8), tmp0, loop_idx, tir::const_true());
-
     PrimExpr retval_get = tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_struct_get(),
                                          {in, 0, tir::builtin::kArrData});
     PrimExpr tostore = tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_struct_get(),
@@ -419,10 +413,19 @@ class AOTExecutorCodegen : public MixedModeVisitor {
     }
 
     // Copy the variable from the input to the output
+    // Define intermediate DLTensor to load/store the data
+    tir::Buffer tmp_read =
+        tir::decl_buffer({IntImm(DataType::UInt(64), size)}, DataType::UInt(8), "tmp_read");
+    tir::Buffer tmp_write =
+        tir::decl_buffer({IntImm(DataType::UInt(64), size)}, DataType::UInt(8), "tmp_write");
+
+    te::Var loop_idx("i", DataType::Int(32));
+    auto retval_i = tir::BufferLoad(tmp_read, {loop_idx});
+
     tir::Stmt copy = tir::For(
         loop_idx, 0, ConstInt32(size), tir::ForKind::kSerial,
-        tir::Store(tmp1, tir::Let(tmp0, retval_get, retval_i), loop_idx, tir::const_true()));
-    stmts_.push_back(tir::LetStmt(tmp1, tostore, copy));
+        tir::BufferStore(tmp_write, tir::Let(tmp_read->data, retval_get, retval_i), {loop_idx}));
+    stmts_.push_back(tir::LetStmt(tmp_write->data, tostore, copy));
   }
 
   /*
