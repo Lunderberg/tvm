@@ -40,10 +40,10 @@ class BuiltinLower : public StmtExprMutator {
  public:
   // Record stack frame for existing scope.
   struct AllocaScope {
-    Var stack_shape = Var("stack_shape", DataType::Handle());
+    Buffer stack_shape;
     Var stack_array = Var("stack_array", DataType::Handle());
     Var stack_value = Var("stack_value", DataType::Handle());
-    Var stack_tcode = Var("stack_tcode", DataType::Handle());
+    Buffer stack_tcode;
 
     int64_t max_shape_stack{-1};
     uint64_t max_array_stack{0};
@@ -63,7 +63,9 @@ class BuiltinLower : public StmtExprMutator {
     ICHECK(!alloca_scope_.empty());
     auto& scope = alloca_scope_.back();
     if (scope.max_shape_stack != -1) {
-      stmt = LetStmt(scope.stack_shape, StackAlloca("shape", scope.max_shape_stack), stmt);
+      scope.stack_shape = decl_buffer({IntImm(DataType::Int(64), scope.max_shape_stack)},
+                                      DataType::Int(64), "stack_shape");
+      stmt = LetStmt(scope.stack_shape->data, StackAlloca("shape", scope.max_shape_stack), stmt);
     }
 
     if (scope.max_array_stack != 0) {
@@ -71,7 +73,9 @@ class BuiltinLower : public StmtExprMutator {
     }
     if (scope.max_arg_stack != 0) {
       stmt = LetStmt(scope.stack_value, StackAlloca("arg_value", scope.max_arg_stack), stmt);
-      stmt = LetStmt(scope.stack_tcode, StackAlloca("arg_tcode", scope.max_arg_stack), stmt);
+      scope.stack_tcode = decl_buffer({IntImm(DataType::UInt(64), scope.max_arg_stack)},
+                                      DataType::Int(32), "stack_tcode");
+      stmt = LetStmt(scope.stack_tcode->data, StackAlloca("arg_tcode", scope.max_arg_stack), stmt);
     }
     alloca_scope_.pop_back();
 
@@ -228,10 +232,10 @@ class BuiltinLower : public StmtExprMutator {
     op = expr.as<CallNode>();
     // no need to perform any store for a scalar shape
     for (size_t i = 0; i < op->args.size(); ++i) {
-      prep_seq.emplace_back(Store(scope.stack_shape, cast(DataType::Int(64), op->args[i]),
-                                  ConstInt32(stack_begin + i), const_true(1)));
+      prep_seq.emplace_back(BufferStore(scope.stack_shape, cast(DataType::Int(64), op->args[i]),
+                                        {ConstInt32(stack_begin + i)}));
     }
-    return AddressOffset(scope.stack_shape, DataType::Int(64), stack_begin);
+    return AddressOffset(scope.stack_shape->data, DataType::Int(64), stack_begin);
   }
   // make array
   PrimExpr MakeArray(const CallNode* op) {
@@ -312,8 +316,7 @@ class BuiltinLower : public StmtExprMutator {
         arg_tcode = kTVMStr;
       }
       if (IsArrayHandle(arg)) arg_tcode = kTVMDLTensorHandle;
-      prep_seq.emplace_back(
-          Store(scope.stack_tcode, ConstInt32(arg_tcode), stack_index, const_true(1)));
+      prep_seq.emplace_back(BufferStore(scope.stack_tcode, ConstInt32(arg_tcode), {stack_index}));
     }
     // UPDATE stack value
     scope.max_arg_stack = std::max(scope.run_arg_stack, scope.max_arg_stack);
@@ -322,7 +325,7 @@ class BuiltinLower : public StmtExprMutator {
     scope.run_shape_stack = restore_shape_stack;
     scope.run_array_stack = restore_array_stack;
     scope.run_arg_stack = arg_stack_begin;
-    Array<PrimExpr> packed_args = {op->args[0], scope.stack_value, scope.stack_tcode,
+    Array<PrimExpr> packed_args = {op->args[0], scope.stack_value, scope.stack_tcode->data,
                                    ConstInt32(arg_stack_begin),
                                    ConstInt32(arg_stack_begin + op->args.size() - 1)};
 
@@ -363,8 +366,7 @@ class BuiltinLower : public StmtExprMutator {
                                          builtin::kTVMValueContent, arg));
       int arg_tcode = api_type.code();
       ICHECK(!IsArrayHandle(arg)) << "Trace does not support Buffers";
-      prep_seq.emplace_back(
-          Store(scope.stack_tcode, ConstInt32(arg_tcode), stack_index, const_true(1)));
+      prep_seq.emplace_back(BufferStore(scope.stack_tcode, ConstInt32(arg_tcode), {stack_index}));
     }
     // UPDATE stack value
     scope.max_arg_stack = std::max(scope.run_arg_stack, scope.max_arg_stack);
@@ -375,7 +377,7 @@ class BuiltinLower : public StmtExprMutator {
     // Update the top of the stack, so we can use more than one
     // packed function's arguments with the one stack.
     scope.run_arg_stack = arg_stack_begin + args_size - 1;
-    Array<PrimExpr> packed_args = {op->args[0], scope.stack_value, scope.stack_tcode,
+    Array<PrimExpr> packed_args = {op->args[0], scope.stack_value, scope.stack_tcode->data,
                                    ConstInt32(arg_stack_begin),
                                    ConstInt32(arg_stack_begin + op->args.size() - 1),
                                    // Pass traced value.
