@@ -324,7 +324,10 @@ Buffer Buffer::GetFlattenedBuffer() const {
 
   Buffer output = *this;
   auto writer = output.CopyOnWrite();
+  writer->pre_flattened_shape = self->shape;
+  writer->pre_flattened_strides = self->strides;
   writer->shape = {output_size};
+  writer->strides = {};
 
   return output;
 }
