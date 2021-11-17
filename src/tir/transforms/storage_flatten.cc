@@ -163,43 +163,48 @@ class BufferShapeLegalize : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
-    Stmt stmt = StmtExprMutator::VisitStmt_(op);
-    op = stmt.as<BufferStoreNode>();
-    ICHECK(op);
-
-    auto it = buf_map_.find(op->buffer);
-    if (it != buf_map_.end()) {
-      const BufferEntry& entry = it->second;
-      ICHECK(entry.in_scope) << "Cannot store to an out-of-scope buffer";
-
-      BufferStore updated = GetRef<BufferStore>(op);
-      auto write_ptr = updated.CopyOnWrite();
-      write_ptr->indices = update_indices(op->indices, entry.index_offsets);
-      write_ptr->buffer = entry.remap_to;
-      stmt = updated;
-    }
-
-    return stmt;
+    auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
+    return VisitBufferAccess(node);
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
-    PrimExpr expr = StmtExprMutator::VisitExpr_(op);
-    op = expr.as<BufferLoadNode>();
-    ICHECK(op);
+    auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
+    return VisitBufferAccess(node);
+  }
 
-    auto it = buf_map_.find(op->buffer);
+  template <typename Node>
+  Node VisitBufferAccess(Node node) {
+    auto it = buf_map_.find(node->buffer);
     if (it != buf_map_.end()) {
       const BufferEntry& entry = it->second;
-      ICHECK(entry.in_scope) << "Cannot read from an out-of-scope buffer";
+      ICHECK(entry.in_scope) << "Cannot access an out-of-scope buffer";
 
-      BufferLoad updated = GetRef<BufferLoad>(op);
-      auto write_ptr = updated.CopyOnWrite();
-      write_ptr->indices = update_indices(op->indices, entry.index_offsets);
+      Array<PrimExpr> indices = node->indices;
+      if (entry.index_offsets.size()) {
+        ICHECK_GE(entry.index_offsets.size(), indices.size())
+            << "Cannot bind buffer to a shape of lower dimension.";
+
+        Array<PrimExpr> new_indices;
+
+        // Pad leading indices with zero, matching the "fuzzy_match"
+        // behavior from ArgBinder::BindBuffer.
+        size_t diff = entry.index_offsets.size() - indices.size();
+        for (size_t i = 0; i < diff; i++) {
+          new_indices.push_back(0);
+        }
+
+        // Offset indices used to access buffers of a reduced size.
+        for (size_t i = 0; i < indices.size(); i++) {
+          PrimExpr offset = entry.index_offsets[i + diff];
+          new_indices.push_back(indices[i] - offset);
+        }
+      }
+
+      auto write_ptr = node.CopyOnWrite();
+      write_ptr->indices = indices;
       write_ptr->buffer = entry.remap_to;
-      expr = updated;
     }
-
-    return expr;
+    return node;
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
@@ -339,36 +344,6 @@ class BufferShapeLegalize : public StmtExprMutator {
 
     buf_map_.at(key).in_scope = false;
     return stmt;
-  }
-
-  Array<PrimExpr> update_indices(const Array<PrimExpr>& indices, const Array<PrimExpr>& offsets) {
-    // offsets come from BufferRealizeNode::bounds, which is allowed
-    // to be empty to indicate realization of the full shape of the
-    // buffer.  In that case, the indices do not need to be modified,
-    // but may need to be extended with leading zeroes.
-    if (offsets.size() == 0) {
-      return indices;
-    }
-
-    ICHECK_GE(offsets.size(), indices.size())
-        << "Cannot bind buffer to a shape of lower dimension.";
-
-    Array<PrimExpr> new_indices;
-
-    // Pad leading indices with zero, matching the "fuzzy_match"
-    // behavior from ArgBinder::BindBuffer.
-    size_t diff = offsets.size() - indices.size();
-    for (size_t i = 0; i < diff; i++) {
-      new_indices.push_back(0);
-    }
-
-    // Offset indices used to access buffers of a reduced size.
-    for (size_t i = 0; i < indices.size(); i++) {
-      PrimExpr offset = offsets[i + diff];
-      new_indices.push_back(indices[i] - offset);
-    }
-
-    return new_indices;
   }
 
   std::unordered_map<const VarNode*, PrimExpr> var_remap_;
@@ -778,39 +753,13 @@ class BufferBindUnwrapper : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const StoreNode* op) final {
-    Stmt stmt = StmtExprMutator::VisitStmt_(op);
-    op = stmt.as<StoreNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      // TODO(Lunderberg): Change from warning to error once all mixed
-      // use of physical/logical layouts is removed.
-      DLOG(WARNING) << op->buffer_var << " was declared as buffer (buffer_bind_scope), "
-                    << "but is accessed as a pointer (StoreNode).";
-
-      ICHECK(it->second.as<VarNode>());
-      Var new_buf_var = Downcast<Var>(it->second);
-      return Store(new_buf_var, op->value, op->index, op->predicate);
-    } else {
-      return stmt;
-    }
+    LOG(FATAL) << "Unexpected use of deprecated StoreNode.  Please use BufferStoreNode instead.";
+    return Stmt();
   }
 
   PrimExpr VisitExpr_(const LoadNode* op) final {
-    PrimExpr expr = StmtExprMutator::VisitExpr_(op);
-    op = expr.as<LoadNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      // TODO(Lunderberg): Change from warning to error once all mixed
-      // use of physical/logical layouts is removed.
-      DLOG(WARNING) << op->buffer_var << " was declared as buffer (buffer_bind_scope), "
-                    << "but is accessed as a pointer (LoadNode).";
-
-      ICHECK(it->second.as<VarNode>());
-      Var new_buf_var = Downcast<Var>(it->second);
-      return Load(op->dtype, new_buf_var, op->index, op->predicate);
-    } else {
-      return expr;
-    }
+    LOG(FATAL) << "Unexpected use of deprecated LoadNode.  Please use BufferLoadNode instead.";
+    return PrimExpr();
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
@@ -1084,9 +1033,12 @@ class StorageFlattener : public StmtExprMutator {
 
       bound_analyzer(func->body);
 
+      auto pass = StorageFlattener(func->buffer_map, cache_line_size, create_bound_attributes,
+                                   &bound_analyzer);
+
       auto fptr = func.CopyOnWrite();
-      fptr->body = StorageFlattener(fptr->buffer_map, cache_line_size, create_bound_attributes,
-                                    &bound_analyzer)(std::move(fptr->body));
+      fptr->body = pass(std::move(fptr->body));
+      fptr->buffer_map = pass.UpdatedBufferMap();
       return func;
     };
     return transform::CreatePrimFuncPass(pass_func, 0, "tir.StorageFlattener", {});
@@ -1098,23 +1050,33 @@ class StorageFlattener : public StmtExprMutator {
     for (auto kv : extern_buffer_map) {
       BufferEntry e;
       e.buffer = kv.second;
+      e.flattened_buffer = e.buffer.GetFlattenedBuffer();
+      // TODO(Lunderberg): Move the handling of boolean into a
+      // dedicated pass.
+
+      // Boolean tensors are backed by a Int8 array.
+      if (e.buffer->dtype == DataType::Bool()) {
+        auto writer = e.buffer.CopyOnWrite();
+        writer->dtype = DataType::Int(8);
+      }
       e.external = true;
       buf_map_[kv.second] = e;
+
+      updated_extern_buffer_map_.Set(kv.first, e.flattened_buffer);
     }
     cache_line_size_ = cache_line_size;
   }
 
+  Map<Var, Buffer> UpdatedBufferMap() { return updated_extern_buffer_map_; }
+
   Stmt VisitStmt_(const StoreNode* op) final {
-    Stmt stmt = StmtExprMutator::VisitStmt_(op);
-    op = stmt.as<StoreNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      ICHECK(it->second.as<VarNode>());
-      Var buf_var = Downcast<Var>(it->second);
-      return Store(buf_var, op->value, op->index, op->predicate);
-    } else {
-      return stmt;
-    }
+    LOG(FATAL) << "Unexpected use of deprecated StoreNode.  Please use BufferStoreNode instead.";
+    return Stmt();
+  }
+
+  PrimExpr VisitExpr_(const LoadNode* op) final {
+    LOG(FATAL) << "Unexpected use of deprecated LoadNode.  Please use BufferLoadNode instead.";
+    return PrimExpr();
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
@@ -1151,7 +1113,18 @@ class StorageFlattener : public StmtExprMutator {
     const BufferEntry& e = it->second;
     ICHECK(e.in_scope) << "Cannot write to " << op->buffer << ", out of scope.";
 
-    Stmt body = e.buffer.vstore(op->indices, op->value);
+    // Handle casts from the value's dtype to the dtype of the backing
+    // array.
+    PrimExpr value = op->value;
+    if (value.dtype() == DataType::Bool()) {
+      ICHECK_EQ(e.flattened_buffer->dtype, DataType::Int(8))
+          << "Expected int8 backing array for boolean tensor";
+      value = tir::Cast(DataType::Int(8), value);
+    }
+
+    auto flattened_indices = e.buffer->ElemOffset(op->indices);
+
+    Stmt body = BufferStore(e.flattened_buffer, value, flattened_indices, op->span);
     if (create_bound_attributes_ && ShapeIsValid(e.buffer->shape)) {
       shape_collector_.push_back(std::make_pair(e.buffer->data, e.buffer->shape));
     }
@@ -1191,12 +1164,11 @@ class StorageFlattener : public StmtExprMutator {
                "Please run BufferShapeLegalize first.";
       }
 
-      Array<PrimExpr> shape = op->buffer->shape;
       StorageScope skey = StorageScope::Create(GetPtrStorageScope(op->buffer->data));
 
       // use small alignment for small arrays
       auto dtype = op->buffer->dtype;
-      int32_t const_size = AllocateNode::constant_allocation_size(shape);
+      int32_t const_size = AllocateNode::constant_allocation_size(op->buffer->shape);
       int align = GetTempAllocaAlignment(dtype, const_size);
       if (skey.tag.length() != 0) {
         MemoryInfo info = GetMemoryInfo(skey.to_string());
@@ -1206,54 +1178,33 @@ class StorageFlattener : public StmtExprMutator {
               << "Allocation exceed bound of memory tag " << skey.to_string();
         }
       }
-      Array<PrimExpr> strides = op->buffer->strides;
 
-      e.buffer = Buffer(op->buffer->data, op->buffer->dtype, shape, strides, PrimExpr(),
-                        op->buffer->name, align, 0, kDefault);
+      e.buffer = Buffer(op->buffer->data, op->buffer->dtype, op->buffer->shape, op->buffer->strides,
+                        PrimExpr(), op->buffer->name, align, 0, kDefault);
+      e.flattened_buffer = e.buffer.GetFlattenedBuffer();
+
+      // TODO(Lunderberg): Move the handling of boolean into a
+      // dedicated pass.
+
+      // Boolean tensors are backed by a Int8 array.
+      if (e.buffer->dtype == DataType::Bool()) {
+        auto writer = e.buffer.CopyOnWrite();
+        writer->dtype = DataType::Int(8);
+      }
 
       buf_map_[key] = e;
       Stmt body = this->VisitStmt(op->body);
       buf_map_[key].in_scope = false;
-      Stmt ret;
 
-      DataType storage_type = e.buffer->dtype;
-      // specially handle bool, lower its storage
-      // type to beDataType::Int(8)(byte)
-      if (storage_type == DataType::Bool()) {
-        storage_type = DataType::Int(8);
-      }
-      if (strides.size() != 0) {
-        int first_dim = 0;
-        ret = Allocate(e.buffer->data, storage_type,
-                       {e.buffer->strides[first_dim] * e.buffer->shape[first_dim]},
-                       make_const(DataType::Bool(e.buffer->dtype.lanes()), true), body);
-      } else {
-        shape = e.buffer->shape;
-        if (shape.size() == 0) {
-          shape.push_back(make_const(DataType::Int(32), 1));
-        }
-        ret = Allocate(e.buffer->data, storage_type, shape,
-                       make_const(DataType::Bool(e.buffer->dtype.lanes()), true), body);
-      }
+      Stmt ret =
+          Allocate(e.flattened_buffer->data, e.flattened_buffer->dtype, e.flattened_buffer->shape,
+                   make_const(DataType::Bool(e.flattened_buffer->dtype.lanes()), true), body);
 
       if (create_bound_attributes_ && ShapeIsValid(e.buffer->shape)) {
         ret = AttrStmt(e.buffer->data, tir::attr::buffer_bound,
                        MakeBound(e.buffer->dtype, e.buffer->shape), ret);
       }
       return ret;
-    }
-  }
-
-  PrimExpr VisitExpr_(const LoadNode* op) final {
-    PrimExpr expr = StmtExprMutator::VisitExpr_(op);
-    op = expr.as<LoadNode>();
-    auto it = var_remap_.find(op->buffer_var.get());
-    if (it != var_remap_.end() && !it->second.same_as(op->buffer_var)) {
-      ICHECK(it->second.as<VarNode>());
-      Var buf_var = Downcast<Var>(it->second);
-      return Load(op->dtype, buf_var, op->index, op->predicate);
-    } else {
-      return expr;
     }
   }
 
@@ -1280,7 +1231,17 @@ class StorageFlattener : public StmtExprMutator {
     if (create_bound_attributes_ && ShapeIsValid(e.buffer->shape)) {
       shape_collector_.push_back(std::make_pair(e.buffer->data, e.buffer->shape));
     }
-    return e.buffer.vload(op->indices, e.buffer->dtype);
+
+    auto flattened_indices = e.buffer->ElemOffset(op->indices);
+    PrimExpr val = BufferLoad(e.flattened_buffer, flattened_indices, op->span);
+
+    if (op->dtype == DataType::Bool()) {
+      ICHECK_EQ(e.flattened_buffer->dtype, DataType::Int(8))
+          << "Expected int8 backing array for boolean tensor";
+      val = tir::Cast(DataType::Bool(), val);
+    }
+
+    return val;
   }
 
   Stmt VisitStmt_(const PrefetchNode* op) final {
@@ -1363,8 +1324,10 @@ class StorageFlattener : public StmtExprMutator {
   };
   // The buffer entry in the flatten map
   struct BufferEntry {
-    // the buffer of storage
+    // The buffer object
     Buffer buffer;
+    // The updated buffer object, after flattening has been applied.
+    Buffer flattened_buffer;
     // Whether the buffer is external
     bool external{false};
     // Whether the buffer is currently in scope.
@@ -1389,7 +1352,9 @@ class StorageFlattener : public StmtExprMutator {
     for (size_t i = 1; i < shape.size(); ++i) {
       bound = Mul(bound, Mul(make_const(bound.dtype(), type.lanes()), shape[i]));
     }
-    return bound;
+    Array<PrimExpr> bounds{bound};
+
+    return Call(DataType::Handle(), builtin::tvm_tuple(), bounds);
   }
 
   // The buffer assignment map
@@ -1397,6 +1362,8 @@ class StorageFlattener : public StmtExprMutator {
   std::unordered_map<const VarNode*, PrimExpr> var_remap_;
   // Buffer map
   std::unordered_map<Buffer, BufferEntry, ObjectPtrHash, ObjectPtrEqual> buf_map_;
+  // The extern buffer map, updated to include flattened buffers.
+  Map<Var, Buffer> updated_extern_buffer_map_;
   // Collects shapes.
   std::vector<std::pair<Var, Array<PrimExpr>>> shape_collector_;
   // bounds populator. We really need the analyzer from it.
