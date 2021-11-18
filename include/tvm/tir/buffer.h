@@ -89,6 +89,15 @@ class BufferNode : public Object {
    */
   Array<PrimExpr> pre_flattened_strides;
   /*!
+   * \brief Separators between input axes when generating flattened output axes
+   *
+   * For buffers representing flat 1-d memory (e.g. any buffer in
+   * RAM), this should be an empty array.  For buffers representing
+   * non-flat memory, each entry in axis_separators should be the
+   * first input axis that is part of a new flattened axis.
+   */
+  Array<IntImm> axis_separators;
+  /*!
    * \brief The strides of each dimension
    *  This can be an empty array, indicating array is contiguous
    */
@@ -184,7 +193,7 @@ class Buffer : public ObjectRef {
   // A default value will be picked.
   TVM_DLL Buffer(Var data, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> strides,
                  PrimExpr elem_offset, String name, int data_alignment, int offset_factor,
-                 BufferType buffer_type, Span span = Span());
+                 BufferType buffer_type, Array<IntImm> axis_separators = {}, Span span = Span());
 
   /*!
    * \brief Return a new buffer that is equivalent with current one
@@ -244,12 +253,14 @@ class Buffer : public ObjectRef {
  * \param dtype The content data type.
  * \param name The name of the buffer
  * \param storage_scope The storage scope associated with this buffer
+ * \param axis_separators Divisions defining the groups of axes that will be flattened together.
  * \param span The location of this object in the source code.
  * \return The created buffer.
  * \sa Buffer for complete constructor.
  */
 TVM_DLL Buffer decl_buffer(Array<PrimExpr> shape, DataType dtype = DataType::Float(32),
-                           String name = "buffer", String storage_scope = "", Span span = Span());
+                           String name = "buffer", String storage_scope = "",
+                           Array<IntImm> axis_separators = {}, Span span = Span());
 
 /*!
  * \brief Base node for data producers.
