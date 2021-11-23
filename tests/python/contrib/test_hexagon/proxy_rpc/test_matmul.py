@@ -120,6 +120,10 @@ class TestMatMul:
     N = tvm.testing.parameter(32)
     K = tvm.testing.parameter(32)
 
+
+@requires_rpc_tracker
+@requires_hexagon_toolchain
+class TestMatMul(MatMul):
     def test_matmul(self, M, N, K, rpc_sess, remote_path):
         X = te.placeholder((M, K), dtype="float32")
         Y = te.placeholder((K, N), dtype="float32")
