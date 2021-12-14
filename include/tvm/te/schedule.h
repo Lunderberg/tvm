@@ -265,7 +265,11 @@ class Stage : public ObjectRef {
    *
    * \param initial_indices An array of variables to represent a
    * value's location in the tensor, using the pre-transformation
-   * layout.
+   * layout.  These variables are used as binding occurrences to
+   * represent the initial indices when applying the initial->final
+   * mapping, and should not occur elsewhere in the
+   * Schedule. (i.e. Pass in newly constructed variables, not the
+   * initial IterVar::var)
    *
    * \param final_indices An array of expressions, giving the
    * value's location in the tensor, using the post-transformation layout.
