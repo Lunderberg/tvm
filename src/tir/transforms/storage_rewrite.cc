@@ -1532,8 +1532,8 @@ class VectorTypeRewriter : public StmtExprMutator {
     int factor() const {
       int old_lanes = old_element_dtype.lanes();
       int new_lanes = new_element_dtype.lanes();
-      ICHECK_EQ(old_lanes % new_lanes, 0);
-      return old_lanes / new_lanes;
+      ICHECK_EQ(new_lanes % old_lanes, 0);
+      return new_lanes / old_lanes;
     }
   };
 
