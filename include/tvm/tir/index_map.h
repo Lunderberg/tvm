@@ -35,8 +35,11 @@ namespace tvm {
 namespace tir {
 
 /*!
- * \brief Defines the mapping from logical layout of a tensor to
- * physical layout of a buffer.
+ * \brief Defines a mapping between two representations of indices
+ * into a buffer.
+ *
+ * This is primarily used for layout transformations of Buffer
+ * objects.
  */
 class IndexMapNode : public Object {
  public:
