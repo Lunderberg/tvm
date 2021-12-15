@@ -24,6 +24,7 @@
 #include "tvm/tir/index_map.h"
 
 #include <tvm/arith/analyzer.h>
+#include <tvm/arith/int_set.h>
 #include <tvm/arith/iter_affine_map.h>
 #include <tvm/tir/op.h>
 
@@ -107,17 +108,15 @@ Array<Range> IndexMapNode::MapRanges(const Array<Range>& ranges) const {
     input_iters.Set(initial_indices[i], ranges[i]);
   }
 
-  arith::Analyzer analyzer;
-  auto iter_sums = DetectIterMap(final_indices, input_iters, 1, true, &analyzer);
+  std::unordered_map<const VarNode*, arith::IntSet> dom_map;
+  for (size_t i = 0; i < initial_indices.size(); i++) {
+    dom_map[initial_indices[i].get()] = arith::IntSet::FromRange(ranges[i]);
+  }
 
   Array<Range> output;
-  for (const auto& iter_sum : iter_sums) {
-    PrimExpr min = iter_sum->base;
-    PrimExpr extent = 0;
-    for (const auto& term : iter_sum->args) {
-      extent += term->extent * term->scale;
-    }
-    output.push_back(Range::FromMinExtent(min, extent));
+  for (const auto& final_index : final_indices) {
+    auto int_set = arith::EvalSet(final_index, dom_map);
+    output.push_back(Range::FromMinExtent(int_set.min(), int_set.max() - int_set.min() + 1));
   }
 
   return output;
