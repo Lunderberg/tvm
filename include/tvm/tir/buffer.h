@@ -131,6 +131,7 @@ class BufferNode : public Object {
     v->Visit("pre_flattened_shape", &pre_flattened_shape);
     v->Visit("pre_flattened_strides", &pre_flattened_strides);
     v->Visit("strides", &strides);
+    v->Visit("axis_separators", &axis_separators);
     v->Visit("elem_offset", &elem_offset);
     v->Visit("name", &name);
     v->Visit("data_alignment", &data_alignment);
@@ -147,6 +148,7 @@ class BufferNode : public Object {
            equal.DefEqual(pre_flattened_shape, other->pre_flattened_shape) &&
            equal.DefEqual(pre_flattened_strides, other->pre_flattened_strides) &&
            equal.DefEqual(strides, other->strides) &&
+           equal.DefEqual(axis_separators, other->axis_separators) &&
            equal.DefEqual(elem_offset, other->elem_offset) &&
            equal(data_alignment, other->data_alignment) && equal(buffer_type, other->buffer_type);
   }
@@ -159,6 +161,7 @@ class BufferNode : public Object {
     hash_reduce.DefHash(pre_flattened_strides);
     hash_reduce.DefHash(strides);
     hash_reduce.DefHash(elem_offset);
+    hash_reduce.DefHash(axis_separators);
     hash_reduce(data_alignment);
     hash_reduce(buffer_type);
   }
