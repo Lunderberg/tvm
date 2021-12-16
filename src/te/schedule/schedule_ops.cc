@@ -45,7 +45,7 @@ using namespace tir;
 // SchedulePostProcToPrimFunc.  Afterwards, layout transforms are
 // specified in the PrimFunc attrs, and the axis_separators are
 // specified in the BufferNode.
-Stmt WrapPhysicalLayout(const Stage& stage, Stmt body) {
+Stmt WrapLayoutTransformationAttrs(const Stage& stage, Stmt body) {
   if (stage->layout_transforms.size()) {
     for (int i = 0; i < stage->op->num_outputs(); i++) {
       body = AttrStmt(Array<ObjectRef>{stage->op.output(i), stage->layout_transforms},
@@ -69,7 +69,7 @@ Stmt MakePipeline(const Stage& s, const std::unordered_map<IterVar, Range>& dom_
   if (s->double_buffer) {
     producer = AttrStmt(s->op, tir::attr::double_buffer_scope, 1, producer);
   }
-  producer = WrapPhysicalLayout(s, producer);
+  producer = WrapLayoutTransformationAttrs(s, producer);
   Stmt pipeline = producer;
 
   if (consumer.defined() && !is_no_op(consumer)) {
@@ -375,7 +375,7 @@ Stmt ScheduleOps(Schedule sch, Map<IterVar, Range> dom_map_, bool debug_keep_tri
       // may be annotated with set_physical_layout to indicate the
       // physical layout of an input, and must still have the
       // attribute given.
-      body = WrapPhysicalLayout(s, std::move(body));
+      body = WrapLayoutTransformationAttrs(s, std::move(body));
     } else if (scan_init.count(s->op)) {
       ICHECK(body.defined());
       InjectScanStep mu(s, scan_init.at(s->op), dom_map, true, debug_keep_trivial_loop);
