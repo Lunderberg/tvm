@@ -1198,7 +1198,7 @@ llvm::Value* CodeGenLLVM::VisitExpr_(const BufferLoadNode* op) {
 
   DataType t = op->dtype;
   Var buffer_var = op->buffer->data;
-  PrimExpr buffer_index = op->indices[0];
+  const PrimExpr& buffer_index = op->indices[0];
 
   bool is_volatile = volatile_buf_.count(buffer_var.get());
   llvm::Value* buffer = MakeValue(buffer_var);
