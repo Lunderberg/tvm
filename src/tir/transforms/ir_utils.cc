@@ -124,12 +124,12 @@ class IRConvertSSA final : public StmtExprMutator {
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
     auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   template <typename Node>
@@ -140,7 +140,7 @@ class IRConvertSSA final : public StmtExprMutator {
       writer->buffer = new_buf;
     }
 
-    return std::move(node);
+    return node;
   }
 
   Buffer GetRemappedBuffer(Buffer buf) {

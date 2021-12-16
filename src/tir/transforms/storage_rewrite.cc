@@ -439,12 +439,12 @@ class StoragePlanRewriter : public StmtExprMutator {
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
     auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   PrimExpr VisitExpr_(const VarNode* op) final {
@@ -1349,12 +1349,12 @@ class VectorTypeRewriter : public StmtExprMutator {
   template <typename Node>
   Node VisitBufferAccess(Node node) {
     if (!rewrite_indices_) {
-      return std::move(node);
+      return node;
     }
 
     auto it = rewrite_map_.find(node->buffer->data.get());
     if (it == rewrite_map_.end()) {
-      return std::move(node);
+      return node;
     }
     const auto& info = it->second;
 
@@ -1376,7 +1376,7 @@ class VectorTypeRewriter : public StmtExprMutator {
     writer->buffer = RemapBuffer(node->buffer);
     writer->indices = indices;
 
-    return std::move(node);
+    return node;
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
@@ -1396,7 +1396,7 @@ class VectorTypeRewriter : public StmtExprMutator {
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   Buffer RemapBuffer(Buffer buf) {
