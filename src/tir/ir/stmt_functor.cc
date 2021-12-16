@@ -644,12 +644,12 @@ class IRSubstitute : public StmtExprMutator {
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
     auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   template <typename Node>
