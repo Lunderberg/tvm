@@ -252,13 +252,13 @@ class VTInjector : public StmtExprMutator {
   // BufferLoad
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
     auto node = Downcast<BufferLoad>(StmtExprMutator::VisitExpr_(op));
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
   // BufferStore
   Stmt VisitStmt_(const BufferStoreNode* op) final {
     auto node = Downcast<BufferStore>(StmtExprMutator::VisitStmt_(op));
     trigger_base_inject_ = !allow_share_;
-    return VisitBufferAccess(node);
+    return VisitBufferAccess(std::move(node));
   }
 
   template <typename Node>
@@ -276,7 +276,7 @@ class VTInjector : public StmtExprMutator {
       writer->indices = {RewriteIndex(node->indices[0], it->second)};
     }
 
-    return std::move(node);
+    return node;
   }
 
   Buffer GetRemappedBuffer(Buffer buf, PrimExpr alloc_extent) {
