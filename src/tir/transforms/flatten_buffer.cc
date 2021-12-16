@@ -164,7 +164,7 @@ class BufferFlattener : public StmtExprMutator {
       writer->value = tir::Cast(DataType::Int(8), store->value);
     }
     auto flattened_indices = store->buffer->ElemOffset(store->indices);
-    return VisitBufferAccess(store);
+    return VisitBufferAccess(std::move(store));
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) final {
