@@ -378,10 +378,16 @@ Buffer Buffer::GetFlattenedBuffer() const {
     output_axis_separators.push_back(IntImm(dtype, i + 1));
   }
 
+  // If a flattening pass is called multiple times, then the
+  // pre-flattened shape/strides should be from before the first
+  // application of the pass.
+  auto pre_flattened_shape = (*this)->pre_flattened_shape.value_or(self->shape);
+  auto pre_flattened_strides = (*this)->pre_flattened_strides.value_or(self->strides);
+
   Buffer output = *this;
   auto writer = output.CopyOnWrite();
-  writer->pre_flattened_shape = self->shape;
-  writer->pre_flattened_strides = self->strides;
+  writer->pre_flattened_shape = pre_flattened_shape;
+  writer->pre_flattened_strides = pre_flattened_strides;
   writer->shape = output_shape;
   writer->axis_separators = output_axis_separators;
   writer->strides = {};

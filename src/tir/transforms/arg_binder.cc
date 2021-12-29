@@ -154,10 +154,14 @@ void ArgBinder::BindDLTensor(const Buffer& buffer, const PrimExpr& device_type,
   const Stmt nop = Evaluate(0);
   // dimension checks
   PrimExpr v_ndim = TVMArrayGet(tvm_ndim_type, handle, builtin::kArrNDim);
-  PrimExpr a_ndim =
-      make_const(tvm_ndim_type, static_cast<int64_t>(buffer->pre_flattened_shape.size()));
+  ICHECK(buffer->pre_flattened_shape)
+      << "Cannot bind tensor argument to an unflattened buffer.  "
+      << "Please run StorageFlatten (TE schedules) or FlattenBuffer (TIR schedules) first.";
+  auto pre_flattened_shape = buffer->pre_flattened_shape.value();
+
+  PrimExpr a_ndim = make_const(tvm_ndim_type, static_cast<int64_t>(pre_flattened_shape.size()));
   std::ostringstream ndim_err_msg;
-  ndim_err_msg << arg_name << ".ndim is expected to equal " << buffer->pre_flattened_shape.size();
+  ndim_err_msg << arg_name << ".ndim is expected to equal " << pre_flattened_shape.size();
   auto msg = tvm::tir::StringImm(ndim_err_msg.str());
   asserts_.emplace_back(AssertStmt(a_ndim == v_ndim, msg, nop));
   // type checks
@@ -186,22 +190,22 @@ void ArgBinder::BindDLTensor(const Buffer& buffer, const PrimExpr& device_type,
   }
 
   // shape field
-  Buffer buf_shape = decl_buffer({IntImm(DataType::Int(32), buffer->pre_flattened_shape.size())},
+  Buffer buf_shape = decl_buffer({IntImm(DataType::Int(32), pre_flattened_shape.size())},
                                  tvm_shape_type, arg_name + ".shape");
   Var v_shape(arg_name + ".shape", DataType::Handle());
   def_handle_dtype_.Set(v_shape, make_const(tvm_shape_type, 0));
   init_nest_.emplace_back(
       LetStmt(buf_shape->data, TVMArrayGet(DataType::Handle(), handle, builtin::kArrShape), nop));
-  for (size_t k = 0; k < buffer->pre_flattened_shape.size(); ++k) {
+  for (size_t k = 0; k < pre_flattened_shape.size(); ++k) {
     if (dtype == DataType::Int(4) || dtype == DataType::UInt(4) || dtype == DataType::Int(1)) {
       break;
     }
     std::ostringstream field_name;
     field_name << v_shape->name_hint << '[' << k << ']';
-    Bind_(buffer->pre_flattened_shape[k],
-          cast(buffer->pre_flattened_shape[k].dtype(),
-               BufferLoad(buf_shape, {IntImm(DataType::Int(32), k)})),
-          field_name.str(), true);
+    Bind_(
+        pre_flattened_shape[k],
+        cast(pre_flattened_shape[k].dtype(), BufferLoad(buf_shape, {IntImm(DataType::Int(32), k)})),
+        field_name.str(), true);
   }
   // strides field
   Buffer buf_strides = decl_buffer({IntImm(DataType::Int(32), buffer->strides.size())},

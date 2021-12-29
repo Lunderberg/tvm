@@ -74,7 +74,7 @@ class BufferNode : public Object {
    * from MakePackedAPI) to know how the tensor should be flattened as
    * it is being transferred from the device.
    */
-  Array<PrimExpr> pre_flattened_shape;
+  Optional<Array<PrimExpr>> pre_flattened_shape;
   /*! \brief The strides of the buffer prior to flattening
    *
    * This contains the strides as they exists prior to flattening, and
@@ -87,7 +87,7 @@ class BufferNode : public Object {
    * (called from MakePackedAPI) to know how the tensor should be
    * flattened as it is being transferred from the device.
    */
-  Array<PrimExpr> pre_flattened_strides;
+  Optional<Array<PrimExpr>> pre_flattened_strides;
   /*!
    * \brief Separators between input axes when generating flattened output axes
    *
