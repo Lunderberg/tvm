@@ -159,6 +159,11 @@ void ArgBinder::BindDLTensor(const Buffer& buffer, const PrimExpr& device_type,
       << "Please run StorageFlatten (TE schedules) or FlattenBuffer (TIR schedules) first.";
   auto pre_flattened_shape = buffer->pre_flattened_shape.value();
 
+  ICHECK(buffer->pre_flattened_strides)
+      << "Cannot bind tensor argument to an unflattened buffer.  "
+      << "Please run StorageFlatten (TE schedules) or FlattenBuffer (TIR schedules) first.";
+  auto pre_flattened_strides = buffer->pre_flattened_strides.value();
+
   PrimExpr a_ndim = make_const(tvm_ndim_type, static_cast<int64_t>(pre_flattened_shape.size()));
   std::ostringstream ndim_err_msg;
   ndim_err_msg << arg_name << ".ndim is expected to equal " << pre_flattened_shape.size();
@@ -208,22 +213,22 @@ void ArgBinder::BindDLTensor(const Buffer& buffer, const PrimExpr& device_type,
         field_name.str(), true);
   }
   // strides field
-  Buffer buf_strides = decl_buffer({IntImm(DataType::Int(32), buffer->strides.size())},
+  Buffer buf_strides = decl_buffer({IntImm(DataType::Int(32), pre_flattened_strides.size())},
                                    tvm_shape_type, arg_name + ".strides");
   def_handle_dtype_.Set(buf_strides->data, tir::TypeAnnotation(tvm_shape_type));
   init_nest_.emplace_back(LetStmt(
       buf_strides->data, TVMArrayGet(DataType::Handle(), handle, builtin::kArrStrides), nop));
   PrimExpr v_strides_is_null = Call(DataType::Bool(1), builtin::isnullptr(), {buf_strides->data});
-  if (buffer->strides.size() == 0) {
+  if (pre_flattened_strides.size() == 0) {
     // Assert the buffer is compact
     DataType stype = buffer->DefaultIndexType();
     PrimExpr expect_stride = make_const(stype, 1);
     Array<PrimExpr> conds;
-    for (size_t i = buffer->shape.size(); i != 0; --i) {
+    for (size_t i = pre_flattened_shape.size(); i != 0; --i) {
       size_t k = i - 1;
       PrimExpr svalue = cast(stype, BufferLoad(buf_strides, {IntImm(DataType::Int(32), k)}));
       conds.push_back(expect_stride == svalue);
-      expect_stride = expect_stride * buffer->shape[k];
+      expect_stride = expect_stride * pre_flattened_shape[k];
     }
     std::ostringstream stride_err_msg;
     stride_err_msg << arg_name << ".strides:"
@@ -240,33 +245,33 @@ void ArgBinder::BindDLTensor(const Buffer& buffer, const PrimExpr& device_type,
   } else if (buffer->buffer_type == kAutoBroadcast) {
     DataType stype = buffer->DefaultIndexType();
     PrimExpr stride = make_const(stype, 1);
-    for (size_t i = buffer->shape.size(); i != 0; --i) {
+    for (size_t i = pre_flattened_shape.size(); i != 0; --i) {
       size_t k = i - 1;
       std::ostringstream field_name;
       field_name << buf_strides->name << '[' << k << ']';
-      PrimExpr value =
-          cast(buffer->shape[k].dtype(), BufferLoad(buf_strides, {IntImm(DataType::Int(32), k)}));
+      PrimExpr value = cast(pre_flattened_shape[k].dtype(),
+                            BufferLoad(buf_strides, {IntImm(DataType::Int(32), k)}));
       value = tvm::if_then_else(v_strides_is_null, stride, value);
-      value = tvm::if_then_else(buffer->shape[k] == 1, 0, value);
-      Bind_(buffer->strides[k], value, field_name.str(), true);
-      stride = analyzer_.Simplify(stride * buffer->shape[k]);
+      value = tvm::if_then_else(pre_flattened_shape[k] == 1, 0, value);
+      Bind_(pre_flattened_strides[k], value, field_name.str(), true);
+      stride = analyzer_.Simplify(stride * pre_flattened_shape[k]);
     }
   } else {
     PrimExpr stride_from_shape = 1;
 
-    for (int k = buffer->strides.size() - 1; k >= 0; k--) {
+    for (int k = pre_flattened_strides.size() - 1; k >= 0; k--) {
       std::ostringstream field_name;
       field_name << buf_strides->name << '[' << k << ']';
 
-      PrimExpr explicit_stride =
-          cast(buffer->shape[k].dtype(), BufferLoad(buf_strides, {IntImm(DataType::Int(32), k)}));
+      PrimExpr explicit_stride = cast(pre_flattened_shape[k].dtype(),
+                                      BufferLoad(buf_strides, {IntImm(DataType::Int(32), k)}));
 
-      Bind_(buffer->strides[k],
+      Bind_(pre_flattened_strides[k],
             tvm::if_then_else(v_strides_is_null, stride_from_shape, explicit_stride),
             field_name.str(), true);
 
-      stride_from_shape *=
-          cast(buffer->shape[k].dtype(), BufferLoad(buf_shape, {IntImm(DataType::Int(32), k)}));
+      stride_from_shape *= cast(pre_flattened_shape[k].dtype(),
+                                BufferLoad(buf_shape, {IntImm(DataType::Int(32), k)}));
     }
   }
   // Byte_offset field.
