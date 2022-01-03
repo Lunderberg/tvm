@@ -132,7 +132,8 @@ class VecAllocAccess : public StmtExprMutator {
     // Extend the last index by the number of lanes in the vectorized
     // variable.
     Array<PrimExpr> indices = node->indices;
-    indices.Set(indices.size() - 1, analyzer.Simplify(indices[indices.size() - 1] * var_lanes_));
+    indices.Set(indices.size() - 1,
+                analyzer.Simplify(indices[indices.size() - 1] * var_lanes_ + var_));
 
     auto writer = node.CopyOnWrite();
     writer->buffer = buf;
