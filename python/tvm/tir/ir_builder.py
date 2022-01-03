@@ -71,10 +71,9 @@ class BufferVar(ObjectGeneric):
 
     """
 
-    def __init__(self, builder, buffer, shape, content_type):
+    def __init__(self, builder, buffer, content_type):
         self._builder = builder
         self._buffer = buffer
-        self._shape = shape
         self._content_type = content_type
 
     def asobject(self):
@@ -426,7 +425,7 @@ class IRBuilder(object):
 
         buffer_var = buffer.data
         self.emit(lambda x: _stmt.Allocate(buffer_var, dtype, shape, const(1, dtype="uint1"), x))
-        return BufferVar(self, buffer, shape, dtype)
+        return BufferVar(self, buffer, dtype)
 
     def pointer(self, content_type, name="ptr", scope=""):
         """Create pointer variable with content type.
@@ -448,7 +447,7 @@ class IRBuilder(object):
             The buffer var representing the buffer.
         """
         buffer = _buffer.decl_buffer(shape=[], dtype=content_type, name=name, scope=scope)
-        return BufferVar(self, buffer, [], content_type)
+        return BufferVar(self, buffer, content_type)
 
     def buffer_ptr(self, buf):
         """Create pointer variable corresponds to buffer ptr.
@@ -463,7 +462,7 @@ class IRBuilder(object):
         ptr : BufferVar
             The buffer var representing the buffer.
         """
-        return BufferVar(self, buf, [], buf.dtype)
+        return BufferVar(self, buf, buf.dtype)
 
     def likely(self, expr):
         """Add likely tag for expression.
