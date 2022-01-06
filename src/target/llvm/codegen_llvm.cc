@@ -933,7 +933,7 @@ llvm::Value* CodeGenLLVM::CreateIntrinsic(const CallNode* op) {
   } else if (op->op.same_as(builtin::address_of())) {
     const BufferLoadNode* load = op->args[0].as<BufferLoadNode>();
     ICHECK(op->args.size() == 1 && load);
-    ICHECK_EQ(load->indices.size(), 0) << "LLVM only supports flat memory allocations.";
+    ICHECK_EQ(load->indices.size(), 1) << "LLVM only supports flat memory allocations.";
     PrimExpr index = load->indices[0];
     if (const RampNode* r = index.as<RampNode>()) {
       index = r->base / make_const(DataType::Int(32), r->lanes);
