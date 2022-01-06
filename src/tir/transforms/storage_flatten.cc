@@ -198,6 +198,7 @@ class BufferShapeLegalize : public StmtExprMutator {
           PrimExpr offset = entry.index_offsets[i + diff];
           new_indices.push_back(indices[i] - offset);
         }
+        indices = new_indices;
       }
 
       auto write_ptr = node.CopyOnWrite();
