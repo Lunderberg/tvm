@@ -325,6 +325,17 @@ inline Array<PrimExpr> BufferOffset(const BufferNode* n, Array<PrimExpr> index, 
   return offsets;
 }
 
+const BufferNode* Buffer::operator->() const { return static_cast<const BufferNode*>(data_.get()); }
+
+BufferNode* Buffer::CopyOnWrite() {
+  ICHECK(data_ != nullptr);
+  if (!data_.unique()) {
+    auto n = make_object<BufferNode>(*(operator->()));
+    ObjectPtr<Object>(std::move(n)).swap(data_);
+  }
+  return static_cast<BufferNode*>(data_.get());
+}
+
 Buffer Buffer::GetFlattenedBuffer() const {
   auto self = operator->();
 
@@ -381,16 +392,11 @@ Buffer Buffer::GetFlattenedBuffer() const {
   // If a flattening pass is called multiple times, then the
   // pre-flattened shape/strides should be from before the first
   // application of the pass.
-  auto pre_flattened_shape = (*this)->pre_flattened_shape.value_or(self->shape);
-  auto pre_flattened_strides = (*this)->pre_flattened_strides.value_or(self->strides);
-  auto pre_flattened_dtype =
-      (*this)->pre_flattened_dtype == DataType::Void() ? self->dtype : (*this)->pre_flattened_dtype;
+  auto pre_flattened_buffer = self->pre_flattened_buffer.value_or((*this));
 
   Buffer output = *this;
   auto writer = output.CopyOnWrite();
-  writer->pre_flattened_dtype = pre_flattened_dtype;
-  writer->pre_flattened_shape = pre_flattened_shape;
-  writer->pre_flattened_strides = pre_flattened_strides;
+  writer->pre_flattened_buffer = pre_flattened_buffer;
   writer->shape = output_shape;
   writer->axis_separators = output_axis_separators;
   writer->strides = {};
@@ -533,7 +539,6 @@ Buffer::Buffer(Var data, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> 
   auto n = make_object<BufferNode>();
   n->data = std::move(data);
   n->dtype = dtype;
-  n->pre_flattened_dtype = DataType::Void();
 
   n->shape = std::move(shape);
   n->strides = std::move(strides);

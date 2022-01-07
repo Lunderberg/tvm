@@ -44,162 +44,7 @@ enum BufferType : int {
   kAutoBroadcast = 2,
 };
 
-/*! \brief Node to represent a buffer */
-class BufferNode : public Object {
- public:
-  // Data fields.
-  /*!
-   * \brief The pointer to the head of the data
-   * \sa data_alignment The alignment of data in bytes.
-   */
-  Var data;
-  /*! \brief data type in the content of the tensor */
-  DataType dtype;
-  /*! \brief The type of the buffer prior to flattening
-   *
-   * This contains the shape as it is accessed by
-   * BufferLoad/BufferStore nodes, and used by the low-level code
-   * generators.
-   */
-  Array<PrimExpr> shape;
-  /*! \brief The shape of the buffer prior to flattening
-   *
-   * This contains the shape as it exists prior to flattening, and is
-   * used for validating the shape of the tensor passed into the
-   * packed API.
-   *
-   * TODO(Lunderberg): Should this be a reference to the entire
-   * pre-flattened Buffer instead of just the shape?  That would also
-   * allow the PackedFunc to know how ArgBinder::BindDLTensor (called
-   * from MakePackedAPI) to know how the tensor should be flattened as
-   * it is being transferred from the device.
-   */
-  DataType pre_flattened_dtype;
-  /*! \brief The shape of the buffer prior to flattening
-   *
-   * This contains the shape as it exists prior to flattening, and is
-   * used for validating the shape of the tensor passed into the
-   * packed API.
-   *
-   * TODO(Lunderberg): Should this be a reference to the entire
-   * pre-flattened Buffer instead of just the shape?  That would also
-   * allow the PackedFunc to know how ArgBinder::BindDLTensor (called
-   * from MakePackedAPI) to know how the tensor should be flattened as
-   * it is being transferred from the device.
-   */
-  Optional<Array<PrimExpr>> pre_flattened_shape;
-  /*! \brief The strides of the buffer prior to flattening
-   *
-   * This contains the strides as they exists prior to flattening, and
-   * is used for validating an input tensor passed into the packed
-   * API.
-   *
-   * TODO(Lunderberg): Should this be a reference to the entire
-   * pre-flattened Buffer instead of just the strides?  That would
-   * also allow the PackedFunc to know how ArgBinder::BindDLTensor
-   * (called from MakePackedAPI) to know how the tensor should be
-   * flattened as it is being transferred from the device.
-   */
-  Optional<Array<PrimExpr>> pre_flattened_strides;
-  /*!
-   * \brief Separators between input axes when generating flattened output axes
-   *
-   * For buffers representing flat 1-d memory (e.g. any buffer in
-   * RAM), this should be an empty array.  For buffers representing
-   * non-flat memory, each entry in axis_separators should be the
-   * first input axis that is part of a new flattened axis.
-   */
-  Array<IntImm> axis_separators;
-  /*!
-   * \brief The strides of each dimension
-   *  This can be an empty array, indicating array is contiguous
-   */
-  Array<PrimExpr> strides;
-  /*! \brief The offset in terms of number of dtype elements (including lanes) */
-  PrimExpr elem_offset;
-  // Meta data
-  /*! \brief optional name of the buffer */
-  String name;
-  /*! \brief Alignment requirement of data pointer in bytes. */
-  int data_alignment;
-  /*!
-   * \brief Factor of elem_offset field,
-   *  elem_offset is guaranteed to be multiple of offset_factor.
-   */
-  int offset_factor;
-  /*! \brief buffer type */
-  BufferType buffer_type;
-  /*!
-   * \brief Span that points to the original source code.
-   *        Reserved debug information.
-   */
-  mutable Span span;
-  /*! \brief constructor */
-  BufferNode() {}
-
-  void VisitAttrs(AttrVisitor* v) {
-    v->Visit("data", &data);
-    v->Visit("dtype", &dtype);
-    v->Visit("shape", &shape);
-    v->Visit("pre_flattened_type", &pre_flattened_dtype);
-    v->Visit("pre_flattened_shape", &pre_flattened_shape);
-    v->Visit("pre_flattened_strides", &pre_flattened_strides);
-    v->Visit("strides", &strides);
-    v->Visit("axis_separators", &axis_separators);
-    v->Visit("elem_offset", &elem_offset);
-    v->Visit("name", &name);
-    v->Visit("data_alignment", &data_alignment);
-    v->Visit("offset_factor", &offset_factor);
-    v->Visit("buffer_type", &buffer_type);
-    v->Visit("span", &span);
-  }
-
-  bool SEqualReduce(const BufferNode* other, SEqualReducer equal) const {
-    // Use DefEqual as buffer can define variables
-    // in its semantics, skip name as name is not important.
-    return equal.DefEqual(data, other->data) && equal(dtype, other->dtype) &&
-           equal.DefEqual(shape, other->shape) &&
-           equal(pre_flattened_dtype, other->pre_flattened_dtype) &&
-           equal.DefEqual(pre_flattened_shape, other->pre_flattened_shape) &&
-           equal.DefEqual(pre_flattened_strides, other->pre_flattened_strides) &&
-           equal.DefEqual(strides, other->strides) &&
-           equal.DefEqual(axis_separators, other->axis_separators) &&
-           equal.DefEqual(elem_offset, other->elem_offset) &&
-           equal(data_alignment, other->data_alignment) && equal(buffer_type, other->buffer_type);
-  }
-
-  void SHashReduce(SHashReducer hash_reduce) const {
-    hash_reduce.DefHash(data);
-    hash_reduce(dtype);
-    hash_reduce.DefHash(shape);
-    hash_reduce(pre_flattened_dtype);
-    hash_reduce.DefHash(pre_flattened_shape);
-    hash_reduce.DefHash(pre_flattened_strides);
-    hash_reduce.DefHash(strides);
-    hash_reduce.DefHash(elem_offset);
-    hash_reduce.DefHash(axis_separators);
-    hash_reduce(data_alignment);
-    hash_reduce(buffer_type);
-  }
-
-  /*! \return preferred index type for this buffer node */
-  DataType DefaultIndexType() const {
-    return shape.size() != 0 ? shape[0].dtype() : DataType::Int(32);
-  }
-
-  /*! \brief Determine the offset in the buffer of the given index.
-   *
-   * Returns the buffer offset, in number of elements of type dtype,
-   * without adjusting for number of lanes.  (e.g. The number of
-   * float16x4 elements in a buffer of type float16x4.)
-   */
-  Array<PrimExpr> ElemOffset(Array<PrimExpr> index) const;
-
-  static constexpr const char* _type_key = "tir.Buffer";
-  static constexpr const bool _type_has_method_sequal_reduce = true;
-  static constexpr const bool _type_has_method_shash_reduce = true;
-  TVM_DECLARE_FINAL_OBJECT_INFO(BufferNode, Object);
-};
+class BufferNode;
 
 /*!
  * \brief Buffer is a symbolic n-darray structure.
@@ -262,8 +107,141 @@ class Buffer : public ObjectRef {
    */
   TVM_DLL String scope() const;
 
-  TVM_DEFINE_OBJECT_REF_METHODS(Buffer, ObjectRef, BufferNode);
-  TVM_DEFINE_OBJECT_REF_COW_METHOD(BufferNode);
+  // TVM_DEFINE_OBJECT_REF_METHODS(Buffer, ObjectRef, BufferNode);
+  Buffer() = default;
+  explicit Buffer(::tvm::runtime::ObjectPtr<::tvm::runtime::Object> n) : ObjectRef(n) {}
+  TVM_DEFINE_DEFAULT_COPY_MOVE_AND_ASSIGN(Buffer);
+  const BufferNode* operator->() const;
+  const BufferNode* get() const { return operator->(); }
+  using ContainerType = BufferNode;
+
+  // TVM_DEFINE_OBJECT_REF_COW_METHOD(BufferNode);
+  BufferNode* CopyOnWrite();
+};
+
+/*! \brief Node to represent a buffer */
+class BufferNode : public Object {
+ public:
+  // Data fields.
+  /*!
+   * \brief The pointer to the head of the data
+   * \sa data_alignment The alignment of data in bytes.
+   */
+  Var data;
+  /*! \brief data type in the content of the tensor */
+  DataType dtype;
+  /*! \brief The type of the buffer prior to flattening
+   *
+   * This contains the shape as it is accessed by
+   * BufferLoad/BufferStore nodes, and used by the low-level code
+   * generators.
+   */
+  Array<PrimExpr> shape;
+  /*! \brief The shape of the buffer prior to flattening
+   *
+   * This contains the shape as it exists prior to flattening, and is
+   * used for validating the shape of the tensor passed into the
+   * packed API.
+   *
+   * TODO(Lunderberg): Should this be a reference to the entire
+   * pre-flattened Buffer instead of just the shape?  That would also
+   * allow the PackedFunc to know how ArgBinder::BindDLTensor (called
+   * from MakePackedAPI) to know how the tensor should be flattened as
+   * it is being transferred from the device.
+   */
+  Optional<Buffer> pre_flattened_buffer;
+  /*!
+   * \brief Separators between input axes when generating flattened output axes
+   *
+   * For buffers representing flat 1-d memory (e.g. any buffer in
+   * RAM), this should be an empty array.  For buffers representing
+   * non-flat memory, each entry in axis_separators should be the
+   * first input axis that is part of a new flattened axis.
+   */
+  Array<IntImm> axis_separators;
+  /*!
+   * \brief The strides of each dimension
+   *  This can be an empty array, indicating array is contiguous
+   */
+  Array<PrimExpr> strides;
+  /*! \brief The offset in terms of number of dtype elements (including lanes) */
+  PrimExpr elem_offset;
+  // Meta data
+  /*! \brief optional name of the buffer */
+  String name;
+  /*! \brief Alignment requirement of data pointer in bytes. */
+  int data_alignment;
+  /*!
+   * \brief Factor of elem_offset field,
+   *  elem_offset is guaranteed to be multiple of offset_factor.
+   */
+  int offset_factor;
+  /*! \brief buffer type */
+  BufferType buffer_type;
+  /*!
+   * \brief Span that points to the original source code.
+   *        Reserved debug information.
+   */
+  mutable Span span;
+  /*! \brief constructor */
+  BufferNode() {}
+
+  void VisitAttrs(AttrVisitor* v) {
+    v->Visit("data", &data);
+    v->Visit("dtype", &dtype);
+    v->Visit("shape", &shape);
+    v->Visit("pre_flattened_buffer", &pre_flattened_buffer);
+    v->Visit("strides", &strides);
+    v->Visit("axis_separators", &axis_separators);
+    v->Visit("elem_offset", &elem_offset);
+    v->Visit("name", &name);
+    v->Visit("data_alignment", &data_alignment);
+    v->Visit("offset_factor", &offset_factor);
+    v->Visit("buffer_type", &buffer_type);
+    v->Visit("span", &span);
+  }
+
+  bool SEqualReduce(const BufferNode* other, SEqualReducer equal) const {
+    // Use DefEqual as buffer can define variables
+    // in its semantics, skip name as name is not important.
+    return equal.DefEqual(data, other->data) && equal(dtype, other->dtype) &&
+           equal.DefEqual(shape, other->shape) &&
+           equal(pre_flattened_buffer, other->pre_flattened_buffer) &&
+           equal.DefEqual(strides, other->strides) &&
+           equal.DefEqual(axis_separators, other->axis_separators) &&
+           equal.DefEqual(elem_offset, other->elem_offset) &&
+           equal(data_alignment, other->data_alignment) && equal(buffer_type, other->buffer_type);
+  }
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce.DefHash(data);
+    hash_reduce(dtype);
+    hash_reduce.DefHash(shape);
+    hash_reduce(pre_flattened_buffer);
+    hash_reduce.DefHash(strides);
+    hash_reduce.DefHash(elem_offset);
+    hash_reduce.DefHash(axis_separators);
+    hash_reduce(data_alignment);
+    hash_reduce(buffer_type);
+  }
+
+  /*! \return preferred index type for this buffer node */
+  DataType DefaultIndexType() const {
+    return shape.size() != 0 ? shape[0].dtype() : DataType::Int(32);
+  }
+
+  /*! \brief Determine the offset in the buffer of the given index.
+   *
+   * Returns the buffer offset, in number of elements of type dtype,
+   * without adjusting for number of lanes.  (e.g. The number of
+   * float16x4 elements in a buffer of type float16x4.)
+   */
+  Array<PrimExpr> ElemOffset(Array<PrimExpr> index) const;
+
+  static constexpr const char* _type_key = "tir.Buffer";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
+  static constexpr const bool _type_has_method_shash_reduce = true;
+  TVM_DECLARE_FINAL_OBJECT_INFO(BufferNode, Object);
 };
 
 /*!
