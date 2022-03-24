@@ -28,7 +28,7 @@ from .conftest import requires_hexagon_toolchain
 
 
 def intrin_mem_copy(shape, dtype, dst_scope, src_scope):
-    assert len(shape) == 1
+    # assert len(shape) == 1
     src = te.placeholder(shape=shape, dtype=dtype, name="src")
     dst = te.compute(shape, lambda i: src[i], name="dst")
     size = shape[0] * np.dtype(dtype).itemsize
@@ -68,7 +68,7 @@ def layout_transform_2d(n):
 
 @requires_hexagon_toolchain
 def test_cache_read_write(hexagon_session):
-    size = 32
+    size = 64
     outer_shape = (size,)
     factor = 16
     inner_shape = (factor,)
@@ -83,27 +83,32 @@ def test_cache_read_write(hexagon_session):
     y_global = s.cache_read(y, "global.vtcm", [z])
     z_global = s.cache_write(z, "global.vtcm")
 
-    s[x_global].transform_layout(layout_transform_2d)
-    s[y_global].transform_layout(layout_transform_2d)
-    s[z_global].transform_layout(layout_transform_2d)
+    # s[x_global].transform_layout(layout_transform_2d)
+    # s[y_global].transform_layout(layout_transform_2d)
+    # s[z_global].transform_layout(layout_transform_2d)
 
-    # zouter, zinner = s[z_global].split(z_global.op.axis[0], factor=factor)
+    # print("-------------------------------")
+    # print(loopx)
+    # print(loopy)
+    # print("-------------------------------")
 
-    # s[x_global].compute_at(s[z_global], zouter)
-    # s[y_global].compute_at(s[z_global], zouter)
+    zouter, zinner = s[z_global].split(z_global.op.axis[0], factor=factor)
 
-    # mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global", "global")
+    s[x_global].compute_at(s[z_global], zouter)
+    s[y_global].compute_at(s[z_global], zouter)
 
-    # (cache_read_x,) = s[x_global].op.axis
-    # s[x_global].tensorize(cache_read_x, mem_copy_read)
+    mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
 
-    # (cache_read_y,) = s[y_global].op.axis
-    # s[y_global].tensorize(cache_read_y, mem_copy_read)
+    (cache_read_x,) = s[x_global].op.axis
+    s[x_global].tensorize(cache_read_x, mem_copy_read)
 
-    # mem_copy_write = intrin_mem_copy(outer_shape, dtype, "global", "global.vtcm")
+    (cache_read_y,) = s[y_global].op.axis
+    s[y_global].tensorize(cache_read_y, mem_copy_read)
 
-    # (cache_write_z,) = s[z].op.axis
-    # s[z].tensorize(cache_write_z, mem_copy_write)
+    mem_copy_write = intrin_mem_copy(outer_shape, dtype, "global", "global.vtcm")
+
+    (cache_write_z,) = s[z].op.axis
+    s[z].tensorize(cache_write_z, mem_copy_write)
 
     print(tvm.lower(s, [x, y, z]))
 
