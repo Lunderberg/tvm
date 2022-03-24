@@ -68,7 +68,7 @@ def layout_transform_2d(n):
 
 @requires_hexagon_toolchain
 def test_cache_read_write(hexagon_session):
-    size = 128
+    size = 32
     outer_shape = (size,)
     factor = 16
     inner_shape = (factor,)
@@ -79,9 +79,9 @@ def test_cache_read_write(hexagon_session):
     z = te.compute(outer_shape, lambda i: x[i] + y[i], name="z")
     s = te.create_schedule(z.op)
 
-    x_global = s.cache_read(x, "global", [z])
-    y_global = s.cache_read(y, "global", [z])
-    z_global = s.cache_write(z, "global")
+    x_global = s.cache_read(x, "global.vtcm", [z])
+    y_global = s.cache_read(y, "global.vtcm", [z])
+    z_global = s.cache_write(z, "global.vtcm")
 
     s[x_global].transform_layout(layout_transform_2d)
     s[y_global].transform_layout(layout_transform_2d)
