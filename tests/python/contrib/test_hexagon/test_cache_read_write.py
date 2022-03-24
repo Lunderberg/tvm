@@ -92,7 +92,7 @@ def test_cache_read_write(hexagon_session):
     # s[x_global].compute_at(s[z_global], zouter)
     # s[y_global].compute_at(s[z_global], zouter)
 
-    mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global", "global")
+    # mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global", "global")
 
     # (cache_read_x,) = s[x_global].op.axis
     # s[x_global].tensorize(cache_read_x, mem_copy_read)
