@@ -26,6 +26,7 @@ import tvm.contrib.hexagon as hexagon
 
 from .conftest import requires_hexagon_toolchain
 
+from tvm.driver.build_module import schedule_to_module
 
 def intrin_mem_copy(shape, dtype, dst_scope, src_scope):
     # assert len(shape) == 1
@@ -74,6 +75,7 @@ def test_cache_read_write(hexagon_session):
     inner_shape = (factor,)
     dtype = "int8"
 
+    # SHARED SCHEDULE
     x = te.placeholder(shape=outer_shape, dtype=dtype, name="x")
     y = te.placeholder(shape=outer_shape, dtype=dtype, name="y")
     z = te.compute(outer_shape, lambda i: x[i] + y[i], name="z")
@@ -83,32 +85,46 @@ def test_cache_read_write(hexagon_session):
     y_global = s.cache_read(y, "global.vtcm", [z])
     z_global = s.cache_write(z, "global.vtcm")
 
-    # s[x_global].transform_layout(layout_transform_2d)
-    # s[y_global].transform_layout(layout_transform_2d)
-    # s[z_global].transform_layout(layout_transform_2d)
-
-    # print("-------------------------------")
-    # print(loopx)
-    # print(loopy)
-    # print("-------------------------------")
-
-    zouter, zinner = s[z_global].split(z_global.op.axis[0], factor=factor)
-
-    s[x_global].compute_at(s[z_global], zouter)
-    s[y_global].compute_at(s[z_global], zouter)
+    # NEW SCHEDULE
+    cache_read_x = s[x_global].transform_layout(layout_transform_2d)
+    cache_read_y = s[y_global].transform_layout(layout_transform_2d)
+    cache_read_z = s[z_global].transform_layout(layout_transform_2d)
 
     mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
+    s[x_global].tensorize(cache_read_x[1], mem_copy_read)
 
-    (cache_read_x,) = s[x_global].op.axis
-    s[x_global].tensorize(cache_read_x, mem_copy_read)
+    mod = schedule_to_module(s, [x, y, z])
+    print(mod)
 
-    (cache_read_y,) = s[y_global].op.axis
-    s[y_global].tensorize(cache_read_y, mem_copy_read)
+    # Check failed: (it != buf_map_.end()) is false: 
+    #               attr::buffer_bind_scope target buffer(x.global.vtcm, 0x1d53810) not in scope.
+    # mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
 
-    mem_copy_write = intrin_mem_copy(outer_shape, dtype, "global", "global.vtcm")
+    # ValueError: Need to provide 2 index in tensor but 1 was provided
+    # mem_copy_read = intrin_mem_copy((4,16), dtype, "global.vtcm", "global")
 
-    (cache_write_z,) = s[z].op.axis
-    s[z].tensorize(cache_write_z, mem_copy_write)
+    # s[x_global].tensorize(cache_read_x[1], mem_copy_read)
+
+    #zouter, zinner = s[z_global].split(z_global.op.axis[0], factor=factor)
+
+    # OLD SCHEDULE
+    # zouter, zinner = s[z_global].split(z_global.op.axis[0], factor=factor)
+
+    # s[x_global].compute_at(s[z_global], zouter)
+    # s[y_global].compute_at(s[z_global], zouter)
+
+    # mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
+
+    # (cache_read_x,) = s[x_global].op.axis
+    # s[x_global].tensorize(cache_read_x, mem_copy_read)
+
+    # (cache_read_y,) = s[y_global].op.axis
+    # s[y_global].tensorize(cache_read_y, mem_copy_read)
+
+    # mem_copy_write = intrin_mem_copy(outer_shape, dtype, "global", "global.vtcm")
+
+    # (cache_write_z,) = s[z].op.axis
+    # s[z].tensorize(cache_write_z, mem_copy_write)
 
     print(tvm.lower(s, [x, y, z]))
 
