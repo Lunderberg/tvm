@@ -66,10 +66,6 @@ def layout_transform_2d(n):
     return [n // 16, te.AXIS_SEPARATOR, n % 16]
 
 
-def layout_tranform_1d(n):
-    return [n]
-
-
 @requires_hexagon_toolchain
 def test_cache_read_write(hexagon_session):
     size = 128
@@ -83,9 +79,9 @@ def test_cache_read_write(hexagon_session):
     z = te.compute(outer_shape, lambda i: x[i] + y[i], name="z")
     s = te.create_schedule(z.op)
 
-    x_global = s.cache_read(x, "global.vtcm", [z])
-    y_global = s.cache_read(y, "global.vtcm", [z])
-    z_global = s.cache_write(z, "global.vtcm")
+    x_global = s.cache_read(x, "global", [z])
+    y_global = s.cache_read(y, "global", [z])
+    z_global = s.cache_write(z, "global")
 
     s[x_global].transform_layout(layout_transform_2d)
     s[y_global].transform_layout(layout_transform_2d)
@@ -96,7 +92,7 @@ def test_cache_read_write(hexagon_session):
     # s[x_global].compute_at(s[z_global], zouter)
     # s[y_global].compute_at(s[z_global], zouter)
 
-    mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
+    mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global", "global")
 
     # (cache_read_x,) = s[x_global].op.axis
     # s[x_global].tensorize(cache_read_x, mem_copy_read)
