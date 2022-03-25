@@ -539,5 +539,22 @@ def test_transform_with_reduction():
     tvm.lower(s, [A, B])
 
 
+def test_lower_batch_one():
+    dtype = "int8"
+    shape = [1, 8]
+    A = te.placeholder(shape, dtype, name="A")
+    B = te.compute(
+        shape=A.shape,
+        fcompute=lambda *indices: A[indices].astype(dtype),
+        name="B",
+    )
+    s = te.create_schedule(B.op)
+
+    # If layout transformation is on the output buffer, and any
+    # dimension of the output buffer is 1, failure occurs in
+    # CheckFusePattern.
+    s[B].transform_layout(lambda n, i: [i, n])
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(sys.argv))
