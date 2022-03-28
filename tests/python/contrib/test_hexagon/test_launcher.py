@@ -31,6 +31,7 @@ from tvm.contrib.hexagon.build import HexagonLauncher
 import tvm.contrib.hexagon as hexagon
 
 from .conftest import requires_hexagon_toolchain
+from .infrastructure import allocate_hexagon_array
 
 RPC_SERVER_PORT = 7070
 
@@ -59,11 +60,11 @@ def test_add(hexagon_session):
 
     mod = hexagon_session.load_module(func)
 
-    A_data = tvm.nd.array(np.array([2, 3], dtype=dtype), device=hexagon_session.device)
+    A_data = allocate_hexagon_array(hexagon_session.device, data=np.array([2, 3], dtype=dtype))
     assert (A_data.numpy() == np.array([2, 3])).all()
-    B_data = tvm.nd.array(np.array([4], dtype=dtype), device=hexagon_session.device)
+    B_data = allocate_hexagon_array(hexagon_session.device, data=np.array([4], dtype=dtype))
     assert (B_data.numpy() == np.array([4])).all()
-    C_data = tvm.nd.array(np.array([0, 0], dtype=dtype), device=hexagon_session.device)
+    C_data = allocate_hexagon_array(hexagon_session.device, data=np.array([0, 0], dtype=dtype))
     assert (C_data.numpy() == np.array([0, 0])).all()
     mod["add"](A_data, B_data, C_data)
     assert (C_data.numpy() == np.array([6, 7])).all()
@@ -86,14 +87,16 @@ def test_add_vtcm(hexagon_session):
         pytest.skip(msg="Skip hardware test, ANDROID_SERIAL_NUMBER is not set.")
 
     mod = hexagon_session.load_module(func)
-    A_data = tvm.nd.empty(A.shape, A.dtype, hexagon_session.device, "global.vtcm")
-    A_data.copyfrom(np.array([2, 3]))
 
-    B_data = tvm.nd.empty(B.shape, B.dtype, hexagon_session.device, "global.vtcm")
-    B_data.copyfrom(np.array([4]))
-
-    C_data = tvm.nd.empty(C.shape, C.dtype, hexagon_session.device, "global.vtcm")
-    C_data.copyfrom(np.array([0, 0]))
+    A_data = allocate_hexagon_array(
+        hexagon_session.device, data=np.array([2, 3]).astype(dtype), mem_scope="global.vtcm"
+    )
+    B_data = allocate_hexagon_array(
+        hexagon_session.device, data=np.array([4]).astype(dtype), mem_scope="global.vtcm"
+    )
+    C_data = allocate_hexagon_array(
+        hexagon_session.device, data=np.array([0, 0]).astype(dtype), mem_scope="global.vtcm"
+    )
 
     mod["add"](A_data, B_data, C_data)
     result = C_data.numpy()
@@ -127,9 +130,9 @@ class TestMatMul:
         y = np.random.uniform(size=[i.value for i in Y.shape]).astype(Y.dtype)
         z = np.zeros([i.value for i in Z.shape], dtype=Z.dtype)
 
-        xt = tvm.nd.array(x, device=hexagon_session.device)
-        yt = tvm.nd.array(y, device=hexagon_session.device)
-        zt = tvm.nd.array(z, device=hexagon_session.device)
+        xt = allocate_hexagon_array(hexagon_session.device, data=x)
+        yt = allocate_hexagon_array(hexagon_session.device, data=y)
+        zt = allocate_hexagon_array(hexagon_session.device, data=z)
         mod(xt, yt, zt)
 
         target_llvm = tvm.target.Target("llvm")
