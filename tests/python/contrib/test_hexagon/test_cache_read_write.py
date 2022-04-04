@@ -26,8 +26,8 @@ import tvm.contrib.hexagon as hexagon
 
 from .conftest import requires_hexagon_toolchain
 
+
 def intrin_mem_copy(shape, dtype, dst_scope, src_scope):
-    # assert len(shape) == 1
     src = te.placeholder(shape=shape, dtype=dtype, name="src")
     dst = te.compute(shape, lambda i: src[i], name="dst")
     size = shape[0] * np.dtype(dtype).itemsize
@@ -37,6 +37,7 @@ def intrin_mem_copy(shape, dtype, dst_scope, src_scope):
         dtype,
         scope=src_scope,
         offset_factor=1,
+        name="mem_copy_src_buffer",
     )
 
     dst_buffer = tvm.tir.decl_buffer(
@@ -44,16 +45,27 @@ def intrin_mem_copy(shape, dtype, dst_scope, src_scope):
         dtype,
         scope=dst_scope,
         offset_factor=1,
+        name="mem_copy_dest_buffer",
     )
+
+    zero_indices = [0 for _ in shape]
 
     def intrin_func(ins, outs):
         ib = tvm.tir.ir_builder.create()
 
         _src = ins[0]
         _dst = outs[0]
+
+        dst_handle = ib.buffer_ptr(dst_buffer)
+        src_handle = ib.buffer_ptr(src_buffer)
+
         ib.emit(
             tvm.tir.call_intrin(
-                "handle", "tir.mem_copy", _dst.access_ptr("w"), _src.access_ptr("r"), size
+                "handle",
+                "tir.mem_copy",
+                tvm.tir.call_intrin("handle", "tir.address_of", dst_handle[zero_indices]),
+                tvm.tir.call_intrin("handle", "tir.address_of", src_handle[zero_indices]),
+                size,
             )
         )
         return ib.get()
@@ -87,8 +99,8 @@ def test_cache_read_write(hexagon_session):
     cache_read_z = s[z_global].transform_layout(layout_transform_2d)
 
     # TODO(Straw): DMA not functional yet
-    # mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
-    # s[x_global].tensorize(cache_read_x[1], mem_copy_read)
+    mem_copy_read = intrin_mem_copy(inner_shape, dtype, "global.vtcm", "global")
+    s[x_global].tensorize(cache_read_x[1], mem_copy_read)
 
     print(tvm.lower(s, [x, y, z]))
 
