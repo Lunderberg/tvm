@@ -51,6 +51,7 @@
 #include <tvm/arith/analyzer.h>
 #include <tvm/ir/diagnostic.h>
 #include <tvm/ir/expr.h>
+#include <tvm/support/tvm_enum.h>
 #include <tvm/tir/var.h>
 
 namespace tvm {
@@ -260,14 +261,13 @@ class IterSumExpr : public IterMapExpr {
 };
 
 /*! \brief Mapping level for iterators. */
-enum IterMapLevel {
-  // Require the mapping to be bijective.
-  Bijective = 0,
-  // Require the mapping to be surjective.
-  Surjective = 1,
-  // No mapping safety check.
-  NoCheck = 3
-};
+TVM_ENUM(IterMapLevel,
+         // Require the mapping to be bijective.
+         (Bijective, 0),
+         // Require the mapping to be surjective.
+         (Surjective, 1),
+         // No mapping safety check.
+         (NoCheck, 3));
 
 /*!
  * \brief Result of DetectIterMap.
