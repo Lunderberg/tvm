@@ -31,6 +31,9 @@
 
 #include "macro_foreach.h"
 
+namespace tvm {
+namespace support {
+
 // A couple utilities to defer evaluation of a macro.
 #define TVM_MACRO_ESCAPE(...) TVM_MACRO_ESCAPE_(__VA_ARGS__)
 #define TVM_MACRO_ESCAPE_(...) TVM_MACRO_REMOVE_##__VA_ARGS__
@@ -69,39 +72,59 @@
     val_ = Value::TVM_ENUM_NAME(item);     \
   } else
 
-#define TVM_ENUM(EnumName, ...)                                                  \
-  class EnumName {                                                               \
-   public:                                                                       \
-    /* Declare the enum, using any specific values provided in the definition */ \
-    enum class Value : int { MAP_LIST(TVM_ENUM_DECL_ITEM, __VA_ARGS__) };        \
-                                                                                 \
-    /* Hoist the enum values, to allow EnumName::kEnum                           \
-     * instead of EnumName::Value::kEnum                                         \
-     */                                                                          \
-    MAP(TVM_ENUM_HOIST_ITEM, __VA_ARGS__)                                        \
-                                                                                 \
-    /* Explicit construct from int */                                            \
-    explicit EnumName(int val) : val_(Value(val)) {}                             \
-    /* Implicit construct from enum class, in case hoisted values are used */    \
-    EnumName(Value val) : val_(val) {}                                           \
-    explicit EnumName(std::string val) {                                         \
-      MAP(TVM_ENUM_FROMSTRING_ITEM, __VA_ARGS__) {                               \
-        LOG(FATAL) << "Cannot construct " #EnumName " from value " << val;       \
-      }                                                                          \
-    }                                                                            \
-                                                                                 \
-    std::string ToString() const {                                               \
-      switch (val_) {                                                            \
-        MAP(TVM_ENUM_TOSTRING_ITEM, __VA_ARGS__)                                 \
-        default:                                                                 \
-          LOG(FATAL) << "Value " << int(val_)                                    \
-                     << " does not correspond to any named value in " #EnumName; \
-          return "";                                                             \
-      }                                                                          \
-    }                                                                            \
-                                                                                 \
-   private:                                                                      \
-    Value val_;                                                                  \
+#define TVM_MACRO_INCREMENT(...) +1
+
+#define TVM_ENUM(EnumName, ...)                                                     \
+  class EnumName : public ::tvm::support::EnumCRTP<EnumName> {                      \
+   public:                                                                          \
+    /* Declare the enum, using any specific values provided in the definition */    \
+    enum class Value : int { MAP_LIST(TVM_ENUM_DECL_ITEM, __VA_ARGS__) };           \
+                                                                                    \
+    /* Hoist the enum values, to allow EnumName::kEnum                              \
+     * instead of EnumName::Value::kEnum                                            \
+     */                                                                             \
+    MAP(TVM_ENUM_HOIST_ITEM, __VA_ARGS__)                                           \
+                                                                                    \
+    /* Explicit construct from int */                                               \
+    explicit EnumName(int val) : val_(Value(val)) {}                                \
+    /* Implicit construct from enum class, in case hoisted values are used */       \
+    EnumName(Value val) : val_(val) {}                                              \
+    explicit EnumName(std::string val) {                                            \
+      MAP(TVM_ENUM_FROMSTRING_ITEM, __VA_ARGS__) {                                  \
+        LOG(FATAL) << "Cannot construct " #EnumName " from value " << val;          \
+      }                                                                             \
+    }                                                                               \
+                                                                                    \
+    std::string ToString() const {                                                  \
+      switch (val_) {                                                               \
+        MAP(TVM_ENUM_TOSTRING_ITEM, __VA_ARGS__)                                    \
+        default:                                                                    \
+          LOG(FATAL) << "Value " << int(val_)                                       \
+                     << " does not correspond to any named value in " #EnumName;    \
+          return "";                                                                \
+      }                                                                             \
+    }                                                                               \
+                                                                                    \
+    bool operator==(const EnumName& other) const { return val_ == other.val_; }     \
+    bool operator!=(const EnumName& other) const { return !(*this == other); }      \
+                                                                                    \
+   private:                                                                         \
+    Value val_;                                                                     \
+                                                                                    \
+    static const size_t n_values = 0 MAP(TVM_MACRO_INCREMENT, __VA_ARGS__);         \
+    static const constexpr Value values[] = {MAP_LIST(TVM_ENUM_NAME, __VA_ARGS__)}; \
+    static const constexpr char* const value_names[] = {                            \
+        MAP_LIST(TVM_ENUM_STRING_NAME, __VA_ARGS__)};                               \
+    static const constexpr char* const enum_name = #EnumName;                       \
   }
+
+template <typename T>
+class EnumCRTP {
+ public:
+  // TODO: Add the FFI interface here
+};
+
+}  // namespace support
+}  // namespace tvm
 
 #endif  // TVM_SUPPORT_TVM_ENUM_H_
