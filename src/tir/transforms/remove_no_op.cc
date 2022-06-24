@@ -29,7 +29,7 @@
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
-#include <unordered_map>
+#include "../../arith/ir_mutator_with_analyzer.h"
 
 #include "../../arith/const_fold.h"
 #include "ir_utils.h"
@@ -38,10 +38,15 @@ namespace tvm {
 namespace tir {
 
 // Mark the statement of each stage.
-class NoOpRemover : public StmtMutator {
+class NoOpRemover : public arith::IRMutatorWithAnalyzer {
  public:
+  using Parent = IRMutatorWithAnalyzer;
+  using Parent::Parent;
+  using Parent::VisitStmt;
+  using Parent::VisitStmt_;
+
   Stmt VisitStmt_(const LetStmtNode* op) final {
-    Stmt stmt = StmtMutator::VisitStmt_(op);
+    Stmt stmt = Parent::VisitStmt_(op);
     op = stmt.as<LetStmtNode>();
     return is_no_op(op->body) ? MakeEvaluate(op->value) : stmt;
   }
@@ -61,13 +66,12 @@ class NoOpRemover : public StmtMutator {
         return StmtMutator::VisitStmt(inner->body);
       }
     }
-
     Stmt stmt = StmtMutator::VisitStmt_(op);
     op = stmt.as<AttrStmtNode>();
     return is_no_op(op->body) ? MakeEvaluate(op->value) : stmt;
   }
   Stmt VisitStmt_(const IfThenElseNode* op) final {
-    Stmt stmt = StmtMutator::VisitStmt_(op);
+    Stmt stmt = Parent::VisitStmt_(op);
     op = stmt.as<IfThenElseNode>();
     if (op->else_case.defined()) {
       bool no_op_else = is_no_op(op->else_case);
@@ -93,7 +97,7 @@ class NoOpRemover : public StmtMutator {
     var_range_map_[op->loop_var.get()] = arith::IntSet::FromMinExtent(op->min, op->extent);
     auto extent_range = arith::EvalSet(op->extent, var_range_map_);
     if (!arith::is_neg_inf(extent_range.max()) && !arith::is_pos_inf(extent_range.max()) &&
-        analyzer_.CanProve(extent_range.max() <= 0)) {
+        analyzer_->CanProve(extent_range.max() <= 0)) {
       return Evaluate(0);
     }
     Stmt stmt = StmtMutator::VisitStmt_(op);
@@ -105,13 +109,13 @@ class NoOpRemover : public StmtMutator {
     return is_no_op(op->body) ? MakeEvaluate({op->min, op->extent}) : stmt;
   }
   Stmt VisitStmt_(const AllocateNode* op) final {
-    Stmt stmt = StmtMutator::VisitStmt_(op);
+    Stmt stmt = Parent::VisitStmt_(op);
     op = stmt.as<AllocateNode>();
     return is_no_op(op->body) ? MakeEvaluate(op->extents) : stmt;
   }
 
   Stmt VisitStmt_(const ProducerRealizeNode* op) final {
-    Stmt stmt = StmtMutator::VisitStmt_(op);
+    Stmt stmt = Parent::VisitStmt_(op);
     op = stmt.as<ProducerRealizeNode>();
     return is_no_op(op->body) ? op->body : stmt;
   }
@@ -151,7 +155,33 @@ class NoOpRemover : public StmtMutator {
     }
   }
 
+  Stmt VisitStmt_(const BufferStoreNode* op) final {
+    BufferStore store = Downcast<BufferStore>(Parent::VisitStmt_(op));
+    if (const BufferLoadNode* load = store->value.as<BufferLoadNode>()) {
+      if (load->buffer->data.same_as(store->buffer->data) &&
+          analyzer_->CanProveEqual(load->buffer->elem_offset, store->buffer->elem_offset) &&
+          ArrayValueEqual(load->buffer->shape, store->buffer->shape) &&
+          ArrayValueEqual(load->buffer->strides, store->buffer->strides) &&
+          ArrayValueEqual(load->indices, store->indices)) {
+        return Evaluate(0);
+      }
+    }
+    return std::move(store);
+  }
+
  private:
+  bool ArrayValueEqual(const Array<PrimExpr>& a, const Array<PrimExpr>& b) {
+    if (a.size() != b.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < a.size(); i++) {
+      if (!analyzer_->CanProveEqual(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   Stmt MakeEvaluate(PrimExpr value) {
     if (SideEffect(value) > CallEffectKind::kReadState) {
       return Evaluate(value);
@@ -174,17 +204,22 @@ class NoOpRemover : public StmtMutator {
   }
 
   std::unordered_map<const VarNode*, arith::IntSet> var_range_map_;
-  arith::Analyzer analyzer_;
+  arith::BufferTouchPattern touch_pattern_;
 };
 
-Stmt RemoveNoOp(Stmt stmt) { return NoOpRemover()(std::move(stmt)); }
+Stmt RemoveNoOp(Stmt stmt) {
+  arith::Analyzer analyzer;
+  return NoOpRemover(&analyzer)(std::move(stmt));
+}
 
 namespace transform {
 
 Pass RemoveNoOp() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
+    arith::Analyzer analyzer;
+
     auto* n = f.CopyOnWrite();
-    n->body = NoOpRemover()(std::move(n->body));
+    n->body = NoOpRemover(&analyzer)(std::move(n->body));
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.RemoveNoOp", {});
