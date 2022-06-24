@@ -70,12 +70,14 @@ class NoOpRemover : public StmtMutator {
     Stmt stmt = StmtMutator::VisitStmt_(op);
     op = stmt.as<IfThenElseNode>();
     if (op->else_case.defined()) {
-      if (is_no_op(op->else_case)) {
-        if (is_no_op(op->then_case)) {
-          return MakeEvaluate(op->condition);
-        } else {
-          return IfThenElse(op->condition, op->then_case);
-        }
+      bool no_op_else = is_no_op(op->else_case);
+      bool no_op_then = is_no_op(op->then_case);
+      if (no_op_else && no_op_then) {
+        return MakeEvaluate(op->condition);
+      } else if (no_op_else) {
+        return IfThenElse(op->condition, op->then_case);
+      } else if (no_op_then) {
+        return IfThenElse(Not(op->condition), op->else_case);
       } else {
         return stmt;
       }
