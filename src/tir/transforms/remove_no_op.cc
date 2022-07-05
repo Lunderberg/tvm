@@ -59,7 +59,19 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   Stmt VisitStmt_(const LetStmtNode* op) final {
     Stmt stmt = Parent::VisitStmt_(op);
     op = stmt.as<LetStmtNode>();
-    return is_no_op(op->body) ? MakeEvaluate(op->value) : stmt;
+    if (is_no_op(op->body)) {
+      return MakeEvaluate(op->value);
+    }
+
+    bool body_uses_bound_variable =
+        !UsesVar(op->body, [&](const VarNode* var) { return var == op->var.get(); });
+    if (body_uses_bound_variable && HasSideEffect(op->value)) {
+      return SeqStmt({MakeEvaluate(op->value), op->body});
+    } else if (body_uses_bound_variable) {
+      return op->body;
+    } else {
+      return stmt;
+    }
   }
   Stmt VisitStmt_(const AttrStmtNode* op) final {
     if (op->attr_key == "pragma_debug_skip_region") {
@@ -131,8 +143,11 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
     return is_no_op(op->body) ? op->body : stmt;
   }
   Stmt VisitStmt_(const EvaluateNode* op) final {
-    if (SideEffect(op->value) > CallEffectKind::kReadState) return GetRef<Stmt>(op);
-    return Evaluate(0);
+    if (HasSideEffect(op->value)) {
+      return GetRef<Stmt>(op);
+    } else {
+      return Evaluate(0);
+    }
   }
 
   Stmt VisitStmt_(const SeqStmtNode* op) final {
@@ -202,8 +217,12 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
     return true;
   }
 
+  bool HasSideEffect(const PrimExpr& value) {
+    return SideEffect(value) > CallEffectKind::kReadState;
+  }
+
   Stmt MakeEvaluate(PrimExpr value) {
-    if (SideEffect(value) > CallEffectKind::kReadState) {
+    if (HasSideEffect(value)) {
       return Evaluate(value);
     } else {
       return Evaluate(0);
@@ -212,7 +231,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   Stmt MakeEvaluate(const Array<PrimExpr>& values) {
     Stmt stmt;
     for (PrimExpr e : values) {
-      if (SideEffect(e) > CallEffectKind::kReadState) {
+      if (HasSideEffect(e)) {
         if (stmt.defined()) {
           stmt = SeqStmt({stmt, Evaluate(e)});
         } else {
