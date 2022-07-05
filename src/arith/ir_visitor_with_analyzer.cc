@@ -31,6 +31,23 @@ namespace arith {
 
 using namespace tir;
 
+class IRVisitorWithAnalyzer::InternalConstraintContext {
+ public:
+  InternalConstraintContext(IRVisitorWithAnalyzer* self, PrimExpr constraint)
+      : custom_context_(self->EnterConstraint(constraint)),
+        standard_context_(&self->analyzer_, constraint) {}
+
+  ~InternalConstraintContext() {
+    if (custom_context_) {
+      custom_context_();
+    }
+  }
+
+ private:
+  std::function<void()> custom_context_;
+  With<ConstraintContext> standard_context_;
+};
+
 void IRVisitorWithAnalyzer::VisitStmt_(const ForNode* op) {
   analyzer_.Bind(op->loop_var, Range::FromMinExtent(op->min, op->extent));
   StmtExprVisitor::VisitStmt_(op);
@@ -55,11 +72,11 @@ void IRVisitorWithAnalyzer::VisitStmt_(const IfThenElseNode* op) {
   PrimExpr real_condition = ExtractRealCondition(op->condition);
 
   {
-    With<ConstraintContext> constraint(&analyzer_, real_condition);
+    InternalConstraintContext constraint(this, real_condition);
     this->VisitStmt(op->then_case);
   }
   if (op->else_case.defined()) {
-    With<ConstraintContext> constraint(&analyzer_, analyzer_.rewrite_simplify(Not(real_condition)));
+    InternalConstraintContext constraint(this, analyzer_.rewrite_simplify(Not(real_condition)));
     this->VisitStmt(op->else_case);
   }
 }
@@ -76,7 +93,7 @@ void IRVisitorWithAnalyzer::VisitStmt_(const AttrStmtNode* op) {
 void IRVisitorWithAnalyzer::VisitStmt_(const AssertStmtNode* op) {
   this->VisitExpr(op->condition);
   this->VisitExpr(op->message);
-  With<ConstraintContext> constraint(&analyzer_, op->condition);
+  InternalConstraintContext constraint(this, op->condition);
   this->VisitStmt(op->body);
 }
 
@@ -87,11 +104,11 @@ void IRVisitorWithAnalyzer::VisitExpr_(const CallNode* op) {
     PrimExpr cond = op->args[0];
     this->VisitExpr(op->args[0]);
     {
-      With<ConstraintContext> constraint(&analyzer_, cond);
+      InternalConstraintContext constraint(this, cond);
       this->VisitExpr(op->args[1]);
     }
     {
-      With<ConstraintContext> constraint(&analyzer_, analyzer_.rewrite_simplify(Not(cond)));
+      InternalConstraintContext constraint(this, analyzer_.rewrite_simplify(Not(cond)));
       this->VisitExpr(op->args[2]);
     }
   } else {

@@ -58,6 +58,24 @@ class IRVisitorWithAnalyzer : public tir::StmtExprVisitor {
   arith::Analyzer analyzer_;
 
  private:
+  /* \brief Extension method for subclasses for scoped constraints
+   *
+   * Called once when entering a constrained scope, exposing the
+   * constraint for additional use by subclasses.  For example, before
+   * entering an `IfThenElse` block with the condition `i==0`,
+   * `EnterConstraint` will be called with the argument `i==0`.
+   *
+   * \param constraint An expression that evaluates to True within the
+   * scope of the constraint.
+   *
+   * \returns A callback to be executed when leaving the constrained
+   * scope.  If null, no callback is executed.
+   */
+  virtual std::function<void()> EnterConstraint(const PrimExpr& constraint) { return nullptr; }
+
+  // Helper class to manage the custom constraint scopes.
+  class InternalConstraintContext;
+
   PrimExpr ExtractRealCondition(PrimExpr condition) const;
 };
 
