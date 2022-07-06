@@ -193,6 +193,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
       for (const auto& index : store->indices) {
         statements.push_back(MakeEvaluate(index));
       }
+      touch_pattern_.RemoveTouches(store);
       return this->VisitStmt(SeqStmt(statements));
     };
 

@@ -460,5 +460,10 @@ Optional<PrimExpr> BufferTouchPattern::KnownValue(
   return NullOpt;
 }
 
+void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
+  touches_.erase(std::remove_if(touches_.begin(), touches_.end(),
+                                [&](const auto& touch) { return touch.node.same_as(store); }));
+}
+
 }  // namespace arith
 }  // namespace tvm

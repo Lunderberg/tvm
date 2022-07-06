@@ -145,6 +145,16 @@ class BufferTouchPattern {
    */
   Optional<PrimExpr> KnownValue(const tir::BufferStore& store) const;
 
+  /* \brief Remove all touches associated with a specific write
+   *
+   * If a pass removes a write from the statement being examined, then
+   * it should no longer contribute to any analysis.  This function
+   * allows a store to be marked as removed.
+   *
+   * \param store The buffer touch to be removed from future analysis.
+   */
+  void RemoveTouches(const tir::BufferStore& store);
+
  private:
   /* \brief Internal utility, checks if a specific write was overwritten
    *
