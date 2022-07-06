@@ -40,14 +40,17 @@ namespace arith {
 
 using namespace tir;
 
-Predicate::Predicate(Array<Var> parameter_vars, PrimExpr expression,
-                     Map<Var, Range> free_parameters)
-    : parameter_vars_(parameter_vars), free_parameters_(free_parameters), expression_(expression) {}
+ParametrizedExpression::ParametrizedExpression(Array<Var> parameter_vars, PrimExpr expression)
+    : parameter_vars_(parameter_vars), expression_(expression) {}
 
-PrimExpr Predicate::operator()(Array<PrimExpr> args) const {
+PrimExpr ParametrizedExpression::operator()(Array<PrimExpr> args) const {
   ICHECK_EQ(parameter_vars_.size(), args.size())
       << "Expression was defined as having " << parameter_vars_.size()
       << " parameters, but received " << args.size() << " arguments.";
+
+  if (!expression_.defined()) {
+    return expression_;
+  }
 
   Map<tir::Var, PrimExpr> var_map;
   for (size_t i = 0; i < args.size(); i++) {
@@ -56,6 +59,27 @@ PrimExpr Predicate::operator()(Array<PrimExpr> args) const {
 
   return Substitute(expression_, var_map);
 }
+
+bool ParametrizedExpression::IsConstant() const {
+  std::unordered_set<const VarNode*> vars;
+  for (const auto& var : parameter_vars_) {
+    vars.insert(var.get());
+  }
+  return !UsesVar(expression_, [&](const VarNode* var) { return vars.count(var); });
+}
+
+std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr) {
+  if (!expr.IsConstant()) {
+    os << expr.parameter_vars_ << " => ";
+  }
+
+  os << expr.expression_;
+  return os;
+}
+
+Predicate::Predicate(Array<tir::Var> parameter_vars, PrimExpr expression,
+                     Map<tir::Var, Range> free_parameters)
+    : ParametrizedExpression(parameter_vars, expression), free_parameters_(free_parameters) {}
 
 bool Predicate::IsSubsetOf(const Predicate& other) const {
   ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
@@ -93,7 +117,7 @@ PrimExpr Predicate::FreeParameterConstraints() const {
 }
 
 std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
-  os << "predicate(" << expr.parameter_vars_ << " = " << expr.expression_;
+  os << "predicate(" << static_cast<const ParametrizedExpression&>(expr);
   if (expr.free_parameters_.size()) {
     for (const auto& pair : expr.free_parameters_) {
       os << ", for all " << pair.first << " in [" << pair.second->min << ", "
@@ -105,7 +129,7 @@ std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
 }
 
 BufferTouch::BufferTouch(Buffer buffer, Predicate predicate, AccessType touch_type,
-                         Optional<PrimExpr> known_value, ObjectRef node)
+                         ParametrizedExpression known_value, ObjectRef node)
     : buffer(buffer),
       predicate(predicate),
       touch_type(touch_type),
@@ -124,8 +148,13 @@ std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
   auto touch_type = (tp.touch_type == BufferTouch::AccessType::Read)    ? "read"
                     : (tp.touch_type == BufferTouch::AccessType::Write) ? "write"
                                                                         : "opaque";
-  return os << "BufferTouch(" << tp.buffer->name << ", " << touch_type << ", " << tp.predicate
-            << ")";
+  os << "BufferTouch(" << tp.buffer->name << ", " << touch_type << ", " << tp.predicate;
+  if (tp.known_value.IsDefined()) {
+    os << ", known_value = " << tp.known_value;
+  }
+
+  os << ")";
+  return os;
 }
 
 // Find Read region of the tensor in the stmt.
@@ -198,8 +227,10 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   template <typename BufferAccess>
   void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type) {
-    Optional<PrimExpr> known_value = NullOpt;
-    auto predicate = CurrentPredicate(node->indices);
+    auto index_variables = MakeIndexVariables(node->indices);
+    auto transform = SolveForBufferIndices(index_variables, node->indices);
+    auto predicate = CurrentPredicate(index_variables, node->indices, transform);
+    auto known_value = KnownValue(node, index_variables, transform);
     touch_points_.push_back(BufferTouch(node->buffer, predicate, touch_type, known_value, node));
   }
 
@@ -212,39 +243,28 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     };
   }
 
-  Predicate CurrentPredicate(const Array<PrimExpr>& indices) {
-    PrimExpr predicate = Bool(true);
-    for (const auto& condition : conditions_) {
-      predicate = predicate && condition;
+  Array<Var> MakeIndexVariables(const Array<PrimExpr>& indices) {
+    Array<Var> vars;
+    for (size_t i = 0; i < indices.size(); i++) {
+      std::stringstream ss;
+      ss << "i_" << i;
+      vars.push_back(Var(ss.str()));
     }
-    predicate = Substitute(predicate, let_bindings_using_loop_);
+    return vars;
+  }
 
-    Array<Var> index_variables;
-
+  IntConstraintsTransform SolveForBufferIndices(const Array<Var>& index_variables,
+                                                const Array<PrimExpr>& index_expressions) {
     Map<Var, Range> ranges;
     Array<PrimExpr> relations;
 
-    for (size_t i = 0; i < indices.size(); i++) {
-      PrimExpr index = indices[i];
+    for (size_t i = 0; i < index_expressions.size(); i++) {
+      PrimExpr index = index_expressions[i];
+      Var var = index_variables[i];
 
-      std::stringstream ss;
-      ss << "i_" << i;
-      Var var(ss.str());
-      index_variables.push_back(var);
       relations.push_back(var == Substitute(index, let_bindings_using_loop_));
 
       IntSet interval = analyzer_.int_set(index);
-
-      if (interval.IsSinglePoint()) {
-        predicate = predicate && (var == interval.PointValue());
-      } else {
-        if (interval.HasLowerBound()) {
-          predicate = predicate && (var >= interval.min());
-        }
-        if (interval.HasUpperBound()) {
-          predicate = predicate && (var <= interval.max());
-        }
-      }
     }
 
     Array<Var> loop_vars;
@@ -260,13 +280,67 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     IntConstraints system(loop_vars, loop_ranges, relations);
     IntConstraintsTransform solution = arith::SolveLinearEquations(system);
 
-    predicate = Substitute(predicate, solution->src_to_dst);
+    return solution;
+  }
+
+  Predicate CurrentPredicate(const Array<Var>& index_variables,
+                             const Array<PrimExpr>& index_expressions,
+                             const IntConstraintsTransform& transform) {
+    PrimExpr predicate = Bool(true);
+    for (const auto& condition : conditions_) {
+      predicate = predicate && condition;
+    }
+    predicate = Substitute(predicate, let_bindings_using_loop_);
+
+    for (size_t i = 0; i < index_expressions.size(); i++) {
+      PrimExpr index = index_expressions[i];
+      Var var = index_variables[i];
+
+      IntSet interval = analyzer_.int_set(index);
+
+      if (interval.IsSinglePoint()) {
+        predicate = predicate && (var == interval.PointValue());
+      } else {
+        if (interval.HasLowerBound()) {
+          predicate = predicate && (var >= interval.min());
+        }
+        if (interval.HasUpperBound()) {
+          predicate = predicate && (var <= interval.max());
+        }
+      }
+    }
+
+    predicate = Substitute(predicate, transform->src_to_dst);
     predicate = analyzer_.Simplify(predicate);
 
     ICHECK(!UsesLoopVar(predicate))
         << "Internal error: Loop variable still used after substituting out the loop variable";
 
-    return Predicate(index_variables, predicate, solution->dst->ranges);
+    return Predicate(index_variables, predicate, transform->dst->ranges);
+  }
+
+  ParametrizedExpression KnownValue(const BufferStore& store, const Array<Var>& index_variables,
+                                    const IntConstraintsTransform& transform) {
+    PrimExpr value = store->value;
+    value = Substitute(value, let_bindings_using_loop_);
+    value = Substitute(value, transform->src_to_dst);
+    value = analyzer_.Simplify(value);
+
+    auto free_params = transform->dst->ranges;
+    bool uses_free_param = UsesVar(value, [&](const VarNode* var) {
+      return free_params.find(GetRef<Var>(var)) != free_params.end();
+    });
+    if (uses_free_param) {
+      return ParametrizedExpression(index_variables, PrimExpr());
+    } else {
+      return ParametrizedExpression(index_variables, value);
+    }
+  }
+
+  ParametrizedExpression KnownValue(const BufferLoad& load, const Array<Var>& index_variables,
+                                    const IntConstraintsTransform& transform) {
+    // TODO: Track if a buffer load has a known value
+    return ParametrizedExpression(index_variables, PrimExpr());
   }
 
   // Track in order to know which Vars to write in terms of the buffer
@@ -293,6 +367,19 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
 BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt)
     : touches_(BufferTouchExtractor::Extract(stmt)) {}
+
+std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
+  os << "Touch pattern contains " << pattern.touches_.size() << " touches."
+     << (pattern.touches_.size() ? "\n" : "");
+  for (size_t i = 0; i < pattern.touches_.size(); i++) {
+    os << "\t"
+       << "Touch[" << i << "] = " << pattern.touches_[i];
+    if (i + 1 < pattern.touches_.size()) {
+      os << "\n";
+    }
+  }
+  return os;
+}
 
 bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& store) const {
   bool write_occurred = false;
@@ -327,11 +414,49 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(
   return false;
 }
 
+Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferStore& store) const {
+  Array<PrimExpr> values;
+
+  for (auto it = touches_.rbegin(); it != touches_.rend(); it++) {
+    if (it->node.same_as(store)) {
+      if (auto opt = KnownValue(it, store->indices)) {
+        values.push_back(opt.value());
+      } else {
+        // If a store based on this statement doesn't have a known
+        // value, then the store overall doesn't have a known value.
+        return NullOpt;
+      }
+    }
+  }
+
+  // For the store to have a known value, all touches resulting from
+  // this statement must result in the same value.
+  //
+  // TODO: Handle multiple access from a single statement
+  // (e.g. start/finish of while loop) that may have the same result.
+  // Should attempt to prove that each touch was preceded by the same
+  // known value.
+  if (values.size() == 1) {
+    return values[0];
+  } else {
+    return NullOpt;
+  }
+}
+
 Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferLoad& load) const {
   return NullOpt;
 }
 
-Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferStore& store) const {
+Optional<PrimExpr> BufferTouchPattern::KnownValue(
+    std::vector<BufferTouch>::const_reverse_iterator access_iter,
+    const Array<PrimExpr>& indices) const {
+  for (auto it = access_iter + 1; it != touches_.rend(); it++) {
+    // If a previous write touched the same indices, then we can use
+    // the recorded values at those indices.
+    if (it->touch_type == BufferTouch::AccessType::Write && access_iter->IsSubsetOf(*it)) {
+      return it->known_value(indices);
+    }
+  }
   return NullOpt;
 }
 

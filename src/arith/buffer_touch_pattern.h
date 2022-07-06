@@ -34,16 +34,30 @@
 namespace tvm {
 namespace arith {
 
-// Utility for expressing an expression in terms of variable
+class ParametrizedExpression {
+ public:
+  ParametrizedExpression(Array<tir::Var> parameter_vars, PrimExpr expression);
+
+  /* \brief Evaluate the expression using the provided arguments
+   */
+  PrimExpr operator()(Array<PrimExpr> args) const;
+
+  bool IsDefined() const { return expression_.defined(); }
+  bool IsConstant() const;
+
+  friend std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr);
+
+ protected:
+  Array<tir::Var> parameter_vars_;
+  PrimExpr expression_;
+};
+
+// Utility for expressing an boolean condition in terms of variable
 // parameters.
-class Predicate {
+class Predicate : public ParametrizedExpression {
  public:
   Predicate(Array<tir::Var> parameter_vars, PrimExpr expression,
             Map<tir::Var, Range> free_parameters);
-
-  /* \brief Evaluate the predicate using the provided arguments
-   */
-  PrimExpr operator()(Array<PrimExpr> args) const;
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -59,9 +73,7 @@ class Predicate {
   /* \brief Internal utility to express parameter ranges as boolean constraint */
   PrimExpr FreeParameterConstraints() const;
 
-  Array<tir::Var> parameter_vars_;
   Map<tir::Var, Range> free_parameters_;
-  PrimExpr expression_;
 };
 
 class BufferTouch {
@@ -72,7 +84,7 @@ class BufferTouch {
   };
 
   BufferTouch(tir::Buffer buffer, Predicate predicate, AccessType touch_type,
-              Optional<PrimExpr> known_value, ObjectRef node);
+              ParametrizedExpression known_value, ObjectRef node);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -88,7 +100,7 @@ class BufferTouch {
   tir::Buffer buffer;
   Predicate predicate;
   AccessType touch_type;
-  Optional<PrimExpr> known_value;
+  ParametrizedExpression known_value;
 
   // The BufferLoad or BufferStore object that caused this touch.
   ObjectRef node;
@@ -141,6 +153,17 @@ class BufferTouchPattern {
    */
   bool IsOverwrittenWithoutEffect(std::vector<BufferTouch>::const_iterator write_iter) const;
 
+  /* \brief Internal utility, checks if a specific access was overwritten
+   *
+   * \param write_iter An iterator into `touches_`, pointing to the
+   * buffer touch to be examined.
+   */
+  Optional<PrimExpr> KnownValue(std::vector<BufferTouch>::const_reverse_iterator access_iter,
+                                const Array<PrimExpr>& indices) const;
+
+  friend std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern);
+
+ private:
   /* \brief An ordered list of buffer touches
    *
    * For all indices i and j, if i<j, then either buffer touch i

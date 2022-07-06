@@ -182,10 +182,35 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
-    bool overwritten_without_read =
-        touch_pattern_.IsOverwrittenWithoutEffect(GetRef<BufferStore>(op));
+    BufferStore store = GetRef<BufferStore>(op);
 
-    BufferStore store = Downcast<BufferStore>(Parent::VisitStmt_(op));
+    // Helper function that returns a statement containing only the
+    // side effects of evaluating this BufferStore, but not the store
+    // itself.
+    auto only_side_effects = [&]() {
+      Array<Stmt> statements;
+      statements.push_back(MakeEvaluate(store->value));
+      for (const auto& index : store->indices) {
+        statements.push_back(MakeEvaluate(index));
+      }
+      return this->VisitStmt(SeqStmt(statements));
+    };
+
+    // A write that is later overwritten is a no-op.
+    if (touch_pattern_.IsOverwrittenWithoutEffect(store)) {
+      return only_side_effects();
+    }
+
+    // A write whose destination is known to already contain the
+    // values to be written is a no-op.
+    if (auto opt = touch_pattern_.KnownValue(store)) {
+      PrimExpr known_value = opt.value();
+      if (analyzer_->CanProveEqual(store->value, known_value)) {
+        return only_side_effects();
+      }
+    }
+
+    store = Downcast<BufferStore>(Parent::VisitStmt_(store.get()));
 
     if (const BufferLoadNode* load = store->value.as<BufferLoadNode>()) {
       if (load->buffer->data.same_as(store->buffer->data) &&
@@ -195,10 +220,6 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
           ArrayValueEqual(load->indices, store->indices)) {
         return Evaluate(0);
       }
-    }
-
-    if (overwritten_without_read) {
-      return MakeEvaluate(store->value);
     }
 
     return std::move(store);
