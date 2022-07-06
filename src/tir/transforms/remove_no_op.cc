@@ -29,6 +29,7 @@
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
+#include "../../arith/buffer_touch_pattern.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
 
 #include "../../arith/const_fold.h"
@@ -40,10 +41,20 @@ namespace tir {
 // Mark the statement of each stage.
 class NoOpRemover : public arith::IRMutatorWithAnalyzer {
  public:
+  static Stmt Apply(Stmt stmt) {
+    arith::Analyzer analyzer;
+    arith::BufferTouchPattern touch_pattern(stmt);
+    NoOpRemover visitor(&analyzer, std::move(touch_pattern));
+    return visitor(std::move(stmt));
+  }
+
+ private:
   using Parent = IRMutatorWithAnalyzer;
-  using Parent::Parent;
   using Parent::VisitStmt;
   using Parent::VisitStmt_;
+
+  NoOpRemover(arith::Analyzer* analyzer, arith::BufferTouchPattern touch_pattern)
+      : Parent(analyzer), touch_pattern_(touch_pattern) {}
 
   Stmt VisitStmt_(const LetStmtNode* op) final {
     Stmt stmt = Parent::VisitStmt_(op);
@@ -156,7 +167,11 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
+    bool overwritten_without_read =
+        touch_pattern_.IsOverwrittenWithoutEffect(GetRef<BufferStore>(op));
+
     BufferStore store = Downcast<BufferStore>(Parent::VisitStmt_(op));
+
     if (const BufferLoadNode* load = store->value.as<BufferLoadNode>()) {
       if (load->buffer->data.same_as(store->buffer->data) &&
           analyzer_->CanProveEqual(load->buffer->elem_offset, store->buffer->elem_offset) &&
@@ -166,6 +181,11 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
         return Evaluate(0);
       }
     }
+
+    if (overwritten_without_read) {
+      return MakeEvaluate(store->value);
+    }
+
     return std::move(store);
   }
 
@@ -207,10 +227,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   arith::BufferTouchPattern touch_pattern_;
 };
 
-Stmt RemoveNoOp(Stmt stmt) {
-  arith::Analyzer analyzer;
-  return NoOpRemover(&analyzer)(std::move(stmt));
-}
+Stmt RemoveNoOp(Stmt stmt) { return NoOpRemover::Apply(std::move(stmt)); }
 
 namespace transform {
 
@@ -219,7 +236,7 @@ Pass RemoveNoOp() {
     arith::Analyzer analyzer;
 
     auto* n = f.CopyOnWrite();
-    n->body = NoOpRemover(&analyzer)(std::move(n->body));
+    n->body = NoOpRemover::Apply(std::move(n->body));
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.RemoveNoOp", {});
