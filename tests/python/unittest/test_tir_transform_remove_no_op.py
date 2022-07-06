@@ -450,5 +450,27 @@ class TestRemoveWritingOfKnownValue(BaseBeforeAfter):
             A[i] = i
 
 
+class TestKeepOneOfDuplicateLoops(BaseBeforeAfter):
+    """Must not reason based on a touch point after removing it.
+
+    If the first loop is removed because it is overwritten by the
+    second loop, and the second loop is removed because it writes the
+    same value as the first loop, the overall transformation is no
+    longer valid.  In this case, only one of the two should be
+    removed.
+    """
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            A[i] = i
+
+        for i in T.serial(16):
+            A[i] = i
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            A[i] = i
+
+
 if __name__ == "__main__":
     tvm.testing.main()
