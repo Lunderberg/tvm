@@ -472,5 +472,80 @@ class TestKeepOneOfDuplicateLoops(BaseBeforeAfter):
             A[i] = i
 
 
+class TestRemoveEmptyTemporary(BaseBeforeAfter):
+    """An allocation with a no-op body is a no-op."""
+
+    def before():
+        A = T.allocate([16], "int32", "local")
+        T.evaluate(0)
+
+    def expected():
+        T.evaluate(0)
+
+
+class TestRemoveUnusedTemporary(BaseBeforeAfter):
+    """An unused allocation is a no-op."""
+
+    def before(A: T.Buffer[16, "int32"]):
+        B = T.allocate([16], "int32", "local")
+        for i in T.serial(16):
+            A[i] = 1
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            A[i] = 1
+
+
+class TestRemoveUnusedWriteIntoTemporary(BaseBeforeAfter):
+    """A write that only impacts a temporary allocation is a no-op."""
+
+    def before():
+        A = T.allocate([16], "int32", "local")
+        for i in T.serial(16):
+            A[i] = 0
+
+    def expected():
+        T.evaluate(0)
+
+
+class TestKeepUsedWriteIntoTemporary(BaseBeforeAfter):
+    """A write into a temporary that is used later must be kept."""
+
+    def before(B: T.Buffer[16, "int32"]):
+        A = T.allocate([16], "int32", "local")
+        for i in T.serial(16):
+            A[i] = 0
+
+        for i in T.serial(16):
+            B[i] = A[i]
+
+    expected = before
+
+
+class TestRemoveWriteIntoTemporary(BaseBeforeAfter):
+    """A write that only impacts a temporary allocation is a no-op."""
+
+    def before(A: T.Buffer[16, "int32"], C: T.Buffer[1, "int32"]):
+        B = T.allocate([16], "int32", "local")
+        for i in T.serial(16):
+            B[i] = A[i]
+
+        C[0] = 0
+        for i in T.serial(16):
+            C[0] = C[0] + B[i]
+
+        for i in T.serial(16):
+            B[i] = 0
+
+    def expected(A: T.Buffer[16, "int32"], C: T.Buffer[1, "int32"]):
+        B = T.allocate([16], "int32", "local")
+        for i in T.serial(16):
+            B[i] = A[i]
+
+        C[0] = 0
+        for i in T.serial(16):
+            C[0] = C[0] + B[i]
+
+
 if __name__ == "__main__":
     tvm.testing.main()
