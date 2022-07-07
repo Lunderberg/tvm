@@ -38,7 +38,7 @@ Stmt IRMutatorWithAnalyzer::VisitStmt(const Stmt& stmt) {
   // VisitStmt_(const BufferStoreNode*), so that this occurs after any
   // modification by subclasses.
   if (auto* op = output.as<BufferStoreNode>()) {
-    analyzer_->KnownBufferValue(op->buffer, op->indices, op->value);
+    analyzer_->constraint_tracker.KnownBufferValue(op->buffer, op->indices, op->value);
   }
 
   return output;
@@ -76,7 +76,12 @@ Stmt IRMutatorWithAnalyzer::VisitStmt_(const LetStmtNode* op) {
 
 Stmt IRMutatorWithAnalyzer::VisitStmt_(const IfThenElseNode* op) {
   PrimExpr condition = this->VisitExpr(op->condition);
-  PrimExpr real_condition = condition;
+
+  PrimExpr real_condition;
+  {
+    With<arith::AllowBufferValueSimplificationContext> allow(analyzer_);
+    real_condition = this->VisitExpr(condition);
+  }
   static auto op_likely = Op::Get("tir.likely");
 
   if (auto call = condition.as<CallNode>()) {
@@ -119,7 +124,7 @@ Stmt IRMutatorWithAnalyzer::VisitStmt_(const EvaluateNode* op) {
 
   if (auto* call = output->value.as<CallNode>()) {
     if (call->op.same_as(builtin::assume())) {
-      analyzer_->Assume(call->args[0]);
+      analyzer_->constraint_tracker.Assume(call->args[0]);
     }
   }
 

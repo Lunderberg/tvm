@@ -116,6 +116,11 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
   }
 
   Stmt VisitStmt_(const IfThenElseNode* op) {
+    // PrimExpr cond;
+    // {
+    //   With<arith::AllowBufferValueSimplificationContext> allow(analyzer_);
+    //   cond = analyzer_->Simplify(Substitute(op->condition, non_inlined_bindings_));
+    // }
     PrimExpr cond = analyzer_->Simplify(Substitute(op->condition, non_inlined_bindings_));
     if (const int64_t* as_int = as_const_int(cond)) {
       if (*as_int) {

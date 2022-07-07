@@ -71,21 +71,6 @@ void Analyzer::Bind(const Map<Var, Range>& variables, bool allow_override) {
   }
 }
 
-void Analyzer::Assume(PrimExpr expr) {
-  this->constraint_tracker.Assume(expr);
-  // this->rewrite_simplify.Assume(expr);
-
-  // this->const_int_bound.Assume(expr);
-  // this->modular_set.Assume(expr);
-  // this->rewrite_simplify.Assume(expr);
-  // this->canonical_simplify.Assume(expr);
-  // this->int_set.Assume(expr);
-}
-
-void Analyzer::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value) {
-  this->constraint_tracker.KnownBufferValue(buf, indices, value);
-}
-
 void ConstraintContext::EnterWithScope() {
   ICHECK(recovery_functions_.size() == 0);
   // entering the scope.
@@ -107,10 +92,24 @@ void ConstraintContext::ExitWithScope() {
   }
 }
 
+void AllowBufferValueSimplificationContext::EnterWithScope() {
+  ICHECK(recovery_function_ == nullptr);
+  ICHECK(analyzer_);
+  recovery_function_ = analyzer_->constraint_tracker.EnableBufferValueSimplifications();
+}
+
+void AllowBufferValueSimplificationContext::ExitWithScope() {
+  ICHECK(recovery_function_ != nullptr);
+  recovery_function_();
+  recovery_function_ = nullptr;
+}
+
 bool Analyzer::CanProveGreaterEqual(const PrimExpr& expr, int64_t lower_bound) {
   if (const auto* ptr = expr.as<tir::IntImmNode>()) {
     return ptr->value >= lower_bound;
   }
+
+  With<arith::AllowBufferValueSimplificationContext> allow(this);
   auto bd = this->const_int_bound(this->rewrite_simplify(expr));
   if (bd->min_value >= lower_bound) return true;
   return false;
@@ -120,12 +119,15 @@ bool Analyzer::CanProveLess(const PrimExpr& expr, int64_t upper_bound) {
   if (const auto* ptr = expr.as<tir::IntImmNode>()) {
     return ptr->value < upper_bound;
   }
+
+  With<arith::AllowBufferValueSimplificationContext> allow(this);
   auto bd = this->const_int_bound(this->rewrite_simplify(expr));
   if (bd->max_value < upper_bound) return true;
   return false;
 }
 
 bool Analyzer::CanProveEqual(const PrimExpr& lhs, const PrimExpr& rhs) {
+  With<arith::AllowBufferValueSimplificationContext> allow(this);
   const auto* clhs = lhs.as<IntImmNode>();
   const auto* crhs = rhs.as<IntImmNode>();
   if (clhs && crhs) return clhs->value == crhs->value;
@@ -141,6 +143,7 @@ bool Analyzer::CanProve(const PrimExpr& expr) {
     return ptr->value != 0;
   }
 
+  With<arith::AllowBufferValueSimplificationContext> allow(this);
   PrimExpr simplified = Simplify(expr);
   const int64_t* as_int = tir::as_const_int(simplified);
   return as_int && *as_int;

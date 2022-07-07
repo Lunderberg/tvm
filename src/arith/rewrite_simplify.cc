@@ -252,14 +252,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
   return ret;
 }
 
-void RewriteSimplifier::Impl::Assume(const PrimExpr& constraint) {
-  std::vector<PrimExpr> new_global_literals;
-  for (const PrimExpr& subconstraint : ExtractConstraints(constraint)) {
-    if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
-    }
-  }
-}
-
 std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& constraint) {
   size_t old_literal_size = scoped_constraints_.size();
   // we will compare the already simplified result with the constraint,
@@ -1788,8 +1780,6 @@ PrimExpr RewriteSimplifier::operator()(const PrimExpr& expr) {
 void RewriteSimplifier::Update(const Var& var, const PrimExpr& info, bool allow_override) {
   impl_->Update(var, info, allow_override);
 }
-
-void RewriteSimplifier::Assume(const PrimExpr& known_true) { impl_->Assume(known_true); }
 
 std::function<void()> RewriteSimplifier::EnterConstraint(const PrimExpr& constraint) {
   return impl_->EnterConstraint(constraint);

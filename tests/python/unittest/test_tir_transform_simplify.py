@@ -712,8 +712,8 @@ class TestNoSimplifyFromScopedInputAssumption(BaseBeforeAfter):
     expected = before
 
 
-class TestSimplifyUsingBufferValue(BaseBeforeAfter):
-    """A BufferStore may be used to simplify a BufferLoad that follows"""
+class TestSimplifyConditionalUsingBufferValue(BaseBeforeAfter):
+    """Simplify a conditional using the known value in the buffer"""
 
     def before(A: T.Buffer[1, "int32"]):
         A[0] = 0
@@ -724,6 +724,46 @@ class TestSimplifyUsingBufferValue(BaseBeforeAfter):
     def expected(A: T.Buffer[1, "int32"]):
         A[0] = 0
         A[0] = 42
+
+
+class TestKeepExpressionSimplifyUsingBufferValue(BaseBeforeAfter):
+    """Do not simplify expressions in general using known values in the buffer
+
+    For now, because this is equivalent to inlining, preventing this
+    usage from occurring.  Known buffer values may be used to prove
+    conditionals, but should not be used for other simplifications.
+    """
+
+    def before(A: T.Buffer[1, "int32"], B: T.Buffer[1, "int32"]):
+        A[0] = 0
+        B[0] = A[0]
+
+    expected = before
+
+
+class TestSimplifyConditionalInLoopUsingBufferValue(BaseBeforeAfter):
+    """Simplify a conditional using the known value in the buffer
+
+    Like TestSimplifyConditionalUsingBufferValue, but the value used
+    to simplify is set in a previous loop.
+    """
+
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            A[i] = i
+
+        for j in T.serial(16):
+            if A[j] == j:
+                B[j] = 42
+            else:
+                B[j] = 100
+
+    def expected(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            A[i] = i
+
+        for j in T.serial(16):
+            B[j] = 42
 
 
 if __name__ == "__main__":

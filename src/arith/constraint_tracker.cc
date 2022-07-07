@@ -59,6 +59,17 @@ class ConstraintTracker::Impl {
   // NullOpt.
   Optional<PrimExpr> KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices) const;
 
+  /* \brief Enter a context in which the buffer values may be used for simplifications
+   *
+   * To avoid unexpected conflicts or accidental inlining,
+   * simplifications that use a known buffer value must be explicitly
+   * enabled.  Currently, they are enabled when attempting to prove an
+   * expression, but not for general simplifications.
+   *
+   * \returns A callback to restore the previous state
+   */
+  std::function<void()> EnableBufferValueSimplifications();
+
  private:
   PrimExpr CurrentScopeConstraints() const;
 
@@ -109,6 +120,11 @@ class ConstraintTracker::Impl {
   std::vector<Constraint> global_constraints_;
   std::vector<BufferConstraint> scoped_buffer_constraints_;
   std::vector<BufferConstraint> global_buffer_constraints_;
+
+  // If enabled, allow simplifications that rely on propagating the
+  // buffer value.  Currently disabled by default in order to
+  // gradually test the implications of this change.
+  bool allow_buffer_value_simplifications_{false};
 };
 
 ///////////////////////////////////////////////////////////////////
@@ -140,6 +156,10 @@ Optional<PrimExpr> ConstraintTracker::KnownBufferValue(tir::Buffer buf, Array<Pr
 }
 
 std::vector<PrimExpr> ConstraintTracker::CurrentlyKnown() const { return impl_->CurrentlyKnown(); }
+
+std::function<void()> ConstraintTracker::EnableBufferValueSimplifications() {
+  return impl_->EnableBufferValueSimplifications();
+}
 
 ///////////////////////////////////////////////////////////////////
 //        Implementation of ConstraintTracker::Impl methods      //
@@ -220,6 +240,10 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
 
 Optional<PrimExpr> ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf,
                                                              Array<PrimExpr> indices) const {
+  if (!allow_buffer_value_simplifications_) {
+    return NullOpt;
+  }
+
   for (const auto& constraint : global_buffer_constraints_) {
     if (Optional<PrimExpr> value = constraint.KnownValue(buf, indices, parent_)) {
       return value;
@@ -261,6 +285,12 @@ std::vector<PrimExpr> ConstraintTracker::Impl::CurrentlyKnown() const {
     process(constraint);
   }
   return output;
+}
+
+std::function<void()> ConstraintTracker::Impl::EnableBufferValueSimplifications() {
+  bool current_state = allow_buffer_value_simplifications_;
+  allow_buffer_value_simplifications_ = true;
+  return [this, current_state]() { allow_buffer_value_simplifications_ = current_state; };
 }
 
 }  // namespace arith

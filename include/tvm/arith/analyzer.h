@@ -467,6 +467,43 @@ class ConstraintContext {
 };
 
 /*!
+ * \brief Context in which known buffer values may be substituted in
+ *
+ * \code
+ *
+ *  arith::Analyzer analyzer;
+ *  analyzer.constraint_tracker.KnownBufferValue(buf, {0, 3}, 42);
+ *  PrimExpr expr = BufferLoad(buf, {0, 3});
+ *
+ *  {
+ *    With<arith::AllowBufferValueSimplificationContext> scope(&analyzer);
+ *    ICHECK(is_const_int(analyzer.Simplify(expr), 42));
+ *  }
+ *  // simplifications using known buffer values no longer in effect.
+ *  ICHECK(!is_const_int(analyzer.Simplify(expr), 42));
+ *
+ * \endcode
+ */
+class AllowBufferValueSimplificationContext {
+ private:
+  // declare friend to enable with.
+  friend class With<AllowBufferValueSimplificationContext>;
+  /*!
+   * \brief Construct a constraint context.
+   * \param analyzer The analyzer.
+   */
+  AllowBufferValueSimplificationContext(Analyzer* analyzer) : analyzer_(analyzer) {}
+  // enter the scope.
+  void EnterWithScope();
+  // exit the scope.
+  void ExitWithScope();
+  /*! \brief The analyzer */
+  Analyzer* analyzer_;
+  /*! \brief function to be called in recovery */
+  std::function<void()> recovery_function_;
+};
+
+/*!
  * \brief Integer set analyzer.
  */
 class IntSetAnalyzer {
@@ -526,8 +563,16 @@ class ConstraintTracker {
   // calling the provided callback.
   std::function<void()> EnterScopedConstraint(PrimExpr constraint);
 
-  // Assume the statement is true, given any currently active scoped
-  // constraints.
+  /*!
+   * \brief Provide a known true statement to the analyzers
+   *
+   * A pure expression may be assumed to be true for the remaining
+   * lifetime of the analyzer.  An expression with `SideEffect(expr)
+   * >= SideEffectKind::kRead` may be invalidated by later calls to
+   * `KnownBufferValue`.
+   *
+   * \param expr An expression that is known to be true.
+   */
   void Assume(PrimExpr constraint);
 
   // Provide a known value at the specified indices in a buffer,
@@ -542,6 +587,17 @@ class ConstraintTracker {
   // Return a collection of expressions that are known to be true,
   // containing any scoped and global constraints.
   std::vector<PrimExpr> CurrentlyKnown() const;
+
+  /* \brief Enter a context in which the buffer values may be used for simplifications
+   *
+   * To avoid unexpected conflicts or accidental inlining,
+   * simplifications that use a known buffer value must be explicitly
+   * enabled.  Currently, they are enabled when attempting to prove an
+   * expression, but not for general simplifications.
+   *
+   * \returns A callback to restore the previous state
+   */
+  std::function<void()> EnableBufferValueSimplifications();
 
  private:
   friend class Analyzer;
@@ -620,28 +676,6 @@ class TVM_DLL Analyzer {
    *        between variables.
    */
   void Bind(const Map<Var, Range>& variables, bool allow_override = false);
-  /*!
-   * \brief Provide a known true statement to the analyzers
-   *
-   * A pure expression may be assumed to be true for the remaining
-   * lifetime of the analyzer.  An expression with `SideEffect(expr)
-   * >= SideEffectKind::kRead` may be invalidated by later calls to
-   * `KnownBufferValue`.
-   *
-   * \param expr An expression that is known to be true.
-   */
-  void Assume(PrimExpr expr);
-  /*! \brief Provide a known value of a buffer to the analyzers
-   *
-   * If the value provided conflicts with earlier values provided by
-   * `KnownBufferValue` or `Assume`, the earlier known values are
-   * overwritten.
-   *
-   * \param buf The Buffer whose values are being altered
-   *
-   * \param indices The indices at which the Buffer is being
-   */
-  void KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value);
   /*!
    * \brief Whether can we prove expr >= val.
 
