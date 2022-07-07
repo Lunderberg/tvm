@@ -103,8 +103,10 @@ std::vector<PrimExpr> ConstraintTracker::Impl::CurrentlyKnown() const {
   std::vector<PrimExpr> output;
 
   auto process = [&](const auto& constraint) {
-    output.push_back(constraint.expr);
-    output.push_back(tir::Not(constraint.negation));
+    if (constraint.side_effect <= tir::CallEffectKind::kPure) {
+      output.push_back(constraint.expr);
+      output.push_back(tir::Not(constraint.negation));
+    }
   };
 
   for (const auto& constraint : global_constraints_) {
