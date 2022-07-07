@@ -1766,6 +1766,13 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LetNode* op) {
   }
 }
 
+PrimExpr RewriteSimplifier::Impl::VisitExpr_(const BufferLoadNode* op) {
+  if (auto opt = analyzer_->constraint_tracker.KnownBufferValue(op->buffer, op->indices)) {
+    return opt.value();
+  }
+  return IRMutatorWithAnalyzer::VisitExpr_(op);
+}
+
 PrimExpr RewriteSimplifier::operator()(const PrimExpr& expr) {
   // Run simplification in post order
   PrimExpr res = expr;

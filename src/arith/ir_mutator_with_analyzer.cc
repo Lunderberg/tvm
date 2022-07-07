@@ -31,6 +31,19 @@ namespace arith {
 
 using namespace tir;
 
+Stmt IRMutatorWithAnalyzer::VisitStmt(const Stmt& stmt) {
+  Stmt output = StmtExprMutator::VisitStmt(stmt);
+
+  // Provide this value to the analyzer here instead of in
+  // VisitStmt_(const BufferStoreNode*), so that this occurs after any
+  // modification by subclasses.
+  if (auto* op = output.as<BufferStoreNode>()) {
+    analyzer_->KnownBufferValue(op->buffer, op->indices, op->value);
+  }
+
+  return output;
+}
+
 Stmt IRMutatorWithAnalyzer::VisitStmt_(const ForNode* op) {
   analyzer_->Bind(op->loop_var, Range::FromMinExtent(op->min, op->extent));
   return StmtExprMutator::VisitStmt_(op);

@@ -530,13 +530,22 @@ class ConstraintTracker {
   // constraints.
   void Assume(PrimExpr constraint);
 
+  // Provide a known value at the specified indices in a buffer,
+  // removing any previous assumptions about the value at these
+  // indices.
+  void KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value);
+
+  // Return a known value at the specified indices, if a known value
+  // exists.
+  Optional<PrimExpr> KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices);
+
   // Return a collection of expressions that are known to be true,
   // containing any scoped and global constraints.
   std::vector<PrimExpr> CurrentlyKnown() const;
 
  private:
   friend class Analyzer;
-  ConstraintTracker();
+  ConstraintTracker(Analyzer* parent);
   TVM_DLL ~ConstraintTracker();
   class Impl;
   /*! \brief Internal impl */
@@ -614,10 +623,25 @@ class TVM_DLL Analyzer {
   /*!
    * \brief Provide a known true statement to the analyzers
    *
-   * \param expr An expression that is known to be true.  The
-   * expression must not have side effects.
+   * A pure expression may be assumed to be true for the remaining
+   * lifetime of the analyzer.  An expression with `SideEffect(expr)
+   * >= SideEffectKind::kRead` may be invalidated by later calls to
+   * `KnownBufferValue`.
+   *
+   * \param expr An expression that is known to be true.
    */
   void Assume(PrimExpr expr);
+  /*! \brief Provide a known value of a buffer to the analyzers
+   *
+   * If the value provided conflicts with earlier values provided by
+   * `KnownBufferValue` or `Assume`, the earlier known values are
+   * overwritten.
+   *
+   * \param buf The Buffer whose values are being altered
+   *
+   * \param indices The indices at which the Buffer is being
+   */
+  void KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value);
   /*!
    * \brief Whether can we prove expr >= val.
 

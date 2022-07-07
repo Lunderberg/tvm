@@ -36,7 +36,8 @@ Analyzer::Analyzer()
       modular_set(this),
       rewrite_simplify(this),
       canonical_simplify(this),
-      int_set(this) {}
+      int_set(this),
+      constraint_tracker(this) {}
 
 void Analyzer::Bind(const Var& var, const PrimExpr& expr, bool allow_override) {
   PrimExpr new_expr = expr;
@@ -79,6 +80,10 @@ void Analyzer::Assume(PrimExpr expr) {
   // this->rewrite_simplify.Assume(expr);
   // this->canonical_simplify.Assume(expr);
   // this->int_set.Assume(expr);
+}
+
+void Analyzer::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value) {
+  this->constraint_tracker.KnownBufferValue(buf, indices, value);
 }
 
 void ConstraintContext::EnterWithScope() {
