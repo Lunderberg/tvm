@@ -48,6 +48,7 @@ class ConstraintTracker::Impl {
     Constraint(PrimExpr expr);
 
     PrimExpr expr;
+    PrimExpr negation;
     tir::CallEffectKind side_effect;
   };
 
@@ -72,7 +73,12 @@ void ConstraintTracker::Assume(PrimExpr constraint) { impl_->Assume(std::move(co
 std::vector<PrimExpr> ConstraintTracker::CurrentlyKnown() const { return impl_->CurrentlyKnown(); }
 
 ConstraintTracker::Impl::Constraint::Constraint(PrimExpr expr)
-    : expr(expr), side_effect(tir::SideEffect(expr)) {}
+    : expr(expr), side_effect(tir::SideEffect(expr)) {
+  // Deliberately not using the parent analyzer, because we don't want
+  // to simplify out any scoped constraints already provided.
+  arith::Analyzer analyzer;
+  negation = analyzer.rewrite_simplify(tir::Not(expr));
+}
 
 void ConstraintTracker::Impl::Assume(PrimExpr constraint) {
   global_constraints_.push_back(constraint);
@@ -95,11 +101,17 @@ std::function<void()> ConstraintTracker::Impl::EnterScopedConstraint(PrimExpr co
 
 std::vector<PrimExpr> ConstraintTracker::Impl::CurrentlyKnown() const {
   std::vector<PrimExpr> output;
-  for (const auto& constraint : global_constraints_) {
+
+  auto process = [&](const auto& constraint) {
     output.push_back(constraint.expr);
+    output.push_back(tir::Not(constraint.negation));
+  };
+
+  for (const auto& constraint : global_constraints_) {
+    process(constraint);
   }
   for (const auto& constraint : scoped_constraints_) {
-    output.push_back(constraint.expr);
+    process(constraint);
   }
   return output;
 }
