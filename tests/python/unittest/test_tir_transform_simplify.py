@@ -712,5 +712,19 @@ class TestNoSimplifyFromScopedInputAssumption(BaseBeforeAfter):
     expected = before
 
 
+class TestSimplifyUsingBufferValue(BaseBeforeAfter):
+    """A BufferStore may be used to simplify a BufferLoad that follows"""
+
+    def before(A: T.Buffer[1, "int32"]):
+        A[0] = 0
+
+        if A[0] == 0:
+            A[0] = 42
+
+    def expected(A: T.Buffer[1, "int32"]):
+        A[0] = 0
+        A[0] = 42
+
+
 if __name__ == "__main__":
     tvm.testing.main()
