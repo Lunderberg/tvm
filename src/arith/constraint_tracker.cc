@@ -23,6 +23,7 @@
  */
 #include <tvm/arith/analyzer.h>
 #include <tvm/tir/analysis.h>
+#include <tvm/tir/op.h>
 
 #include "constraint_extract.h"
 
@@ -44,6 +45,13 @@ class ConstraintTracker::Impl {
   std::vector<PrimExpr> CurrentlyKnown() const;
 
  private:
+  /* \brief Perform any context-free simplifications
+   *
+   * Deliberately not using the parent analyzer, because we don't want
+   * to simplify out any scoped constraints already provided.
+   */
+  static PrimExpr Simplify(PrimExpr expr);
+
   struct Constraint {
     Constraint(PrimExpr expr);
 
@@ -55,6 +63,10 @@ class ConstraintTracker::Impl {
   std::vector<Constraint> scoped_constraints_;
   std::vector<Constraint> global_constraints_;
 };
+
+///////////////////////////////////////////////////////////////////
+// Exposing ConstraintTracker::Impl methods to ConstraintTracker //
+///////////////////////////////////////////////////////////////////
 
 ConstraintTracker::ConstraintTracker() { impl_ = new ConstraintTracker::Impl(); }
 
@@ -72,15 +84,24 @@ void ConstraintTracker::Assume(PrimExpr constraint) { impl_->Assume(std::move(co
 
 std::vector<PrimExpr> ConstraintTracker::CurrentlyKnown() const { return impl_->CurrentlyKnown(); }
 
+///////////////////////////////////////////////////////////////////
+//        Implementation of ConstraintTracker::Impl methods      //
+///////////////////////////////////////////////////////////////////
+
+PrimExpr ConstraintTracker::Impl::Simplify(PrimExpr expr) {
+  arith::Analyzer analyzer;
+  return analyzer.rewrite_simplify(std::move(expr));
+}
+
 ConstraintTracker::Impl::Constraint::Constraint(PrimExpr expr)
     : expr(expr), side_effect(tir::SideEffect(expr)) {
-  // Deliberately not using the parent analyzer, because we don't want
-  // to simplify out any scoped constraints already provided.
-  arith::Analyzer analyzer;
-  negation = analyzer.rewrite_simplify(tir::Not(expr));
+  negation = Simplify(tir::Not(expr));
 }
 
 void ConstraintTracker::Impl::Assume(PrimExpr constraint) {
+  for (const auto& scoped_constraint : scoped_constraints_) {
+    constraint = constraint && scoped_constraint.negation;
+  }
   global_constraints_.push_back(constraint);
 }
 
