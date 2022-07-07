@@ -23,6 +23,7 @@
 #include "ir_mutator_with_analyzer.h"
 
 #include <tvm/tir/analysis.h>
+#include <tvm/tir/builtin.h>
 #include <tvm/tir/op.h>
 
 namespace tvm {
@@ -98,6 +99,18 @@ Stmt IRMutatorWithAnalyzer::VisitStmt_(const IfThenElseNode* op) {
     n->else_case = std::move(else_case);
     return Stmt(n);
   }
+}
+
+Stmt IRMutatorWithAnalyzer::VisitStmt_(const EvaluateNode* op) {
+  Evaluate output = Downcast<Evaluate>(StmtExprMutator::VisitStmt_(op));
+
+  if (auto* call = output->value.as<CallNode>()) {
+    if (call->op.same_as(builtin::assume())) {
+      analyzer_->Assume(call->args[0]);
+    }
+  }
+
+  return std::move(output);
 }
 
 Stmt IRMutatorWithAnalyzer::VisitStmt_(const AttrStmtNode* op) {

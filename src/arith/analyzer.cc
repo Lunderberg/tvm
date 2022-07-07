@@ -22,8 +22,11 @@
  */
 #include <tvm/arith/analyzer.h>
 #include <tvm/runtime/registry.h>
+#include <tvm/tir/analysis.h>
 #include <tvm/tir/expr.h>
 #include <tvm/tir/op.h>
+
+#include "constraint_extract.h"
 
 namespace tvm {
 namespace arith {
@@ -67,6 +70,17 @@ void Analyzer::Bind(const Map<Var, Range>& variables, bool allow_override) {
   }
 }
 
+void Analyzer::Assume(PrimExpr expr) {
+  this->constraint_tracker.Assume(expr);
+  // this->rewrite_simplify.Assume(expr);
+
+  // this->const_int_bound.Assume(expr);
+  // this->modular_set.Assume(expr);
+  // this->rewrite_simplify.Assume(expr);
+  // this->canonical_simplify.Assume(expr);
+  // this->int_set.Assume(expr);
+}
+
 void ConstraintContext::EnterWithScope() {
   ICHECK(recovery_functions_.size() == 0);
   // entering the scope.
@@ -75,6 +89,7 @@ void ConstraintContext::EnterWithScope() {
   recovery_functions_.push_back(analyzer_->rewrite_simplify.EnterConstraint(constraint_));
   recovery_functions_.push_back(analyzer_->int_set.EnterConstraint(constraint_));
   recovery_functions_.push_back(analyzer_->transitive_comparisons.EnterConstraint(constraint_));
+  recovery_functions_.push_back(analyzer_->constraint_tracker.EnterScopedConstraint(constraint_));
 }
 
 void ConstraintContext::ExitWithScope() {

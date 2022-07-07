@@ -75,6 +75,8 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   PrimExpr VisitExpr_(const CastNode* op) override;
   PrimExpr VisitExpr_(const LetNode* op) override;
 
+  void Assume(const PrimExpr& constraint);
+
   std::function<void()> EnterConstraint(const PrimExpr& constraint);
 
   /*! \brief Enable an optional extension or extensions
@@ -93,7 +95,12 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   // internal variable map
   std::unordered_map<Var, PrimExpr, ObjectPtrHash, ObjectPtrEqual> var_map_;
 
-  std::vector<PrimExpr> literal_constraints_;
+  struct Constraint {
+    PrimExpr expr;
+    CallEffectKind side_effects;
+  };
+  std::vector<PrimExpr> scoped_constraints_;
+  std::vector<PrimExpr> global_constraints_;
 
   // Optionally enabled extensions
   Extension enabled_extensions_{kNone};

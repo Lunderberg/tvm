@@ -252,14 +252,22 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
   return ret;
 }
 
+void RewriteSimplifier::Impl::Assume(const PrimExpr& constraint) {
+  std::vector<PrimExpr> new_global_literals;
+  for (const PrimExpr& subconstraint : ExtractConstraints(constraint)) {
+    if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
+    }
+  }
+}
+
 std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& constraint) {
-  size_t old_literal_size = literal_constraints_.size();
+  size_t old_literal_size = scoped_constraints_.size();
   // we will compare the already simplified result with the constraint,
   // so simplify the constraint as well
   PrimExpr new_constraint = operator()(constraint);
   for (const PrimExpr& subconstraint : ExtractConstraints(new_constraint)) {
     if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
-      literal_constraints_.push_back(subconstraint);
+      scoped_constraints_.push_back(subconstraint);
       // We could apply this during TryMatchLiteralConstraint, but
       // that would require performing a rewrite of each expression
       // being checked.  This way, we only apply a rewrite for each
@@ -271,13 +279,13 @@ std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& c
         negation = subconstraint == make_zero(subconstraint.dtype());
       }
       negation = operator()(negation);
-      literal_constraints_.push_back(Not(negation));
+      scoped_constraints_.push_back(Not(negation));
     }
   }
-  size_t new_literal_size = literal_constraints_.size();
+  size_t new_literal_size = scoped_constraints_.size();
   auto frecover = [old_literal_size, new_literal_size, this]() {
-    ICHECK_EQ(literal_constraints_.size(), new_literal_size);
-    literal_constraints_.resize(old_literal_size);
+    ICHECK_EQ(scoped_constraints_.size(), new_literal_size);
+    scoped_constraints_.resize(old_literal_size);
   };
   return frecover;
 }
@@ -1338,7 +1346,7 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryMatchLiteralConstraint(const Prim
   PrimExpr negation = Not(expr);
 
   ExprDeepEqual expr_equal;
-  for (const auto& constraint : literal_constraints_) {
+  for (const auto& constraint : analyzer_->constraint_tracker.CurrentlyKnown()) {
     if (expr_equal(constraint, expr)) {
       return make_const(expr->dtype, true);
     }
@@ -1773,6 +1781,8 @@ PrimExpr RewriteSimplifier::operator()(const PrimExpr& expr) {
 void RewriteSimplifier::Update(const Var& var, const PrimExpr& info, bool allow_override) {
   impl_->Update(var, info, allow_override);
 }
+
+void RewriteSimplifier::Assume(const PrimExpr& known_true) { impl_->Assume(known_true); }
 
 std::function<void()> RewriteSimplifier::EnterConstraint(const PrimExpr& constraint) {
   return impl_->EnterConstraint(constraint);

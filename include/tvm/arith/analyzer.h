@@ -520,6 +520,29 @@ class IntSetAnalyzer {
   Impl* impl_;
 };
 
+class ConstraintTracker {
+ public:
+  // Enter a scoped constraint.  This constraint may be exited by
+  // calling the provided callback.
+  std::function<void()> EnterScopedConstraint(PrimExpr constraint);
+
+  // Assume the statement is true, given any currently active scoped
+  // constraints.
+  void Assume(PrimExpr constraint);
+
+  // Return a collection of expressions that are known to be true,
+  // containing any scoped and global constraints.
+  std::vector<PrimExpr> CurrentlyKnown() const;
+
+ private:
+  friend class Analyzer;
+  ConstraintTracker();
+  TVM_DLL ~ConstraintTracker();
+  class Impl;
+  /*! \brief Internal impl */
+  Impl* impl_;
+};
+
 /*!
  * \brief Analyzer that contains bunch of sub-analyzers.
  *
@@ -549,6 +572,8 @@ class TVM_DLL Analyzer {
   IntSetAnalyzer int_set;
   /*! \brief sub-analyzer transitive comparisons */
   TransitiveComparisonAnalyzer transitive_comparisons;
+  /*! \brief sub-analyzer: Track currently active constraints */
+  ConstraintTracker constraint_tracker;
   /*! \brief constructor */
   Analyzer();
   /*!
@@ -586,6 +611,13 @@ class TVM_DLL Analyzer {
    *        between variables.
    */
   void Bind(const Map<Var, Range>& variables, bool allow_override = false);
+  /*!
+   * \brief Provide a known true statement to the analyzers
+   *
+   * \param expr An expression that is known to be true.  The
+   * expression must not have side effects.
+   */
+  void Assume(PrimExpr expr);
   /*!
    * \brief Whether can we prove expr >= val.
 
