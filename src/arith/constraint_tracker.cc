@@ -24,6 +24,8 @@
 #include <tvm/arith/analyzer.h>
 #include <tvm/tir/analysis.h>
 
+#include "constraint_extract.h"
+
 namespace tvm {
 namespace arith {
 
@@ -78,6 +80,11 @@ void ConstraintTracker::Impl::Assume(PrimExpr constraint) {
 
 std::function<void()> ConstraintTracker::Impl::EnterScopedConstraint(PrimExpr constraint) {
   size_t prev_scoped_constraints = scoped_constraints_.size();
+
+  for (const PrimExpr& subconstraint : ExtractConstraints(constraint)) {
+    scoped_constraints_.push_back(subconstraint);
+  }
+
   size_t new_scoped_constraints = scoped_constraints_.size();
   return [this, prev_scoped_constraints, new_scoped_constraints]() {
     ICHECK_EQ(scoped_constraints_.size(), new_scoped_constraints);
