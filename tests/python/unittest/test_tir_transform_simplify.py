@@ -699,5 +699,18 @@ class TestSimplifyInputAssumption(BaseBeforeAfter):
         A[0] = 42
 
 
+class TestNoSimplifyFromScopedInputAssumption(BaseBeforeAfter):
+    """A T.assume inside a scope may not apply outside that scope"""
+
+    def before(A: T.Buffer[1, "int32"], n: T.int32, m: T.int32):
+        if m == 0:
+            T.assume(n == 0)
+
+        if n == 0:
+            A[0] = 42
+
+    expected = before
+
+
 if __name__ == "__main__":
     tvm.testing.main()
