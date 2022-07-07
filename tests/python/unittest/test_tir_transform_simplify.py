@@ -686,5 +686,18 @@ class TestSuppressTransitivelyProvableCondition(BaseBeforeAfter):
     expected = before
 
 
+class TestSimplifyInputAssumption(BaseBeforeAfter):
+    """A T.assume annotation may be used to simplify"""
+
+    def before(A: T.Buffer[1, "int32"], n: T.int32):
+        T.assume(n == 0)
+        if n == 0:
+            A[0] = 42
+
+    def expected(A: T.Buffer[1, "int32"], n: T.int32):
+        T.assume(n == 0)
+        A[0] = 42
+
+
 if __name__ == "__main__":
     tvm.testing.main()
