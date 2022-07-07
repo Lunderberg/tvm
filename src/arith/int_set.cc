@@ -814,7 +814,9 @@ IntSet IntSet::FromRange(Range r) {
   if (is_one(r->extent)) {
     return IntSet::SinglePoint(r->min);
   }
-  return IntervalSet(r->min, r->extent + r->min - 1);
+
+  PrimExpr max_value = is_pos_inf(r->extent) ? r->extent : r->extent + r->min - 1;
+  return IntervalSet(r->min, max_value);
 }
 
 bool IntSet::MatchRange(const Range& b) const {
