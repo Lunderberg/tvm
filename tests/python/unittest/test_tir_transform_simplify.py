@@ -799,7 +799,7 @@ class TestSimplifyUsingBufferAssumptionInLoop(BaseBeforeAfter):
             A[i] = 0
 
 
-class TestSimplifyUsingPartialBufferAssumptionInLoop(BaseBeforeAfter):
+class TestSimplifyUsingPartiallyKnownBufferConditional(BaseBeforeAfter):
     """An assumption about buffer contents may apply to only part of a buffer"""
 
     def before(A: T.Buffer[16, "int32"]):
@@ -816,6 +816,32 @@ class TestSimplifyUsingPartialBufferAssumptionInLoop(BaseBeforeAfter):
         for i in T.serial(16):
             if 14 <= i:
                 T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if 14 <= i:
+                A[i] = 42
+
+
+class TestSimplifyUsingPartiallyKnownBufferExpression(BaseBeforeAfter):
+    """An assumption about buffer contents may apply to only part of a buffer
+
+    Like TestSimplifyUsingPartiallyKnownBufferConditional, but the
+    conditional is expressed as part of T.assume, instead of in the
+    control flow.
+    """
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(i < 14 or A[i] == 0)
+
+        for i in T.serial(16):
+            if i >= 14:
+                if A[i] == 0:
+                    A[i] = 42
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(i < 14 or A[i] == 0)
 
         for i in T.serial(16):
             if 14 <= i:
