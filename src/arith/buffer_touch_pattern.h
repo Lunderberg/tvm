@@ -69,6 +69,14 @@ class Predicate : public ParametrizedExpression {
 
   friend std::ostream& operator<<(std::ostream& os, const Predicate& expr);
 
+  /* \brief Checks if this Predicate can be statically proven
+   *
+   * This is preferred over using
+   * `analyzer->CanProve(predicate(args))`, as it handles the free
+   * parameters that may exist for the predicate.
+   */
+  bool CanProve(Array<PrimExpr> args, Analyzer* analyzer) const;
+
  private:
   /* \brief Internal utility to express parameter ranges as boolean constraint */
   PrimExpr FreeParameterConstraints() const;

@@ -100,8 +100,7 @@ class ConstraintTracker::Impl {
       if (!buf.same_as(this->buf)) {
         return NullOpt;
       }
-      PrimExpr predicate = this->predicate(indices);
-      if (!analyzer->CanProve(predicate)) {
+      if (!predicate.CanProve(indices, analyzer)) {
         return NullOpt;
       }
 

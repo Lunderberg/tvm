@@ -101,6 +101,13 @@ bool Predicate::IsSubsetOf(const Predicate& other) const {
   return analyzer.CanProve(target_expression);
 }
 
+bool Predicate::CanProve(Array<PrimExpr> args, Analyzer* analyzer) const {
+  With<ConstraintContext> constraint(analyzer, FreeParameterConstraints());
+  PrimExpr expr = (*this)(std::move(args));
+  bool result = analyzer->CanProve(expr);
+  return result;
+}
+
 PrimExpr Predicate::FreeParameterConstraints() const {
   PrimExpr constraint = Bool(true);
   for (const auto& pair : free_parameters_) {
