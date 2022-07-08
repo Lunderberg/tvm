@@ -188,6 +188,11 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
 }  // namespace arith
 
 namespace tir {
+
+Stmt Simplify(Stmt stmt, arith::Analyzer* analyzer) {
+  return arith::StmtSimplifier(analyzer).Simplify(std::move(stmt));
+}
+
 namespace transform {
 
 Pass Simplify() {

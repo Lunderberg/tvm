@@ -21,7 +21,8 @@
  * \file remove_no_op.cc
  * \brief Remove no op from the stmt
  */
-#include <tvm/arith/analyzer.h>
+#include "remove_no_op.h"
+
 #include <tvm/runtime/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/op.h>
@@ -30,9 +31,8 @@
 #include <tvm/tir/transform.h>
 
 #include "../../arith/buffer_touch_pattern.h"
-#include "../../arith/ir_mutator_with_analyzer.h"
-
 #include "../../arith/const_fold.h"
+#include "../../arith/ir_mutator_with_analyzer.h"
 #include "ir_utils.h"
 
 namespace tvm {
@@ -269,6 +269,10 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
 };
 
 Stmt RemoveNoOp(Stmt stmt) { return NoOpRemover::Apply(std::move(stmt)); }
+
+Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::BufferTouchPattern* touch_pattern) {
+  return NoOpRemover::Apply(std::move(stmt));
+}
 
 namespace transform {
 
