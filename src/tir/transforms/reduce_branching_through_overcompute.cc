@@ -64,9 +64,11 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
       return StructuralEqual()(stmt, special_case);
     };
 
-    if (is_special_case(cond->condition, cond->else_case, cond->then_case)) {
-      return cond->else_case;
-    } else if (is_special_case(!cond->condition, cond->then_case, cond->else_case)) {
+    Stmt else_case = cond->else_case.defined() ? cond->else_case : Evaluate(0);
+
+    if (is_special_case(cond->condition, else_case, cond->then_case)) {
+      return else_case;
+    } else if (is_special_case(!cond->condition, cond->then_case, else_case)) {
       return cond->then_case;
     } else {
       return std::move(cond);
