@@ -41,6 +41,10 @@ class ConstraintTracker::Impl {
   // calling the provided callback.
   std::function<void()> EnterScopedConstraint(PrimExpr constraint);
 
+  // Enter a scoped constraint.  This constraint may be exited by
+  // calling the provided callback.
+  std::function<void()> SuppressConstraints();
+
   // Assume the statement is true, given any currently active scoped
   // constraints.
   void Assume(PrimExpr constraint);
@@ -135,6 +139,9 @@ class ConstraintTracker::Impl {
   // buffer value.  Currently disabled by default in order to
   // gradually test the implications of this change.
   bool allow_buffer_value_simplifications_{false};
+
+  // Whether scope-based analysis should be temporarily disabled
+  bool use_scoped_constraints_{true};
 };
 
 ///////////////////////////////////////////////////////////////////
@@ -153,6 +160,10 @@ ConstraintTracker::~ConstraintTracker() {
 
 std::function<void()> ConstraintTracker::EnterScopedConstraint(PrimExpr constraint) {
   return impl_->EnterScopedConstraint(std::move(constraint));
+}
+
+std::function<void()> ConstraintTracker::SuppressConstraints() {
+  return impl_->SuppressConstraints();
 }
 
 void ConstraintTracker::Assume(PrimExpr constraint) { impl_->Assume(std::move(constraint)); }
@@ -341,6 +352,12 @@ std::function<void()> ConstraintTracker::Impl::EnterScopedConstraint(PrimExpr co
     scoped_constraints_.erase(scoped_constraints_.begin() + prev_scoped_constraints,
                               scoped_constraints_.end());
   };
+}
+
+std::function<void()> ConstraintTracker::Impl::SuppressConstraints() {
+  bool cache_state = use_scoped_constraints_;
+  use_scoped_constraints_ = false;
+  return [this, cache_state]() { use_scoped_constraints_ = cache_state; };
 }
 
 std::vector<PrimExpr> ConstraintTracker::Impl::CurrentlyKnown() const {

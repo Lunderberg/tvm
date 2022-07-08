@@ -119,6 +119,12 @@ class ModularSetAnalyzer::Impl : public ExprFunctor<ModularSetAnalyzer::Entry(co
     return nullptr;
   }
 
+  std::function<void()> SuppressConstraints() {
+    bool cache_state = use_scoped_constraints_;
+    use_scoped_constraints_ = false;
+    return [this, cache_state]() { use_scoped_constraints_ = cache_state; };
+  }
+
   // Override visitor behaviors
   Entry VisitExprDefault_(const Object* op) final { return Everything(); }
 
@@ -259,12 +265,20 @@ class ModularSetAnalyzer::Impl : public ExprFunctor<ModularSetAnalyzer::Entry(co
 
   Entry VisitExpr_(const VarNode* op) final {
     Var v = GetRef<Var>(op);
+    Entry entry = Everything();
     auto it = var_map_.find(v);
     if (it != var_map_.end()) {
-      return it->second;
-    } else {
-      return Everything();
+      entry = it->second;
     }
+
+    if (use_scoped_constraints_) {
+      auto it = scoped_var_map_.find(v);
+      if (it != scoped_var_map_.end()) {
+        entry = Intersect(entry, it->second);
+      }
+    }
+
+    return entry;
   }
 
   Entry VisitRightShift(const CallNode* op) {
@@ -292,6 +306,10 @@ class ModularSetAnalyzer::Impl : public ExprFunctor<ModularSetAnalyzer::Entry(co
   Analyzer* parent_{nullptr};
   // internal variable map
   std::unordered_map<Var, Entry, ObjectPtrHash, ObjectPtrEqual> var_map_;
+  // internal variable map for scope-dependent constraints
+  std::unordered_map<Var, Entry, ObjectPtrHash, ObjectPtrEqual> scoped_var_map_;
+  // Whether the additional bound info may be used
+  bool use_scoped_constraints_{true};
   /*!
    * \brief Update var by intersecting entry with var's current set.
    * \param var The variable.
@@ -300,13 +318,13 @@ class ModularSetAnalyzer::Impl : public ExprFunctor<ModularSetAnalyzer::Entry(co
    */
   std::function<void()> UpdateByIntersect(const Var& var, Entry entry) {
     Entry old = Everything();
-    auto it = var_map_.find(var);
-    if (it != var_map_.end()) {
+    auto it = scoped_var_map_.find(var);
+    if (it != scoped_var_map_.end()) {
       old = it->second;
     }
-    var_map_[var] = Intersect(old, entry);
+    scoped_var_map_[var] = Intersect(old, entry);
     // reover function.
-    return [this, old, var]() { var_map_[var] = old; };
+    return [this, old, var]() { scoped_var_map_[var] = old; };
   }
   /*!
    * \brief Create union of two sets.
@@ -378,6 +396,10 @@ void ModularSetAnalyzer::Update(const Var& var, const ModularSet& info, bool all
 
 std::function<void()> ModularSetAnalyzer::EnterConstraint(const PrimExpr& constraint) {
   return impl_->EnterConstraint(constraint);
+}
+
+std::function<void()> ModularSetAnalyzer::SuppressConstraints() {
+  return impl_->SuppressConstraints();
 }
 
 ModularSetAnalyzer::ModularSetAnalyzer(Analyzer* parent) : impl_(new Impl(parent)) {}

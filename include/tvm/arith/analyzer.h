@@ -150,6 +150,7 @@ class ConstIntBoundAnalyzer {
  private:
   friend class Analyzer;
   friend class ConstraintContext;
+  friend class SuppressConstraintContext;
   explicit ConstIntBoundAnalyzer(Analyzer* parent);
   TVM_DLL ~ConstIntBoundAnalyzer();
   /*!
@@ -159,6 +160,11 @@ class ConstIntBoundAnalyzer {
    * \return an exit function that must be called to cleanup the constraint can be nullptr.
    */
   std::function<void()> EnterConstraint(const PrimExpr& constraint);
+  /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
+   *
+   * \return An exit function that removes the suppression
+   */
+  std::function<void()> SuppressConstraints();
   struct Entry;
   class Impl;
   /*! \brief Internal impl */
@@ -231,6 +237,7 @@ class ModularSetAnalyzer {
  private:
   friend class Analyzer;
   friend class ConstraintContext;
+  friend class SuppressConstraintContext;
   explicit ModularSetAnalyzer(Analyzer* parent);
   TVM_DLL ~ModularSetAnalyzer();
   /*!
@@ -240,6 +247,11 @@ class ModularSetAnalyzer {
    * \return an exit function that must be called to cleanup the constraint can be nullptr.
    */
   std::function<void()> EnterConstraint(const PrimExpr& constraint);
+  /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
+   *
+   * \return An exit function that removes the suppression
+   */
+  std::function<void()> SuppressConstraints();
   struct Entry;
   class Impl;
   /*! \brief Internal impl */
@@ -312,9 +324,15 @@ class RewriteSimplifier {
  private:
   friend class Analyzer;
   friend class ConstraintContext;
+  friend class SuppressConstraintContext;
   friend class CanonicalSimplifier;
   explicit RewriteSimplifier(Analyzer* parent);
   TVM_DLL ~RewriteSimplifier();
+  /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
+   *
+   * \return An exit function that removes the suppression
+   */
+  std::function<void()> SuppressConstraints();
   class Impl;
   /*! \brief Internal impl */
   Impl* impl_;
@@ -504,6 +522,47 @@ class AllowBufferValueSimplificationContext {
 };
 
 /*!
+ * \brief Temporarily suppress scope-based constraints
+ *
+ * \code
+ *
+ *  Var("x");
+ *  arith::Analyzer analyzer;
+ *  With<arith::ConstraintContext> scope(&analyzer, x % 3 == 0);
+ *
+ *  ICHECK_EQ(analyzer.modular_set(x)->coeff, 3);
+ *  {
+ *    With<arith::SuppressConstraintContext> scope(&analyzer);
+ *    // constraint temporarily suppressed
+ *    ICHECK_NE(analyzer.modular_set(x)->coeff, 3);
+ *  }
+ *
+ *  // constraint no longer suppressed
+ *  ICHECK_EQ(analyzer.modular_set(x)->coeff, 3);
+ *
+ *
+ * \endcode
+ */
+class SuppressConstraintContext {
+ private:
+  // declare friend to enable with.
+  friend class With<SuppressConstraintContext>;
+  /*!
+   * \brief Construct a constraint context.
+   * \param analyzer The analyzer.
+   */
+  SuppressConstraintContext(Analyzer* analyzer) : analyzer_(analyzer) {}
+  // enter the scope.
+  void EnterWithScope();
+  // exit the scope.
+  void ExitWithScope();
+  /*! \brief The analyzer */
+  Analyzer* analyzer_;
+  /*! \brief function to be called in recovery */
+  std::vector<std::function<void()>> recovery_functions_;
+};
+
+/*!
  * \brief Integer set analyzer.
  */
 class IntSetAnalyzer {
@@ -550,8 +609,14 @@ class IntSetAnalyzer {
 
  private:
   friend class Analyzer;
+  friend class SuppressConstraintContext;
   explicit IntSetAnalyzer(Analyzer* parent);
   TVM_DLL ~IntSetAnalyzer();
+  /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
+   *
+   * \return An exit function that removes the suppression
+   */
+  std::function<void()> SuppressConstraints();
   class Impl;
   /*! \brief Internal impl */
   Impl* impl_;
@@ -598,6 +663,12 @@ class ConstraintTracker {
    * \returns A callback to restore the previous state
    */
   std::function<void()> EnableBufferValueSimplifications();
+
+  /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
+   *
+   * \return An exit function that removes the suppression
+   */
+  std::function<void()> SuppressConstraints();
 
  private:
   friend class Analyzer;

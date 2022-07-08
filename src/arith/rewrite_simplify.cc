@@ -288,6 +288,12 @@ RewriteSimplifier::Extension RewriteSimplifier::Impl::GetEnabledExtensions() con
   return enabled_extensions_;
 }
 
+std::function<void()> RewriteSimplifier::Impl::SuppressConstraints() {
+  bool cache_state = use_scoped_constraints_;
+  use_scoped_constraints_ = false;
+  return [this, cache_state]() { use_scoped_constraints_ = cache_state; };
+}
+
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
   PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
   op = ret.as<SubNode>();
@@ -1790,6 +1796,10 @@ void RewriteSimplifier::SetEnabledExtensions(Extension flags) {
 }
 RewriteSimplifier::Extension RewriteSimplifier::GetEnabledExtensions() const {
   return impl_->GetEnabledExtensions();
+}
+
+std::function<void()> RewriteSimplifier::SuppressConstraints() {
+  return impl_->SuppressConstraints();
 }
 
 RewriteSimplifier::RewriteSimplifier(Analyzer* parent) : impl_(new Impl(parent)) {}

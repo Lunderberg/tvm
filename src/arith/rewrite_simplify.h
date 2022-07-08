@@ -89,6 +89,8 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   /*! \brief Return the currently enabled extensions */
   Extension GetEnabledExtensions() const;
 
+  std::function<void()> SuppressConstraints();
+
  protected:
   // counter to record recursive rewrite depth.
   int recur_depth_{0};
@@ -100,7 +102,9 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
     CallEffectKind side_effects;
   };
   std::vector<PrimExpr> scoped_constraints_;
-  std::vector<PrimExpr> global_constraints_;
+
+  // Whether the scoped constraints may be used
+  bool use_scoped_constraints_{true};
 
   // Optionally enabled extensions
   Extension enabled_extensions_{kNone};
