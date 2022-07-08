@@ -920,5 +920,37 @@ class TestNoSimplifyUsingOverwrittenValue(BaseBeforeAfter):
     expected = before
 
 
+class TestSimplifyUsingKnownPartOfPartiallyOverwrittenBuffer(BaseBeforeAfter):
+    """A write only invalidates prior known values where that write occurs
+
+    Like TestNoSimplifyUsingOverwrittedValue, but the check of ``A[i]
+    == 0`` occurs when we know that ``i == 5``, and therefore the
+    earlier overwrite didn't touch this value.
+    """
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if i == 0:
+                A[i] = 5
+
+            if i == 5:
+                if A[i] == 0:
+                    A[i] = 42
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if i == 0:
+                A[i] = 5
+
+            if i == 5:
+                A[i] = 42
+
+
 if __name__ == "__main__":
     tvm.testing.main()
