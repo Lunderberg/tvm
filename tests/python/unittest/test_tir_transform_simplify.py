@@ -870,5 +870,34 @@ class TestNoSimplificationIfPredicateNotMet(BaseBeforeAfter):
     expected = before
 
 
+class TestSimplifyUsingScopedConstraint(BaseBeforeAfter):
+    """A conditional over a buffer's value may be used in proofs"""
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if A[i] == 0:
+                if A[i] + 1 == 1:
+                    A[i] = 42
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if A[i] == 0:
+                A[i] = 42
+
+
+class TestNoSimplifyUsingInvalidatedScopedConstraint(BaseBeforeAfter):
+    """A write may not be used for proofs outside its conditional"""
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if i == 0:
+                A[i] = 0
+
+            if A[i] == 0:
+                A[i] = 42
+
+    expected = before
+
+
 if __name__ == "__main__":
     tvm.testing.main()
