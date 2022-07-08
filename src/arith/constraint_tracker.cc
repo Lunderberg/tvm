@@ -287,19 +287,21 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
     index_variables.push_back(index_var);
     relations.push_back(index_var == index_expr);
 
-    // TODO: Revisit whether this is necessary.  Commenting this out
-    // prevents arith::SolveLinearEquations from substituting
-    // constants into the expression.
-    //
-    // for (auto& loop_var : tir::UndefinedVars(index_expr)) {
-    //   if (!ranges.count(loop_var)) {
-    //     IntSet var_interval = parent_->int_set(loop_var);
-    //     to_solve_for.push_back(loop_var);
-    //     if (var_interval.HasUpperBound() && var_interval.HasLowerBound()) {
-    //       ranges.Set(loop_var, Range(var_interval.min(), var_interval.max() + 1));
-    //     }
-    //   }
-    // }
+    for (auto& loop_var : tir::UndefinedVars(index_expr)) {
+      if (!ranges.count(loop_var)) {
+        // Since the buffer values may be checked outside of the
+        // conditional statement in which the write occurs, the
+        // variable ranges used when solving for the loop iterators in
+        // terms of buffer indices must be the full extent of the
+        // variables.
+        With<SuppressConstraintContext> suppress(parent_);
+        IntSet var_interval = parent_->int_set(loop_var);
+        to_solve_for.push_back(loop_var);
+        if (var_interval.HasUpperBound() && var_interval.HasLowerBound()) {
+          ranges.Set(loop_var, Range(var_interval.min(), var_interval.max() + 1));
+        }
+      }
+    }
   }
 
   IntConstraints system(to_solve_for, ranges, relations);
