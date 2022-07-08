@@ -88,6 +88,13 @@ class ConstraintTracker::Impl {
   void KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value,
                         PrimExpr predicate);
 
+  /*! \brief Clear previously known values that satisfy a predicate
+   *
+   * When a buffer is overwritten, any known statements about the
+   * buffer's values must be removed.
+   */
+  void ClearKnownValues(tir::Buffer buf, Predicate predicate);
+
   /* \brief Perform any context-free simplifications
    *
    * Deliberately not using the parent analyzer, because we don't want
@@ -310,7 +317,7 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
   predicate_expr = Substitute(predicate_expr, transform->src_to_dst);
   Predicate predicate = Predicate(index_variables, predicate_expr, transform->dst->ranges);
 
-  // TODO: Clear previous buffer predicates
+  ClearKnownValues(buf, predicate);
 
   PrimExpr new_value_expr = Substitute(value, transform->src_to_dst);
 
@@ -324,6 +331,16 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
   ParametrizedExpression constraint_value(index_variables, new_value_expr);
 
   global_buffer_constraints_.emplace_back(buf, predicate, constraint_value);
+}
+
+void ConstraintTracker::Impl::ClearKnownValues(tir::Buffer buf, Predicate predicate) {
+  global_buffer_constraints_.erase(
+      std::remove_if(global_buffer_constraints_.begin(), global_buffer_constraints_.end(),
+                     [&buf, &predicate](const auto& constraint) {
+                       return constraint.buf.same_as(buf) &&
+                              predicate.IsSubsetOf(constraint.predicate);
+                     }),
+      global_buffer_constraints_.end());
 }
 
 Optional<PrimExpr> ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf,
