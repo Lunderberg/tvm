@@ -899,5 +899,26 @@ class TestNoSimplifyUsingInvalidatedScopedConstraint(BaseBeforeAfter):
     expected = before
 
 
+class TestNoSimplifyUsingOverwrittenValue(BaseBeforeAfter):
+    """A write that may have been overwritten may not be treated as known
+
+    The appearance of "A[i] = 5" must prevent the earlier constraint
+    from being used for simplification.
+    """
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if i == 0:
+                A[i] = 5
+
+            if A[i] == 0:
+                A[i] = 42
+
+    expected = before
+
+
 if __name__ == "__main__":
     tvm.testing.main()
