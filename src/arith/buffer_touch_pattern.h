@@ -67,6 +67,21 @@ class Predicate : public ParametrizedExpression {
    */
   bool IsSubsetOf(const Predicate& other) const;
 
+  /* \brief Checks if this Predicate is distinct of another predicate
+   *
+   * Returns true if it can be proven that the two predicates cannot
+   * be simultaneously true.  Returns false if it cannot be proven
+   * that the two predicates are distinct.
+   */
+  bool IsDistinctFrom(const Predicate& other) const;
+
+  /* \brief The difference of two predicates
+   *
+   * Returns a predicate that is true whenever this predicate is true
+   * and the other predicate is false.
+   */
+  Predicate Difference(const Predicate& other) const;
+
   friend std::ostream& operator<<(std::ostream& os, const Predicate& expr);
 
   /* \brief Checks if this Predicate can be statically proven

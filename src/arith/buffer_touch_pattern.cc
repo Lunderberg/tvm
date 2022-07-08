@@ -90,7 +90,7 @@ bool Predicate::IsSubsetOf(const Predicate& other) const {
     vars_as_primexpr.push_back(var);
   }
 
-  PrimExpr target_expression = other(vars_as_primexpr);
+  PrimExpr other_predicate = other(vars_as_primexpr);
 
   arith::Analyzer analyzer;
 
@@ -98,7 +98,53 @@ bool Predicate::IsSubsetOf(const Predicate& other) const {
   With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
   With<ConstraintContext> constraint(&analyzer, expression_);
 
-  return analyzer.CanProve(target_expression);
+  return analyzer.CanProve(other_predicate);
+}
+
+bool Predicate::IsDistinctFrom(const Predicate& other) const {
+  ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
+      << "Predicates must be over the same number of parameters to be comparable";
+
+  Array<PrimExpr> vars_as_primexpr;
+  for (const auto& var : parameter_vars_) {
+    vars_as_primexpr.push_back(var);
+  }
+
+  PrimExpr other_predicate = other(vars_as_primexpr);
+
+  arith::Analyzer analyzer;
+
+  With<ConstraintContext> this_params(&analyzer, this->FreeParameterConstraints());
+  With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
+  With<ConstraintContext> constraint(&analyzer, expression_);
+
+  return analyzer.CanProve(logical_not(other_predicate));
+}
+
+Predicate Predicate::Difference(const Predicate& other) const {
+  ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
+      << "Predicates must be over the same number of parameters to be comparable";
+
+  Array<PrimExpr> vars_as_primexpr;
+  for (const auto& var : parameter_vars_) {
+    vars_as_primexpr.push_back(var);
+  }
+
+  PrimExpr other_predicate = other(vars_as_primexpr);
+
+  arith::Analyzer analyzer;
+
+  With<ConstraintContext> this_params(&analyzer, this->FreeParameterConstraints());
+  With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
+
+  PrimExpr new_predicate_expr = analyzer.Simplify(expression_ && !other_predicate);
+
+  Map<tir::Var, Range> new_free_params = free_parameters_;
+  for (const auto& pair : other.free_parameters_) {
+    new_free_params.Set(pair.first, pair.second);
+  }
+
+  return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
 }
 
 bool Predicate::CanProve(Array<PrimExpr> args, Analyzer* analyzer) const {
