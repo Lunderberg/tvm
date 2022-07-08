@@ -57,6 +57,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
 
     auto is_special_case = [this](PrimExpr condition, Stmt general_case,
                                   Stmt special_case) -> bool {
+      condition = analyzer_->rewrite_simplify(condition);
       With<arith::ConstraintContext> constraint(analyzer_, condition);
       Stmt stmt = general_case;
       stmt = Simplify(stmt, analyzer_);

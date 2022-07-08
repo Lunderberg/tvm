@@ -1727,6 +1727,13 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const VarNode* op) {
     }
   }
 
+  if (enable_extra_simplifications_) {
+    auto const_int_bound = analyzer_->const_int_bound(var);
+    if (const_int_bound->min_value == const_int_bound->max_value) {
+      return IntImm(var->dtype, const_int_bound->min_value);
+    }
+  }
+
   auto it = var_map_.find(var);
   if (it != var_map_.end()) {
     return it->second;
