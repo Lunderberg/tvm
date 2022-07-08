@@ -799,5 +799,28 @@ class TestSimplifyUsingBufferAssumptionInLoop(BaseBeforeAfter):
             A[i] = 0
 
 
+class TestSimplifyUsingPartialBufferAssumptionInLoop(BaseBeforeAfter):
+    """An assumption about buffer contents may apply to only part of a buffer"""
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if i >= 14:
+                T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if i >= 14:
+                if A[i] == 0:
+                    A[i] = 42
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if 14 <= i:
+                T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if 14 <= i:
+                A[i] = 42
+
+
 if __name__ == "__main__":
     tvm.testing.main()
