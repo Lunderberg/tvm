@@ -71,7 +71,10 @@ class ConstraintTracker::Impl {
   std::function<void()> EnableBufferValueSimplifications();
 
  private:
+  /* \brief An expression that must be true based on scope-implied constraints. */
   PrimExpr CurrentScopeConstraints() const;
+
+  void AssumeIndependentConstraint(PrimExpr assumption);
 
   /* \brief Perform any context-free simplifications
    *
@@ -184,7 +187,60 @@ PrimExpr ConstraintTracker::Impl::CurrentScopeConstraints() const {
 }
 
 void ConstraintTracker::Impl::Assume(PrimExpr assumption) {
-  global_constraints_.push_back(logical_not(CurrentScopeConstraints()) || assumption);
+  for (const auto& expr : ExtractConstraints(assumption, false)) {
+    AssumeIndependentConstraint(expr);
+  }
+}
+
+void ConstraintTracker::Impl::AssumeIndependentConstraint(PrimExpr assumption) {
+  PrimExpr predicate = CurrentScopeConstraints();
+  std::vector<PrimExpr> buffer_exprs;
+  for (const auto& expr : ExtractComponents(assumption)) {
+    auto side_effect = tir::SideEffect(expr);
+    if (side_effect <= tir::CallEffectKind::kPure) {
+      // Pulling out portions of the assumption that do not depend on a buffer value
+      //
+      // if i < 3: T.assume(buf[i] == value)
+      // T.assume(i>=3 or buf[i] == value)
+      predicate = predicate && logical_not(expr);
+    } else if (side_effect == tir::CallEffectKind::kReadState) {
+      buffer_exprs.push_back(expr);
+    } else {
+      LOG(FATAL) << "Assumption must be pure or read-only";
+    }
+  }
+
+  if (buffer_exprs.empty()) {
+    global_constraints_.push_back(Simplify(logical_not(predicate)));
+    return;
+  }
+
+  CHECK_EQ(buffer_exprs.size(), 1) << "T.assume must contain only a single buffer expression";
+
+  auto* as_equal_node = buffer_exprs[0].as<tir::EQNode>();
+  CHECK(as_equal_node)
+      << "T.assume buffer constraint must be of the form 'buffer[indices] == value'";
+
+  tir::BufferLoad load;
+  PrimExpr value;
+  if (auto* as_load = as_equal_node->a.as<tir::BufferLoadNode>()) {
+    load = GetRef<tir::BufferLoad>(as_load);
+    value = as_equal_node->b;
+  } else if (auto* as_load = as_equal_node->b.as<tir::BufferLoadNode>()) {
+    load = GetRef<tir::BufferLoad>(as_load);
+    value = as_equal_node->a;
+  } else {
+    LOG(FATAL) << "T.assume buffer constraint must be of the form 'buffer[indices] == value'";
+  }
+
+  CHECK(tir::SideEffect(value) <= tir::CallEffectKind::kPure)
+      << "Buffer value in constraint must be pure expression, but was " << value;
+
+  // TODO: An assumption shouldn't remove previously known
+  // constraints.  Will need to split out the BufferConstraint from
+  // the clearing of previous in KnownBufferValue.
+
+  KnownBufferValue(load->buffer, load->indices, value);
 }
 
 void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> index_expressions,

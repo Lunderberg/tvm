@@ -31,23 +31,50 @@
 namespace tvm {
 namespace arith {
 
-void CollectConstraints(const PrimExpr& expr, Analyzer* analyzer, std::vector<PrimExpr>* collect) {
-  collect->push_back(expr);
+void CollectConstraints(const PrimExpr& expr, Analyzer* analyzer, std::vector<PrimExpr>* collect,
+                        bool keep_composite_constraints) {
+  if (keep_composite_constraints) {
+    collect->push_back(expr);
+  }
 
   PVar<PrimExpr> x, y;
   if ((x && y).Match(expr)) {
-    CollectConstraints(x.Eval(), analyzer, collect);
-    CollectConstraints(y.Eval(), analyzer, collect);
+    CollectConstraints(x.Eval(), analyzer, collect, keep_composite_constraints);
+    CollectConstraints(y.Eval(), analyzer, collect, keep_composite_constraints);
   } else if ((!(x || y)).Match(expr)) {
-    CollectConstraints(analyzer->rewrite_simplify(tir::Not(x.Eval())), analyzer, collect);
-    CollectConstraints(analyzer->rewrite_simplify(tir::Not(y.Eval())), analyzer, collect);
+    CollectConstraints(analyzer->rewrite_simplify(tir::Not(x.Eval())), analyzer, collect,
+                       keep_composite_constraints);
+    CollectConstraints(analyzer->rewrite_simplify(tir::Not(y.Eval())), analyzer, collect,
+                       keep_composite_constraints);
+  } else if (!keep_composite_constraints) {
+    collect->push_back(expr);
   }
 }
 
-std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr) {
+std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr, bool keep_composite_constraints) {
   std::vector<PrimExpr> out;
   Analyzer analyzer;
-  CollectConstraints(expr, &analyzer, &out);
+  CollectConstraints(expr, &analyzer, &out, keep_composite_constraints);
+  return out;
+}
+
+void CollectComponents(const PrimExpr& expr, Analyzer* analyzer, std::vector<PrimExpr>* collect) {
+  PVar<PrimExpr> x, y;
+  if ((x || y).Match(expr)) {
+    CollectComponents(x.Eval(), analyzer, collect);
+    CollectComponents(y.Eval(), analyzer, collect);
+  } else if ((!(x && y)).Match(expr)) {
+    CollectComponents(analyzer->rewrite_simplify(tir::Not(x.Eval())), analyzer, collect);
+    CollectComponents(analyzer->rewrite_simplify(tir::Not(y.Eval())), analyzer, collect);
+  } else {
+    collect->push_back(expr);
+  }
+}
+
+std::vector<PrimExpr> ExtractComponents(const PrimExpr& expr) {
+  std::vector<PrimExpr> out;
+  Analyzer analyzer;
+  CollectComponents(expr, &analyzer, &out);
   return out;
 }
 

@@ -766,5 +766,19 @@ class TestSimplifyConditionalInLoopUsingBufferValue(BaseBeforeAfter):
             B[j] = 42
 
 
+class TestSimplifyInputBufferAssumption(BaseBeforeAfter):
+    """A T.assume may apply to a buffer's contents"""
+
+    def before(A: T.Buffer[1, "int32"]):
+        T.assume(A[0] == 0)
+
+        if A[0] == 0:
+            A[0] = 42
+
+    def expected(A: T.Buffer[1, "int32"]):
+        T.assume(A[0] == 0)
+        A[0] = 42
+
+
 if __name__ == "__main__":
     tvm.testing.main()
