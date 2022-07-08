@@ -325,14 +325,25 @@ class RewriteSimplifier {
   friend class Analyzer;
   friend class ConstraintContext;
   friend class SuppressConstraintContext;
+  friend class EnableExtraSimplificationContext;
   friend class CanonicalSimplifier;
   explicit RewriteSimplifier(Analyzer* parent);
   TVM_DLL ~RewriteSimplifier();
+
   /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
    *
    * \return An exit function that removes the suppression
    */
   std::function<void()> SuppressConstraints();
+
+  /* \brief Enter a context in more aggressive simplifications may be used
+   *
+   * Used when trying to prove a conditional.
+   *
+   * \returns A callback to restore the previous state
+   */
+  std::function<void()> EnableExtraSimplifications();
+
   class Impl;
   /*! \brief Internal impl */
   Impl* impl_;
@@ -502,15 +513,15 @@ class ConstraintContext {
  *
  * \endcode
  */
-class AllowBufferValueSimplificationContext {
+class EnableExtraSimplificationContext {
  private:
   // declare friend to enable with.
-  friend class With<AllowBufferValueSimplificationContext>;
+  friend class With<EnableExtraSimplificationContext>;
   /*!
    * \brief Construct a constraint context.
    * \param analyzer The analyzer.
    */
-  AllowBufferValueSimplificationContext(Analyzer* analyzer) : analyzer_(analyzer) {}
+  EnableExtraSimplificationContext(Analyzer* analyzer) : analyzer_(analyzer) {}
   // enter the scope.
   void EnterWithScope();
   // exit the scope.
@@ -518,7 +529,7 @@ class AllowBufferValueSimplificationContext {
   /*! \brief The analyzer */
   Analyzer* analyzer_;
   /*! \brief function to be called in recovery */
-  std::function<void()> recovery_function_;
+  std::vector<std::function<void()>> recovery_functions_;
 };
 
 /*!
@@ -662,7 +673,7 @@ class ConstraintTracker {
    *
    * \returns A callback to restore the previous state
    */
-  std::function<void()> EnableBufferValueSimplifications();
+  std::function<void()> EnableExtraSimplifications();
 
   /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
    *

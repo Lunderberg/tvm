@@ -72,7 +72,7 @@ class ConstraintTracker::Impl {
    *
    * \returns A callback to restore the previous state
    */
-  std::function<void()> EnableBufferValueSimplifications();
+  std::function<void()> EnableExtraSimplifications();
 
  private:
   /* \brief An expression that must be true based on scope-implied constraints. */
@@ -145,7 +145,7 @@ class ConstraintTracker::Impl {
   // If enabled, allow simplifications that rely on propagating the
   // buffer value.  Currently disabled by default in order to
   // gradually test the implications of this change.
-  bool allow_buffer_value_simplifications_{false};
+  bool allow_extra_simplifications_{false};
 
   // Whether scope-based analysis should be temporarily disabled
   bool use_scoped_constraints_{true};
@@ -185,8 +185,8 @@ Optional<PrimExpr> ConstraintTracker::KnownBufferValue(tir::Buffer buf, Array<Pr
 
 std::vector<PrimExpr> ConstraintTracker::CurrentlyKnown() const { return impl_->CurrentlyKnown(); }
 
-std::function<void()> ConstraintTracker::EnableBufferValueSimplifications() {
-  return impl_->EnableBufferValueSimplifications();
+std::function<void()> ConstraintTracker::EnableExtraSimplifications() {
+  return impl_->EnableExtraSimplifications();
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -361,7 +361,7 @@ void ConstraintTracker::Impl::ClearKnownValues(tir::Buffer buf, Predicate predic
 
 Optional<PrimExpr> ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf,
                                                              Array<PrimExpr> indices) const {
-  if (!allow_buffer_value_simplifications_) {
+  if (!allow_extra_simplifications_) {
     return NullOpt;
   }
 
@@ -414,10 +414,10 @@ std::vector<PrimExpr> ConstraintTracker::Impl::CurrentlyKnown() const {
   return output;
 }
 
-std::function<void()> ConstraintTracker::Impl::EnableBufferValueSimplifications() {
-  bool current_state = allow_buffer_value_simplifications_;
-  allow_buffer_value_simplifications_ = true;
-  return [this, current_state]() { allow_buffer_value_simplifications_ = current_state; };
+std::function<void()> ConstraintTracker::Impl::EnableExtraSimplifications() {
+  bool current_state = allow_extra_simplifications_;
+  allow_extra_simplifications_ = true;
+  return [this, current_state]() { allow_extra_simplifications_ = current_state; };
 }
 
 }  // namespace arith

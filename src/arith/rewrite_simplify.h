@@ -90,6 +90,7 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   Extension GetEnabledExtensions() const;
 
   std::function<void()> SuppressConstraints();
+  std::function<void()> EnableExtraSimplifications();
 
  protected:
   // counter to record recursive rewrite depth.
@@ -108,6 +109,9 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
 
   // Optionally enabled extensions
   Extension enabled_extensions_{kNone};
+
+  // Whether more aggressive simplifications should be used
+  bool enable_extra_simplifications_{false};
 
   // maximum number of recursion allowed during a single pass.
   static const constexpr int kMaxRecurDepth = 5;
