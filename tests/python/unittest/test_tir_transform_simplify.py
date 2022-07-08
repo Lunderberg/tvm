@@ -822,5 +822,27 @@ class TestSimplifyUsingPartialBufferAssumptionInLoop(BaseBeforeAfter):
                 A[i] = 42
 
 
+class TestNoSimplificationIfPredicateNotMet(BaseBeforeAfter):
+    """Assumptions about buffer contents must apply to all cases to be used
+
+    Like TestSimplifyUsingPartialBufferAssumptionInLoop, but the
+    predicate in the second loop does not match the predicate in the
+    first loop.  Therefore, the `T.assume` refers to a different set
+    of indices.
+    """
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if 14 <= i:
+                T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if i < 14:
+                if A[i] == 0:
+                    A[i] = 42
+
+    expected = before
+
+
 if __name__ == "__main__":
     tvm.testing.main()
