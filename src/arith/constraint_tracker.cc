@@ -74,7 +74,15 @@ class ConstraintTracker::Impl {
   /* \brief An expression that must be true based on scope-implied constraints. */
   PrimExpr CurrentScopeConstraints() const;
 
+  /*! \brief Helper method called for each component of an "a && b" assumption */
   void AssumeIndependentConstraint(PrimExpr assumption);
+
+  /*! \brief Internal method with explicit predicate
+   *
+   * The "predicate" field may differ depending on the expression in `T.assume`.
+   */
+  void KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value,
+                        PrimExpr predicate);
 
   /* \brief Perform any context-free simplifications
    *
@@ -239,11 +247,17 @@ void ConstraintTracker::Impl::AssumeIndependentConstraint(PrimExpr assumption) {
   // constraints.  Will need to split out the BufferConstraint from
   // the clearing of previous in KnownBufferValue.
 
-  KnownBufferValue(load->buffer, load->indices, value);
+  KnownBufferValue(load->buffer, load->indices, value, predicate);
 }
 
 void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> index_expressions,
                                                PrimExpr value) {
+  KnownBufferValue(std::move(buf), std::move(index_expressions), std::move(value),
+                   CurrentScopeConstraints());
+}
+
+void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> index_expressions,
+                                               PrimExpr value, PrimExpr predicate_expr) {
   // The buffer constraint is in terms of the buffer indices, in order
   // to be substituted in when used in a later context.
 
@@ -264,9 +278,11 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
 
     for (auto& loop_var : tir::UndefinedVars(index_expr)) {
       if (!ranges.count(loop_var)) {
-        IntSet var_range = parent_->int_set(loop_var);
+        IntSet var_interval = parent_->int_set(loop_var);
         to_solve_for.push_back(loop_var);
-        ranges.Set(loop_var, Range(var_range.min(), var_range.max()));
+        if (var_interval.HasUpperBound() && var_interval.HasLowerBound()) {
+          ranges.Set(loop_var, Range(var_interval.min(), var_interval.max() + 1));
+        }
       }
     }
   }
@@ -274,7 +290,7 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
   IntConstraints system(to_solve_for, ranges, relations);
   IntConstraintsTransform transform = arith::SolveLinearEquations(system);
 
-  PrimExpr predicate_expr = Substitute(CurrentScopeConstraints(), transform->src_to_dst);
+  predicate_expr = Substitute(predicate_expr, transform->src_to_dst);
   Predicate predicate = Predicate(index_variables, predicate_expr, transform->dst->ranges);
 
   // TODO: Clear previous buffer predicates
