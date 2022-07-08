@@ -766,7 +766,7 @@ class TestSimplifyConditionalInLoopUsingBufferValue(BaseBeforeAfter):
             B[j] = 42
 
 
-class TestSimplifyInputBufferAssumption(BaseBeforeAfter):
+class TestSimplifyUsingBufferAssumption(BaseBeforeAfter):
     """A T.assume may apply to a buffer's contents"""
 
     def before(A: T.Buffer[1, "int32"]):
@@ -778,6 +778,25 @@ class TestSimplifyInputBufferAssumption(BaseBeforeAfter):
     def expected(A: T.Buffer[1, "int32"]):
         T.assume(A[0] == 0)
         A[0] = 42
+
+
+class TestSimplifyUsingBufferAssumptionInLoop(BaseBeforeAfter):
+    """An assumption about buffer contents may apply to a range"""
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == i)
+
+        for i in T.serial(16):
+            if A[i] < 100:
+                A[i] = 0
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == i)
+
+        for i in T.serial(16):
+            A[i] = 0
 
 
 if __name__ == "__main__":
