@@ -952,5 +952,24 @@ class TestSimplifyUsingKnownPartOfPartiallyOverwrittenBuffer(BaseBeforeAfter):
                 A[i] = 42
 
 
+class TestNoSimplifyUsingPreLoopBufferValue(BaseBeforeAfter):
+    """Do not simplify assuming reads are invariant
+
+    If a buffer's value changes across loop iterations, the buffer's
+    value before the loop should not be used to simplify conditionals
+    within the loop.
+    """
+
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+        B[0] = 0
+        for i in T.serial(16):
+            if B[0] < 10:
+                B[0] = A[i] * 2 + B[0]
+            else:
+                B[0] = A[i] + B[0]
+
+    expected = before
+
+
 if __name__ == "__main__":
     tvm.testing.main()
