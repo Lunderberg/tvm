@@ -65,6 +65,31 @@ class TestIntroduceAdditionOfZero(BaseBeforeAfter):
             A[0] = A[0] + i * i
 
 
+class TestIntroduceAdditionOfKnownZeroInBuffer(BaseBeforeAfter):
+    """Insert a conditionally no-op statement
+
+    Proving that the overcompute is a no-op may use known values that
+    are present in a buffer.
+    """
+
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+        for i in T.serial(16):
+            T.assume(i < 14 or A[i] == 0)
+
+        B[0] = 0
+        for i in T.serial(16):
+            if i < 14:
+                B[0] = B[0] + A[i]
+
+    def expected(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+        for i in T.serial(16):
+            T.assume(i < 14 or A[i] == 0)
+
+        B[0] = 0
+        for i in T.serial(16):
+            B[0] = B[0] + A[i]
+
+
 class TestIntroduceOverwrittenWrite(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 
