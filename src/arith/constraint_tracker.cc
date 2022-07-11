@@ -212,6 +212,7 @@ PrimExpr ConstraintTracker::Impl::CurrentScopeConstraints() const {
 }
 
 void ConstraintTracker::Impl::Assume(PrimExpr assumption) {
+  return;
   for (const auto& expr : ExtractConstraints(assumption, false)) {
     AssumeIndependentConstraint(expr);
   }
@@ -361,6 +362,7 @@ void ConstraintTracker::Impl::ClearKnownValues(tir::Buffer buf, Predicate predic
 
 Optional<PrimExpr> ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf,
                                                              Array<PrimExpr> indices) const {
+  return NullOpt;
   if (!allow_extra_simplifications_) {
     return NullOpt;
   }

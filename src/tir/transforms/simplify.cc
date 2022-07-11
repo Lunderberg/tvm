@@ -29,6 +29,7 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/transform.h>
 
+#include "../../arith/buffer_touch_pattern.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
 
 namespace tvm {
@@ -66,7 +67,18 @@ TVM_REGISTER_PASS_CONFIG_OPTION("tir.Simplify", SimplifyConfig);
 
 class StmtSimplifier : public IRMutatorWithAnalyzer {
  public:
-  explicit StmtSimplifier(Analyzer* analyzer) : IRMutatorWithAnalyzer(analyzer) {}
+  static Stmt Apply(Stmt stmt, Analyzer* analyzer, Optional<SimplifyConfig> config_opt = NullOpt) {
+    auto config = config_opt.value_or(AttrsWithDefaultValues<arith::SimplifyConfig>());
+    analyzer->rewrite_simplify.SetEnabledExtensions(config->GetEnabledExtensions());
+
+    BufferTouchPattern touch_pattern(stmt);
+    StmtSimplifier simplifier(analyzer, std::move(touch_pattern));
+    return simplifier(std::move(stmt));
+  }
+
+ private:
+  explicit StmtSimplifier(Analyzer* analyzer, BufferTouchPattern touch_pattern)
+      : IRMutatorWithAnalyzer(analyzer), touch_pattern_(touch_pattern) {}
 
   using Parent = IRMutatorWithAnalyzer;
   using Parent::VisitStmt;
@@ -75,6 +87,14 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
   PrimExpr VisitExpr(const PrimExpr& expr) final { return analyzer_->Simplify(expr); }
 
   Stmt Simplify(Stmt stmt) { return operator()(std::move(stmt)); }
+
+  Stmt VisitStmt(const Stmt& stmt) override {
+    Optional<Stmt> cache = this->current_stmt_;
+    this->current_stmt_ = stmt;
+    Stmt output = Parent::VisitStmt(stmt);
+    this->current_stmt_ = std::move(cache);
+    return output;
+  }
 
   Stmt VisitStmt_(const ForNode* op) final {
     analyzer_->Bind(op->loop_var, Range::FromMinExtent(op->min, op->extent));
@@ -92,7 +112,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     return SideEffect(op->value) <= CallEffectKind::kPure;
   }
 
-  Stmt VisitStmt_(const LetStmtNode* op) {
+  Stmt VisitStmt_(const LetStmtNode* op) override {
     PrimExpr value = this->VisitExpr(op->value);
     if (CanInlineLetStmt(op)) {
       // it is fine to discard the let binding
@@ -115,31 +135,24 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     }
   }
 
-  Stmt VisitStmt_(const IfThenElseNode* op) {
-    // PrimExpr cond;
-    // {
-    //   With<arith::AllowBufferValueSimplificationContext> allow(analyzer_);
-    //   cond = analyzer_->Simplify(Substitute(op->condition, non_inlined_bindings_));
-    // }
-    PrimExpr cond = analyzer_->Simplify(Substitute(op->condition, non_inlined_bindings_));
-    if (const int64_t* as_int = as_const_int(cond)) {
-      if (*as_int) {
+  Stmt VisitStmt_(const IfThenElseNode* op) override {
+    if (Optional<Bool> cond = ProveCondition(op->condition)) {
+      if (cond.value()->value) {
         return this->VisitStmt(op->then_case);
       } else if (op->else_case.defined()) {
         return this->VisitStmt(op->else_case);
       } else {
         return Evaluate(0);
       }
+    } else {
+      return Parent::VisitStmt_(op);
     }
-    return Parent::VisitStmt_(op);
   }
 
-  PrimExpr VisitExpr_(const CallNode* op) {
+  PrimExpr VisitExpr_(const CallNode* op) override {
     if (op->op.same_as(builtin::if_then_else())) {
-      PrimExpr cond = this->VisitExpr(op->args[0]);
-      cond = analyzer_->Simplify(Substitute(std::move(cond), non_inlined_bindings_));
-      if (const int64_t* as_int = as_const_int(cond)) {
-        if (*as_int) {
+      if (Optional<Bool> cond = ProveCondition(op->args[0])) {
+        if (cond.value()->value) {
           return this->VisitExpr(op->args[1]);
         } else {
           return this->VisitExpr(op->args[2]);
@@ -182,7 +195,24 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     return true;
   }
 
+  /* \brief Internal utility for checking conditionals
+   *
+   * Uses more aggressive optimization, such as performing additional
+   * inlining and tracking known buffer values.
+   */
+  Optional<Bool> ProveCondition(PrimExpr condition) const {
+    condition = Substitute(condition, non_inlined_bindings_);
+    condition = touch_pattern_.SimplifyInContext(condition, current_stmt_.value(), analyzer_);
+    if (const int64_t* as_int = as_const_int(condition)) {
+      return Bool(*as_int);
+    } else {
+      return NullOpt;
+    }
+  }
+
   Map<Var, PrimExpr> non_inlined_bindings_;
+  BufferTouchPattern touch_pattern_;
+  Optional<Stmt> current_stmt_{NullOpt};
 };
 
 }  // namespace arith
@@ -190,7 +220,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
 namespace tir {
 
 Stmt Simplify(Stmt stmt, arith::Analyzer* analyzer) {
-  return arith::StmtSimplifier(analyzer).Simplify(std::move(stmt));
+  return arith::StmtSimplifier::Apply(stmt, analyzer);
 }
 
 namespace transform {
@@ -198,12 +228,10 @@ namespace transform {
 Pass Simplify() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
     arith::Analyzer analyzer;
-    auto cfg = ctx->GetConfig<arith::SimplifyConfig>("tir.Simplify")
-                   .value_or(AttrsWithDefaultValues<arith::SimplifyConfig>());
-    analyzer.rewrite_simplify.SetEnabledExtensions(cfg->GetEnabledExtensions());
+    auto cfg = ctx->GetConfig<arith::SimplifyConfig>("tir.Simplify");
 
     auto* n = f.CopyOnWrite();
-    n->body = arith::StmtSimplifier(&analyzer).Simplify(std::move(n->body));
+    n->body = arith::StmtSimplifier::Apply(std::move(n->body), nullptr, cfg);
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.Simplify", {});

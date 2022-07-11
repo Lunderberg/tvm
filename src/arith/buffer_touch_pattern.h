@@ -34,6 +34,7 @@
 namespace tvm {
 namespace arith {
 
+// Utility for expressing a parametric expression
 class ParametrizedExpression {
  public:
   ParametrizedExpression(Array<tir::Var> parameter_vars, PrimExpr expression);
@@ -92,6 +93,14 @@ class Predicate : public ParametrizedExpression {
    */
   bool CanProve(Array<PrimExpr> args, Analyzer* analyzer) const;
 
+  /* \brief Checks if this Predicate can be statically proven
+   *
+   * This is preferred over using
+   * `analyzer->CanProve(!predicate(args))`, as it handles the free
+   * parameters that may exist for the predicate.
+   */
+  bool CanDisprove(Array<PrimExpr> args, Analyzer* analyzer) const;
+
  private:
   /* \brief Internal utility to express parameter ranges as boolean constraint */
   PrimExpr FreeParameterConstraints() const;
@@ -111,9 +120,10 @@ class BufferTouch {
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
-   * Returns true if the indices accessed by this touch are a subset of  predicate is true can be
-   * proven to be a subset of the other subset.  Returns false if it cannot be proven to be a subset
-   * of ther other subset.
+   * Returns true if the indices accessed by this touch are a subset
+   * of predicate is true can be proven to be a subset of the other
+   * subset.  Returns false if it cannot be proven to be a subset of
+   * ther other subset.
    */
   bool IsSubsetOf(const BufferTouch& other) const;
 
@@ -128,7 +138,11 @@ class BufferTouch {
   // The BufferLoad or BufferStore object that caused this touch.
   ObjectRef node;
 
+  // The statement in which this touch occurred.
+  tir::Stmt stmt;
+
   friend class BufferTouchPattern;
+  friend class BufferConstraintSubstituter;
 };
 
 class BufferTouchPattern {
@@ -148,6 +162,23 @@ class BufferTouchPattern {
    * Returns false otherwise.
    */
   bool IsOverwrittenWithoutEffect(const tir::BufferStore& store) const;
+
+  /* \brief Simplify the expression, assuming it occurs within the given context
+   *
+   * \param expr The expression to be simplified.  Does not need to
+   * have occurred within the statement used to construct this
+   * BufferTouchPattern.
+   *
+   * \param context The statement where this expression occurred, or
+   * is to be inserted.  Must occur within the statement used to
+   * construct this BufferTouchPattern.
+   *
+   * \param analyzer The analyzer to be used for simplifications
+   *
+   * \returns The simplified statement
+   *
+   */
+  PrimExpr SimplifyInContext(PrimExpr expr, const tir::Stmt& context, Analyzer* analyzer) const;
 
   /* \brief Tests if a loaded value has a known value at the point of the load.
    *
@@ -205,6 +236,13 @@ class BufferTouchPattern {
    * exclusive predicates (e.g. for writes within an if/else).
    */
   std::vector<BufferTouch> touches_;
+
+  /* \brief A lookup into touches_
+   *
+   * A map to look up the first buffer touch that is at or after a
+   * given Stmt.
+   */
+  std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
 };
 
 }  // namespace arith

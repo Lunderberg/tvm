@@ -26,6 +26,7 @@
 #include <tvm/arith/int_solver.h>
 #include <tvm/runtime/registry.h>
 #include <tvm/tir/analysis.h>
+#include <tvm/tir/builtin.h>
 #include <tvm/tir/expr.h>
 #include <tvm/tir/op.h>
 #include <tvm/tir/stmt_functor.h>
@@ -33,6 +34,7 @@
 #include <sstream>
 #include <vector>
 
+#include "constraint_extract.h"
 #include "ir_visitor_with_analyzer.h"
 
 namespace tvm {
@@ -154,6 +156,13 @@ bool Predicate::CanProve(Array<PrimExpr> args, Analyzer* analyzer) const {
   return result;
 }
 
+bool Predicate::CanDisprove(Array<PrimExpr> args, Analyzer* analyzer) const {
+  With<ConstraintContext> constraint(analyzer, FreeParameterConstraints());
+  PrimExpr expr = (*this)(std::move(args));
+  bool result = analyzer->CanProve(!expr);
+  return result;
+}
+
 PrimExpr Predicate::FreeParameterConstraints() const {
   PrimExpr constraint = Bool(true);
   for (const auto& pair : free_parameters_) {
@@ -213,10 +222,11 @@ std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
 // Find Read region of the tensor in the stmt.
 class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
  public:
-  static std::vector<BufferTouch> Extract(const Stmt& stmt) {
+  static std::tuple<std::vector<BufferTouch>, std::unordered_map<const tir::StmtNode*, size_t>>
+  Extract(const Stmt& stmt) {
     BufferTouchExtractor extractor;
     extractor(stmt);
-    return extractor.touch_points_;
+    return {extractor.touch_points_, extractor.context_lookup_};
   }
 
  private:
@@ -225,10 +235,85 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   using Parent::VisitStmt_;
 
   void VisitStmt(const Stmt& stmt) override {
+    // Point from the statement to the first touch point that occurs
+    // at or after the statement.
+    context_lookup_[stmt.get()] = touch_points_.size();
     Stmt prev_stmt = current_stmt_;
     current_stmt_ = stmt;
     Parent::VisitStmt(stmt);
     current_stmt_ = prev_stmt;
+  }
+
+  void VisitStmt_(const EvaluateNode* op) override {
+    if (auto* call = op->value.as<CallNode>()) {
+      if (call->op.same_as(builtin::assume())) {
+        Assume(call->args[0]);
+        return;
+      }
+    }
+
+    Parent::VisitStmt_(op);
+  }
+
+  void Assume(PrimExpr assumption) {
+    for (const auto& expr : ExtractConstraints(assumption, false)) {
+      AssumeConstraintComponent(expr);
+    }
+  }
+
+  void AssumeConstraintComponent(PrimExpr assumption) {
+    PrimExpr additional_predicate = Bool(true);
+
+    std::vector<PrimExpr> buffer_exprs;
+    for (const auto& expr : ExtractComponents(assumption)) {
+      auto side_effect = tir::SideEffect(expr);
+      if (side_effect <= tir::CallEffectKind::kPure) {
+        // Pulling out portions of the assumption that do not depend
+        // on a buffer value allows the following two forms to be
+        // treated identically.
+        //
+        // if i < 3: T.assume(buf[i] == value)
+        // T.assume(i>=3 or buf[i] == value)
+        additional_predicate = additional_predicate && logical_not(expr);
+      } else if (side_effect == tir::CallEffectKind::kReadState) {
+        buffer_exprs.push_back(expr);
+      } else {
+        LOG(FATAL) << "Assumption must be pure or read-only";
+      }
+    }
+
+    CHECK_GT(buffer_exprs.size(), 0) << "T.assume must contain a buffer expression";
+    // if (buffer_exprs.empty()) {
+    //   global_constraints_.push_back(Simplify(logical_not(predicate)));
+    //   return;
+    // }
+
+    CHECK_EQ(buffer_exprs.size(), 1) << "T.assume must contain only a single buffer expression";
+
+    auto* as_equal_node = buffer_exprs[0].as<tir::EQNode>();
+    CHECK(as_equal_node)
+        << "T.assume buffer constraint must be of the form 'buffer[indices] == value'";
+
+    tir::BufferLoad load;
+    PrimExpr value;
+    if (auto* as_load = as_equal_node->a.as<tir::BufferLoadNode>()) {
+      load = GetRef<tir::BufferLoad>(as_load);
+      value = as_equal_node->b;
+    } else if (auto* as_load = as_equal_node->b.as<tir::BufferLoadNode>()) {
+      load = GetRef<tir::BufferLoad>(as_load);
+      value = as_equal_node->a;
+    } else {
+      LOG(FATAL) << "T.assume buffer constraint must be of the form 'buffer[indices] == value'";
+    }
+
+    CHECK(tir::SideEffect(value) <= tir::CallEffectKind::kPure)
+        << "Buffer value in constraint must be pure expression, but was " << value;
+
+    // TODO: An assumption shouldn't remove previously known
+    // constraints.  Will need to split out the BufferConstraint from
+    // the clearing of previous in KnownBufferValue.
+
+    VisitAccess(load, BufferTouch::AccessType::Read, value, additional_predicate);
   }
 
   void VisitExpr_(const LetNode* op) override {
@@ -258,7 +343,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   void VisitStmt_(const BufferStoreNode* op) override {
     Parent::VisitStmt_(op);
-    VisitAccess(GetRef<BufferStore>(op), BufferTouch::AccessType::Write);
+    VisitAccess(GetRef<BufferStore>(op), BufferTouch::AccessType::Write, op->value);
   }
 
   // TODO: tvm_access_ptr and address_of both act as opaque access of
@@ -279,11 +364,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   }
 
   template <typename BufferAccess>
-  void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type) {
+  void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type,
+                   Optional<PrimExpr> opt_known_value = NullOpt,
+                   Optional<PrimExpr> additional_predicate = NullOpt) {
     auto index_variables = MakeIndexVariables(node->indices);
     auto transform = SolveForBufferIndices(index_variables, node->indices);
-    auto predicate = CurrentPredicate(index_variables, node->indices, transform);
-    auto known_value = KnownValue(node, index_variables, transform);
+    auto predicate =
+        CurrentPredicate(index_variables, node->indices, transform, additional_predicate);
+    auto known_value = KnownValue(index_variables, transform, opt_known_value);
     touch_points_.push_back(BufferTouch(node->buffer, predicate, touch_type, known_value, node));
   }
 
@@ -336,13 +424,20 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return solution;
   }
 
-  Predicate CurrentPredicate(const Array<Var>& index_variables,
-                             const Array<PrimExpr>& index_expressions,
-                             const IntConstraintsTransform& transform) {
+  PrimExpr CurrentScopePredicate() const {
     PrimExpr predicate = Bool(true);
     for (const auto& condition : conditions_) {
       predicate = predicate && condition;
     }
+    return predicate;
+  }
+
+  Predicate CurrentPredicate(const Array<Var>& index_variables,
+                             const Array<PrimExpr>& index_expressions,
+                             const IntConstraintsTransform& transform,
+                             const Optional<PrimExpr>& additional_predicate) {
+    PrimExpr predicate = additional_predicate.value_or(Bool(true));
+    predicate = predicate && CurrentScopePredicate();
     predicate = Substitute(predicate, let_bindings_using_loop_);
 
     for (size_t i = 0; i < index_expressions.size(); i++) {
@@ -372,9 +467,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return Predicate(index_variables, predicate, transform->dst->ranges);
   }
 
-  ParametrizedExpression KnownValue(const BufferStore& store, const Array<Var>& index_variables,
-                                    const IntConstraintsTransform& transform) {
-    PrimExpr value = store->value;
+  ParametrizedExpression KnownValue(const Array<Var>& index_variables,
+                                    const IntConstraintsTransform& transform,
+                                    Optional<PrimExpr> opt_known_value) {
+    if (!opt_known_value) {
+      return ParametrizedExpression(index_variables, PrimExpr());
+    }
+
+    PrimExpr value = opt_known_value.value();
     value = Substitute(value, let_bindings_using_loop_);
     value = Substitute(value, transform->src_to_dst);
     value = analyzer_.Simplify(value);
@@ -388,12 +488,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     } else {
       return ParametrizedExpression(index_variables, value);
     }
-  }
-
-  ParametrizedExpression KnownValue(const BufferLoad& load, const Array<Var>& index_variables,
-                                    const IntConstraintsTransform& transform) {
-    // TODO: Track if a buffer load has a known value
-    return ParametrizedExpression(index_variables, PrimExpr());
   }
 
   // Track in order to know which Vars to write in terms of the buffer
@@ -416,10 +510,60 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   // Output data structure
   std::vector<BufferTouch> touch_points_;
+
+  // Map into touch_points_
+  std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
 };
 
-BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt)
-    : touches_(BufferTouchExtractor::Extract(stmt)) {}
+class BufferConstraintSubstituter : public ExprMutator {
+ public:
+  static PrimExpr Apply(const PrimExpr& expr, const std::vector<BufferTouch>& touches,
+                        size_t ignore_touches_after, Analyzer* analyzer) {
+    BufferConstraintSubstituter mutator(touches, ignore_touches_after, analyzer);
+    return mutator(expr);
+  }
+
+ private:
+  BufferConstraintSubstituter(const std::vector<BufferTouch>& touches, size_t context,
+                              Analyzer* analyzer)
+      : analyzer_(analyzer), touches_(touches), ignore_touches_after_(context) {}
+
+  PrimExpr VisitExpr_(const BufferLoadNode* op) override {
+    auto it = touches_.rbegin();
+    if (ignore_touches_after_ < touches_.size()) {
+      it += ignore_touches_after_;
+    }
+    for (; it != touches_.rend(); it++) {
+      const BufferTouch& touch = *it;
+      if (touch.buffer.same_as(op->buffer)) {
+        // If this buffer access resulted in a known value in the
+        // buffer, return that known value.
+        if (touch.known_value.IsDefined() && touch.predicate.CanProve(op->indices, analyzer_)) {
+          return touch.known_value(op->indices);
+        }
+
+        // If this buffer access was a write, we only check earlier
+        // writes if we can prove that the write acted on different
+        // than we are currently trying to read.
+        if (touch.touch_type == BufferTouch::AccessType::Write &&
+            !touch.predicate.CanProve(op->indices, analyzer_)) {
+          break;
+        }
+      }
+    }
+    return GetRef<PrimExpr>(op);
+  }
+
+  Analyzer* analyzer_;
+  const std::vector<BufferTouch>& touches_;
+  size_t ignore_touches_after_;
+};
+
+BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
+  auto res = BufferTouchExtractor::Extract(stmt);
+  touches_ = std::move(std::get<0>(res));
+  context_lookup_ = std::move(std::get<1>(res));
+}
 
 std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
   os << "Touch pattern contains " << pattern.touches_.size() << " touches."
@@ -465,6 +609,20 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(
   }
 
   return false;
+}
+
+PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
+                                               Analyzer* analyzer) const {
+  size_t context_index = [&]() {
+    auto it = context_lookup_.find(context.get());
+    ICHECK(it != context_lookup_.end())
+        << "Context did not occur in the Stmt provided to BufferTouchPattern's constructor";
+    return it->second;
+  }();
+
+  expr = BufferConstraintSubstituter::Apply(expr, touches_, context_index, analyzer);
+
+  return analyzer->Simplify(expr);
 }
 
 Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferStore& store) const {
@@ -516,6 +674,7 @@ Optional<PrimExpr> BufferTouchPattern::KnownValue(
 void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
   touches_.erase(std::remove_if(touches_.begin(), touches_.end(),
                                 [&](const auto& touch) { return touch.node.same_as(store); }));
+  // TODO: Update context_lookup_
 }
 
 }  // namespace arith

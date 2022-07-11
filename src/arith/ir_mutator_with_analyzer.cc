@@ -119,18 +119,6 @@ Stmt IRMutatorWithAnalyzer::VisitStmt_(const IfThenElseNode* op) {
   }
 }
 
-Stmt IRMutatorWithAnalyzer::VisitStmt_(const EvaluateNode* op) {
-  Evaluate output = Downcast<Evaluate>(StmtExprMutator::VisitStmt_(op));
-
-  if (auto* call = output->value.as<CallNode>()) {
-    if (call->op.same_as(builtin::assume())) {
-      analyzer_->constraint_tracker.Assume(call->args[0]);
-    }
-  }
-
-  return std::move(output);
-}
-
 Stmt IRMutatorWithAnalyzer::VisitStmt_(const AttrStmtNode* op) {
   if (op->attr_key == tir::attr::thread_extent || op->attr_key == tir::attr::virtual_thread) {
     IterVar iv = Downcast<IterVar>(op->node);
