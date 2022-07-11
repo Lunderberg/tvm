@@ -101,10 +101,10 @@ class Predicate : public ParametrizedExpression {
    */
   bool CanDisprove(Array<PrimExpr> args, Analyzer* analyzer) const;
 
- private:
-  /* \brief Internal utility to express parameter ranges as boolean constraint */
+  /* \brief Boolean expression defining ranges of free parameters */
   PrimExpr FreeParameterConstraints() const;
 
+ private:
   Map<tir::Var, Range> free_parameters_;
 };
 

@@ -222,13 +222,6 @@ std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
 // Find Read region of the tensor in the stmt.
 class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
  public:
-  static std::tuple<std::vector<BufferTouch>, std::unordered_map<const tir::StmtNode*, size_t>>
-  Extract(const Stmt& stmt) {
-    BufferTouchExtractor extractor;
-    extractor(stmt);
-    return {extractor.touch_points_, extractor.context_lookup_};
-  }
-
   using Parent = IRVisitorWithAnalyzer;
   using Parent::VisitExpr_;
   using Parent::VisitStmt_;
@@ -528,24 +521,58 @@ class BufferConstraintSubstituter : public ExprMutator {
     if (ignore_touches_after_ < touch_pattern_.touch_points_.size()) {
       it += ignore_touches_after_;
     }
+
+    PrimExpr access_predicate = Bool(true);
+
+    auto implies = [this](const PrimExpr& known, const PrimExpr& conjecture) -> bool {
+      With<ConstraintContext> constraint(analyzer_, known);
+      return analyzer_->CanProve(conjecture);
+    };
+
+    std::vector<std::pair<PrimExpr, PrimExpr>> known_subregion;
+    PrimExpr free_parameter_constraints = Bool(true);
+
     for (; it != touch_pattern_.touch_points_.rend(); it++) {
       const BufferTouch& touch = *it;
-      if (touch.buffer.same_as(op->buffer)) {
-        // If this buffer access resulted in a known value in the
-        // buffer, return that known value.
-        if (touch.known_value.IsDefined() && touch.predicate.CanProve(op->indices, analyzer_)) {
-          return touch.known_value(op->indices);
-        }
 
-        // If this buffer access was a write, we only check earlier
-        // writes if we can prove that the write acted on different
-        // than we are currently trying to read.
-        if (touch.touch_type == BufferTouch::AccessType::Write &&
-            !touch.predicate.CanProve(op->indices, analyzer_)) {
-          break;
+      PrimExpr touch_predicate = analyzer_->Simplify(touch.predicate(op->indices));
+
+      // With<ConstraintContext> isn't safe to use in a std::vector,
+      // so instead we collect a single expression with all the extra
+      // constraints.
+      free_parameter_constraints =
+          free_parameter_constraints && touch.predicate.FreeParameterConstraints();
+      With<ConstraintContext> constraint(analyzer_, free_parameter_constraints);
+
+      if (!op->buffer.same_as(touch.buffer)) {
+        // This is a different buffer, ignore
+      } else if (touch.known_value.IsDefined() && implies(access_predicate, touch_predicate)) {
+        // This access resulted in a known value, return it.
+        PrimExpr value = touch.known_value(op->indices);
+        for (auto it = known_subregion.rbegin(); it != known_subregion.rend(); it++) {
+          value = if_then_else(it->first, it->second, value);
         }
+        return value;
+      } else if (implies(access_predicate, logical_not(touch_predicate))) {
+        // The previous access didn't change the values we're
+        // interested in, so continue searching.
+      } else if (touch.known_value.IsDefined()) {
+        // The previous access resulted in a known value, but only for
+        // some of the indices we are interested in.  It's still
+        // possible that the same value
+        known_subregion.push_back({touch.predicate(op->indices), touch.known_value(op->indices)});
+        access_predicate = access_predicate && !touch_predicate;
+      } else if (touch.touch_type == BufferTouch::AccessType::Read) {
+        // This access didn't change the buffer's contents, so
+        // continue backtracking.
+      } else {
+        // This BufferTouch writes values to the buffer that we might
+        // use, and we don't know what those values are.  Therefore,
+        // cannot simplify out the buffer access.
+        return GetRef<PrimExpr>(op);
       }
     }
+
     return GetRef<PrimExpr>(op);
   }
 
