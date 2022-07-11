@@ -229,7 +229,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return {extractor.touch_points_, extractor.context_lookup_};
   }
 
- private:
   using Parent = IRVisitorWithAnalyzer;
   using Parent::VisitExpr_;
   using Parent::VisitStmt_;
@@ -282,11 +281,10 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       }
     }
 
-    CHECK_GT(buffer_exprs.size(), 0) << "T.assume must contain a buffer expression";
-    // if (buffer_exprs.empty()) {
-    //   global_constraints_.push_back(Simplify(logical_not(predicate)));
-    //   return;
-    // }
+    if (buffer_exprs.empty()) {
+      non_buffer_assumptions_.push_back(!CurrentScopePredicate() || assumption);
+      return;
+    }
 
     CHECK_EQ(buffer_exprs.size(), 1) << "T.assume must contain only a single buffer expression";
 
@@ -511,29 +509,26 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   // Output data structure
   std::vector<BufferTouch> touch_points_;
 
+  std::vector<PrimExpr> non_buffer_assumptions_;
+
   // Map into touch_points_
   std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
 };
 
 class BufferConstraintSubstituter : public ExprMutator {
  public:
-  static PrimExpr Apply(const PrimExpr& expr, const std::vector<BufferTouch>& touches,
-                        size_t ignore_touches_after, Analyzer* analyzer) {
-    BufferConstraintSubstituter mutator(touches, ignore_touches_after, analyzer);
-    return mutator(expr);
-  }
-
- private:
-  BufferConstraintSubstituter(const std::vector<BufferTouch>& touches, size_t context,
+  BufferConstraintSubstituter(const BufferTouchPattern& touch_pattern, size_t ignore_touches_after_,
                               Analyzer* analyzer)
-      : analyzer_(analyzer), touches_(touches), ignore_touches_after_(context) {}
+      : touch_pattern_(touch_pattern),
+        analyzer_(analyzer),
+        ignore_touches_after_(ignore_touches_after_) {}
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) override {
-    auto it = touches_.rbegin();
-    if (ignore_touches_after_ < touches_.size()) {
+    auto it = touch_pattern_.touch_points_.rbegin();
+    if (ignore_touches_after_ < touch_pattern_.touch_points_.size()) {
       it += ignore_touches_after_;
     }
-    for (; it != touches_.rend(); it++) {
+    for (; it != touch_pattern_.touch_points_.rend(); it++) {
       const BufferTouch& touch = *it;
       if (touch.buffer.same_as(op->buffer)) {
         // If this buffer access resulted in a known value in the
@@ -554,24 +549,26 @@ class BufferConstraintSubstituter : public ExprMutator {
     return GetRef<PrimExpr>(op);
   }
 
+  const BufferTouchPattern& touch_pattern_;
   Analyzer* analyzer_;
-  const std::vector<BufferTouch>& touches_;
   size_t ignore_touches_after_;
 };
 
 BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
-  auto res = BufferTouchExtractor::Extract(stmt);
-  touches_ = std::move(std::get<0>(res));
-  context_lookup_ = std::move(std::get<1>(res));
+  BufferTouchExtractor extractor;
+  extractor(stmt);
+  touch_points_ = std::move(extractor.touch_points_);
+  context_lookup_ = std::move(extractor.context_lookup_);
+  non_buffer_assumptions_ = std::move(extractor.non_buffer_assumptions_);
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
-  os << "Touch pattern contains " << pattern.touches_.size() << " touches."
-     << (pattern.touches_.size() ? "\n" : "");
-  for (size_t i = 0; i < pattern.touches_.size(); i++) {
+  os << "Touch pattern contains " << pattern.touch_points_.size() << " touches."
+     << (pattern.touch_points_.size() ? "\n" : "");
+  for (size_t i = 0; i < pattern.touch_points_.size(); i++) {
     os << "\t"
-       << "Touch[" << i << "] = " << pattern.touches_[i];
-    if (i + 1 < pattern.touches_.size()) {
+       << "Touch[" << i << "] = " << pattern.touch_points_[i];
+    if (i + 1 < pattern.touch_points_.size()) {
       os << "\n";
     }
   }
@@ -581,7 +578,7 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
 bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& store) const {
   bool write_occurred = false;
 
-  for (auto it = touches_.begin(); it != touches_.end(); it++) {
+  for (auto it = touch_points_.begin(); it != touch_points_.end(); it++) {
     if (it->node.same_as(store)) {
       write_occurred = true;
       if (!IsOverwrittenWithoutEffect(it)) {
@@ -597,7 +594,7 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& stor
 
 bool BufferTouchPattern::IsOverwrittenWithoutEffect(
     std::vector<BufferTouch>::const_iterator write_iter) const {
-  for (auto it = write_iter + 1; it != touches_.end(); it++) {
+  for (auto it = write_iter + 1; it != touch_points_.end(); it++) {
     // If the write_iter was a subset of another write, then it was entirely overwritten.
     if (it->touch_type == BufferTouch::AccessType::Write && write_iter->IsSubsetOf(*it)) {
       return true;
@@ -620,15 +617,21 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
     return it->second;
   }();
 
-  expr = BufferConstraintSubstituter::Apply(expr, touches_, context_index, analyzer);
+  BufferConstraintSubstituter mutator(*this, context_index, analyzer);
+  expr = mutator(expr);
 
+  PrimExpr constraint = Bool(true);
+  for (const auto& known : non_buffer_assumptions_) {
+    constraint = constraint && known;
+  }
+  With<ConstraintContext> constraint_context(analyzer, constraint);
   return analyzer->Simplify(expr);
 }
 
 Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferStore& store) const {
   Array<PrimExpr> values;
 
-  for (auto it = touches_.rbegin(); it != touches_.rend(); it++) {
+  for (auto it = touch_points_.rbegin(); it != touch_points_.rend(); it++) {
     if (it->node.same_as(store)) {
       if (auto opt = KnownValue(it, store->indices)) {
         values.push_back(opt.value());
@@ -661,7 +664,7 @@ Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferLoad& load) c
 Optional<PrimExpr> BufferTouchPattern::KnownValue(
     std::vector<BufferTouch>::const_reverse_iterator access_iter,
     const Array<PrimExpr>& indices) const {
-  for (auto it = access_iter + 1; it != touches_.rend(); it++) {
+  for (auto it = access_iter + 1; it != touch_points_.rend(); it++) {
     // If a previous write touched the same indices, then we can use
     // the recorded values at those indices.
     if (it->touch_type == BufferTouch::AccessType::Write && access_iter->IsSubsetOf(*it)) {
@@ -672,8 +675,8 @@ Optional<PrimExpr> BufferTouchPattern::KnownValue(
 }
 
 void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
-  touches_.erase(std::remove_if(touches_.begin(), touches_.end(),
-                                [&](const auto& touch) { return touch.node.same_as(store); }));
+  touch_points_.erase(std::remove_if(touch_points_.begin(), touch_points_.end(),
+                                     [&](const auto& touch) { return touch.node.same_as(store); }));
   // TODO: Update context_lookup_
 }
 

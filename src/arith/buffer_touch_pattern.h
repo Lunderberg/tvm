@@ -151,7 +151,7 @@ class BufferTouchPattern {
    */
   explicit BufferTouchPattern(const tir::Stmt& stmt);
 
-  const std::vector<BufferTouch>& GetTouches() const { return touches_; }
+  const std::vector<BufferTouch>& GetTouches() const { return touch_points_; }
 
   /* \brief Check if a write is overwritten without impacting final results
    *
@@ -235,7 +235,7 @@ class BufferTouchPattern {
    * writes of a buffer), or buffer touch i and j have mutually
    * exclusive predicates (e.g. for writes within an if/else).
    */
-  std::vector<BufferTouch> touches_;
+  std::vector<BufferTouch> touch_points_;
 
   /* \brief A lookup into touches_
    *
@@ -243,6 +243,11 @@ class BufferTouchPattern {
    * given Stmt.
    */
   std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
+
+  /* \brief Assumptions that do not depend on buffer values */
+  std::vector<PrimExpr> non_buffer_assumptions_;
+
+  friend class BufferConstraintSubstituter;
 };
 
 }  // namespace arith
