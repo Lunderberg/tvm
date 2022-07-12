@@ -37,6 +37,7 @@
 #include "constraint_extract.h"
 #include "ir_mutator_with_analyzer.h"
 #include "ir_visitor_with_analyzer.h"
+#include "unwrap_vector_expr.h"
 
 namespace tvm {
 namespace arith {
@@ -277,12 +278,21 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
       const BufferTouch& touch = *it;
 
       if (!op->buffer.same_as(touch.buffer)) {
-        // This is a different buffer, ignore
+        // This is a different buffer, so continue searching.
+        continue;
+      } else if (!touch.predicate.IsDefined() &&
+                 touch.touch_type == BufferTouch::AccessType::Write) {
+        // This buffer touch occurred at an unknown location, which
+        // could have overwritten the values we are looking for
+        break;
+      } else if (!touch.predicate.IsDefined() &&
+                 touch.touch_type == BufferTouch::AccessType::Read) {
+        // This buffer touch occurred at an unknown location, but
+        // didn't do anything at that location.
         continue;
       }
 
-      Optional<PrimExpr> touch_predicate_opt = touch.predicate(op->indices);
-      PrimExpr touch_predicate = analyzer_->Simplify(touch_predicate_opt.value());
+      PrimExpr touch_predicate = analyzer_->Simplify(touch.predicate(op->indices).value());
 
       // With<ConstraintContext> isn't safe to use in a std::vector,
       // so instead we collect a single expression with all the extra
@@ -301,6 +311,7 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
       } else if (implies(access_predicate, logical_not(touch_predicate))) {
         // The previous access didn't change the values we're
         // interested in, so continue searching.
+        continue;
       } else if (touch.known_value.IsDefined()) {
         // The previous access resulted in a known value, but only for
         // some of the indices we are interested in.  It's still
@@ -314,8 +325,7 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
         // This BufferTouch writes values to the buffer that we might
         // use, and we don't know what those values are.  Therefore,
         // cannot simplify out the buffer access.
-        all_buffer_loads_removed_ = false;
-        return Parent::VisitExpr_(op);
+        break;
       }
     }
 
@@ -468,13 +478,90 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   template <typename BufferAccess>
   void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type,
-                   Optional<PrimExpr> opt_known_value = NullOpt,
+                   Optional<PrimExpr> known_value_expr = NullOpt,
                    Optional<PrimExpr> additional_predicate = NullOpt) {
     auto index_variables = MakeIndexVariables(node->indices);
-    auto transform = SolveForBufferIndices(index_variables, node->indices);
-    auto predicate =
-        CurrentPredicate(index_variables, node->indices, transform, additional_predicate);
-    auto known_value = KnownValue(index_variables, transform, opt_known_value);
+
+    Optional<Var> lane_var = NullOpt;
+
+    Array<PrimExpr> index_expressions = node->indices;
+    index_expressions.MutateByApply([&](const auto& index) {
+      if (index.dtype().lanes() == 1) {
+        return index;
+      } else {
+        ICHECK(!lane_var) << "Multiple indices found with non-scalar values";
+        lane_var = Var("lane", index.dtype().element_of());
+        return UnwrapVectorExpr(index, lane_var.value());
+      }
+    });
+
+    // If the indices contain multiple lanes, treat the lane variable
+    // as an additional loop iterator to be solved for and substituted
+    // out.
+    IntConstraintsTransform transform;
+    if (lane_var) {
+      active_loop_iterators_.push_back(lane_var.value());
+      transform = SolveForBufferIndices(index_variables, index_expressions);
+      active_loop_iterators_.pop_back();
+    } else {
+      transform = SolveForBufferIndices(index_variables, index_expressions);
+    }
+
+    // Normalization function, applied to both the predicate and the
+    // known value.  Converts from an expression in terms of loop
+    // iterators which may contain BufferLoad to an expression in
+    // terms of buffer indices which may not contain BufferLoad.  If
+    // this conversion cannot be done, returns None.
+    auto normalize_expr = [&](const Optional<PrimExpr>& opt) -> Optional<PrimExpr> {
+      if (!opt) {
+        return NullOpt;
+      }
+
+      PrimExpr expr = opt.value();
+      expr = Substitute(expr, let_bindings_using_loop_);
+
+      if (lane_var) {
+        expr = UnwrapVectorExpr(expr, lane_var.value());
+      }
+      expr = Substitute(expr, transform->src_to_dst);
+
+      if (Optional<PrimExpr> without_buffer_load =
+              BufferConstraintSubstituter(touch_points_, -1, &analyzer_).WithoutBufferLoad(expr)) {
+        expr = without_buffer_load.value();
+      } else {
+        return NullOpt;
+      }
+
+      expr = analyzer_.Simplify(expr);
+
+      return expr;
+    };
+
+    // The full predicate is composed of the values required to reach
+    // the scope of the BufferStore or builtin::assume(), any bounds
+    // implied by the indices used to access the buffer, and any
+    // additional statements resulting from unpacking the expression
+    // contained in builtin::assume().
+    Optional<PrimExpr> predicate_expr = CurrentScopePredicate() &&
+                                        IndexRangePredicate(index_variables, index_expressions) &&
+                                        additional_predicate.value_or(Bool(true));
+
+    predicate_expr = normalize_expr(predicate_expr);
+    known_value_expr = normalize_expr(known_value_expr);
+
+    if (known_value_expr) {
+      const auto& free_params = transform->dst->ranges;
+      bool uses_free_param = UsesVar(known_value_expr.value(), [&](const VarNode* var) {
+        return free_params.find(GetRef<Var>(var)) != free_params.end();
+      });
+      if (uses_free_param) {
+        known_value_expr = NullOpt;
+      }
+    }
+
+    Predicate predicate(index_variables, predicate_expr, transform->dst->ranges);
+    ParametrizedExpression known_value(index_variables, known_value_expr);
+
     touch_points_.push_back(BufferTouch(node->buffer, predicate, touch_type, known_value, node));
   }
 
@@ -492,14 +579,15 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     for (size_t i = 0; i < indices.size(); i++) {
       std::stringstream ss;
       ss << "i_" << i;
-      vars.push_back(Var(ss.str()));
+      vars.push_back(Var(ss.str(), indices[i].dtype().element_of()));
     }
     return vars;
   }
 
   IntConstraintsTransform SolveForBufferIndices(const Array<Var>& index_variables,
                                                 const Array<PrimExpr>& index_expressions) {
-    Map<Var, Range> ranges;
+    ICHECK_EQ(index_variables.size(), index_expressions.size());
+
     Array<PrimExpr> relations;
 
     for (size_t i = 0; i < index_expressions.size(); i++) {
@@ -513,15 +601,15 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     Array<Var> loop_vars;
 
-    Map<Var, Range> loop_ranges;
+    Map<Var, Range> ranges;
     for (const auto& loop_var : active_loop_iterators_) {
       loop_vars.push_back(loop_var);
       IntSet loop_set = analyzer_.int_set(loop_var);
       Range loop_range = Range(loop_set.min(), loop_set.max());
-      loop_ranges.Set(loop_var, loop_range);
+      ranges.Set(loop_var, loop_range);
     }
 
-    IntConstraints system(loop_vars, loop_ranges, relations);
+    IntConstraints system(loop_vars, ranges, relations);
     IntConstraintsTransform solution = arith::SolveLinearEquations(system);
 
     return solution;
@@ -535,13 +623,11 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return predicate;
   }
 
-  Predicate CurrentPredicate(const Array<Var>& index_variables,
-                             const Array<PrimExpr>& index_expressions,
-                             const IntConstraintsTransform& transform,
-                             const Optional<PrimExpr>& additional_predicate) {
-    PrimExpr predicate = additional_predicate.value_or(Bool(true));
-    predicate = predicate && CurrentScopePredicate();
-    predicate = Substitute(predicate, let_bindings_using_loop_);
+  PrimExpr IndexRangePredicate(const Array<Var>& index_variables,
+                               const Array<PrimExpr>& index_expressions) {
+    ICHECK_EQ(index_variables.size(), index_expressions.size());
+
+    PrimExpr predicate = Bool(true);
 
     for (size_t i = 0; i < index_expressions.size(); i++) {
       PrimExpr index = index_expressions[i];
@@ -561,44 +647,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       }
     }
 
-    predicate = Substitute(predicate, transform->src_to_dst);
-    predicate = analyzer_.Simplify(predicate);
-
-    ICHECK(!UsesLoopVar(predicate))
-        << "Internal error: Loop variable still used after substituting out the loop variable";
-
-    return Predicate(index_variables, predicate, transform->dst->ranges);
-  }
-
-  ParametrizedExpression KnownValue(const Array<Var>& index_variables,
-                                    const IntConstraintsTransform& transform,
-                                    Optional<PrimExpr> opt_known_value) {
-    if (!opt_known_value) {
-      return ParametrizedExpression(index_variables, NullOpt);
-    }
-
-    PrimExpr value = opt_known_value.value();
-    value = Substitute(value, let_bindings_using_loop_);
-    value = Substitute(value, transform->src_to_dst);
-
-    if (Optional<PrimExpr> without_buffer_load =
-            BufferConstraintSubstituter(touch_points_, -1, &analyzer_).WithoutBufferLoad(value)) {
-      value = without_buffer_load.value();
-    } else {
-      return ParametrizedExpression(index_variables, NullOpt);
-    }
-
-    value = analyzer_.Simplify(value);
-
-    auto free_params = transform->dst->ranges;
-    bool uses_free_param = UsesVar(value, [&](const VarNode* var) {
-      return free_params.find(GetRef<Var>(var)) != free_params.end();
-    });
-    if (uses_free_param) {
-      return ParametrizedExpression(index_variables, NullOpt);
-    } else {
-      return ParametrizedExpression(index_variables, value);
-    }
+    return predicate;
   }
 
   // Track in order to know which Vars to write in terms of the buffer

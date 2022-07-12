@@ -998,5 +998,43 @@ class TestSimplifyUsingTransitiveKnownBufferValue(BaseBeforeAfter):
         A[0] = 42
 
 
+class TestSimplifyRampIndexBroadcastValue(BaseBeforeAfter):
+    """Simplifications involving buffer loads with ramp indices"""
+
+    def before(A: T.Buffer[4, "int32"]):
+        A[T.ramp(0, 1, 4)] = T.broadcast(0, 4)
+
+        if A[0] == 0:
+            A[0] = 42
+
+        if A[1] == 0:
+            A[1] = 60
+
+    def expected(A: T.Buffer[4, "int32"]):
+        A[T.ramp(0, 1, 4)] = T.broadcast(0, 4)
+
+        A[0] = 42
+        A[1] = 60
+
+
+class TestSimplifyRampIndexRampValue(BaseBeforeAfter):
+    """Simplifications involving buffer loads with ramp indices"""
+
+    def before(A: T.Buffer[4, "int32"]):
+        A[T.ramp(0, 1, 4)] = T.ramp(11, 1, 4)
+
+        if A[0] == 11:
+            A[0] = 42
+
+        if A[1] == 12:
+            A[1] = 60
+
+    def expected(A: T.Buffer[4, "int32"]):
+        A[T.ramp(0, 1, 4)] = T.ramp(11, 1, 4)
+
+        A[0] = 42
+        A[1] = 60
+
+
 if __name__ == "__main__":
     tvm.testing.main()
