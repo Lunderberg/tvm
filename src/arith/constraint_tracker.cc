@@ -123,12 +123,7 @@ class ConstraintTracker::Impl {
         return NullOpt;
       }
 
-      PrimExpr value = this->value(indices);
-      if (value.defined()) {
-        return value;
-      } else {
-        return NullOpt;
-      }
+      return this->value(indices);
     }
 
     tir::Buffer buf;

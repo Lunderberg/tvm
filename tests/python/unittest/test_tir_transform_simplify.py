@@ -971,5 +971,32 @@ class TestNoSimplifyUsingPreLoopBufferValue(BaseBeforeAfter):
     expected = before
 
 
+class TestSimplifyUsingTransitiveKnownBufferValue(BaseBeforeAfter):
+    """Propagate known buffer values
+
+    If a known value of a buffer depends on another known value, it
+    can be tracked backwards through both.
+    """
+
+    def before(A: T.Buffer[1, "int32"]):
+        T.assume(A[0] == 0)
+
+        A[0] = A[0] + 1
+        A[0] = A[0] + 1
+        A[0] = A[0] + 1
+
+        if A[0] == 3:
+            A[0] = 42
+
+    def expected(A: T.Buffer[1, "int32"]):
+        T.assume(A[0] == 0)
+
+        A[0] = A[0] + 1
+        A[0] = A[0] + 1
+        A[0] = A[0] + 1
+
+        A[0] = 42
+
+
 if __name__ == "__main__":
     tvm.testing.main()

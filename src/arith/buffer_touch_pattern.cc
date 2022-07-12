@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "constraint_extract.h"
+#include "ir_mutator_with_analyzer.h"
 #include "ir_visitor_with_analyzer.h"
 
 namespace tvm {
@@ -42,16 +43,17 @@ namespace arith {
 
 using namespace tir;
 
-ParametrizedExpression::ParametrizedExpression(Array<Var> parameter_vars, PrimExpr expression)
+ParametrizedExpression::ParametrizedExpression(Array<Var> parameter_vars,
+                                               Optional<PrimExpr> expression)
     : parameter_vars_(parameter_vars), expression_(expression) {}
 
-PrimExpr ParametrizedExpression::operator()(Array<PrimExpr> args) const {
+Optional<PrimExpr> ParametrizedExpression::operator()(Array<PrimExpr> args) const {
   ICHECK_EQ(parameter_vars_.size(), args.size())
       << "Expression was defined as having " << parameter_vars_.size()
       << " parameters, but received " << args.size() << " arguments.";
 
-  if (!expression_.defined()) {
-    return expression_;
+  if (!expression_) {
+    return NullOpt;
   }
 
   Map<tir::Var, PrimExpr> var_map;
@@ -59,15 +61,19 @@ PrimExpr ParametrizedExpression::operator()(Array<PrimExpr> args) const {
     var_map.Set(parameter_vars_[i], args[i]);
   }
 
-  return Substitute(expression_, var_map);
+  return Substitute(expression_.value(), var_map);
 }
 
 bool ParametrizedExpression::IsConstant() const {
+  if (!IsDefined()) {
+    return true;
+  }
+
   std::unordered_set<const VarNode*> vars;
   for (const auto& var : parameter_vars_) {
     vars.insert(var.get());
   }
-  return !UsesVar(expression_, [&](const VarNode* var) { return vars.count(var); });
+  return !UsesVar(expression_.value(), [&](const VarNode* var) { return vars.count(var); });
 }
 
 std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr) {
@@ -79,7 +85,7 @@ std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr) {
   return os;
 }
 
-Predicate::Predicate(Array<tir::Var> parameter_vars, PrimExpr expression,
+Predicate::Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression,
                      Map<tir::Var, Range> free_parameters)
     : ParametrizedExpression(parameter_vars, expression), free_parameters_(free_parameters) {}
 
@@ -87,18 +93,22 @@ bool Predicate::IsSubsetOf(const Predicate& other) const {
   ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
       << "Predicates must be over the same number of parameters to be comparable";
 
+  if (!IsDefined() || !other.IsDefined()) {
+    return false;
+  }
+
   Array<PrimExpr> vars_as_primexpr;
   for (const auto& var : parameter_vars_) {
     vars_as_primexpr.push_back(var);
   }
 
-  PrimExpr other_predicate = other(vars_as_primexpr);
+  PrimExpr other_predicate = other(vars_as_primexpr).value();
 
   arith::Analyzer analyzer;
 
   With<ConstraintContext> this_params(&analyzer, this->FreeParameterConstraints());
   With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
-  With<ConstraintContext> constraint(&analyzer, expression_);
+  With<ConstraintContext> constraint(&analyzer, expression_.value());
 
   return analyzer.CanProve(other_predicate);
 }
@@ -107,18 +117,22 @@ bool Predicate::IsDistinctFrom(const Predicate& other) const {
   ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
       << "Predicates must be over the same number of parameters to be comparable";
 
+  if (!IsDefined() || !other.IsDefined()) {
+    return false;
+  }
+
   Array<PrimExpr> vars_as_primexpr;
   for (const auto& var : parameter_vars_) {
     vars_as_primexpr.push_back(var);
   }
 
-  PrimExpr other_predicate = other(vars_as_primexpr);
+  PrimExpr other_predicate = other(vars_as_primexpr).value();
 
   arith::Analyzer analyzer;
 
   With<ConstraintContext> this_params(&analyzer, this->FreeParameterConstraints());
   With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
-  With<ConstraintContext> constraint(&analyzer, expression_);
+  With<ConstraintContext> constraint(&analyzer, expression_.value());
 
   return analyzer.CanProve(logical_not(other_predicate));
 }
@@ -127,19 +141,23 @@ Predicate Predicate::Difference(const Predicate& other) const {
   ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
       << "Predicates must be over the same number of parameters to be comparable";
 
+  if (!IsDefined() || !other.IsDefined()) {
+    return Predicate(parameter_vars_, NullOpt, {});
+  }
+
   Array<PrimExpr> vars_as_primexpr;
   for (const auto& var : parameter_vars_) {
     vars_as_primexpr.push_back(var);
   }
 
-  PrimExpr other_predicate = other(vars_as_primexpr);
+  PrimExpr other_predicate = other(vars_as_primexpr).value();
 
   arith::Analyzer analyzer;
 
   With<ConstraintContext> this_params(&analyzer, this->FreeParameterConstraints());
   With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
 
-  PrimExpr new_predicate_expr = analyzer.Simplify(expression_ && !other_predicate);
+  PrimExpr new_predicate_expr = analyzer.Simplify(expression_.value() && !other_predicate);
 
   Map<tir::Var, Range> new_free_params = free_parameters_;
   for (const auto& pair : other.free_parameters_) {
@@ -151,16 +169,14 @@ Predicate Predicate::Difference(const Predicate& other) const {
 
 bool Predicate::CanProve(Array<PrimExpr> args, Analyzer* analyzer) const {
   With<ConstraintContext> constraint(analyzer, FreeParameterConstraints());
-  PrimExpr expr = (*this)(std::move(args));
-  bool result = analyzer->CanProve(expr);
-  return result;
+  Optional<PrimExpr> expr = (*this)(std::move(args));
+  return expr && analyzer->CanProve(expr.value());
 }
 
 bool Predicate::CanDisprove(Array<PrimExpr> args, Analyzer* analyzer) const {
   With<ConstraintContext> constraint(analyzer, FreeParameterConstraints());
-  PrimExpr expr = (*this)(std::move(args));
-  bool result = analyzer->CanProve(!expr);
-  return result;
+  Optional<PrimExpr> expr = (*this)(std::move(args));
+  return expr && analyzer->CanProve(!expr.value());
 }
 
 PrimExpr Predicate::FreeParameterConstraints() const {
@@ -218,6 +234,101 @@ std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
   os << ")";
   return os;
 }
+
+class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
+ public:
+  using Parent = IRMutatorWithAnalyzer;
+
+  BufferConstraintSubstituter(const std::vector<BufferTouch>& touch_points,
+                              size_t ignore_touches_after_, Analyzer* analyzer)
+      : Parent(analyzer),
+        touch_points_(touch_points),
+        ignore_touches_after_(ignore_touches_after_) {}
+
+  Optional<PrimExpr> WithoutBufferLoad(const PrimExpr& expr) {
+    all_buffer_loads_removed_ = true;
+    PrimExpr modified = (*this)(expr);
+    if (all_buffer_loads_removed_) {
+      return modified;
+    } else {
+      return NullOpt;
+    }
+  }
+
+  using Parent::VisitExpr_;
+
+  PrimExpr VisitExpr_(const BufferLoadNode* op) override {
+    auto it = touch_points_.rbegin();
+    if (ignore_touches_after_ < touch_points_.size()) {
+      it += (touch_points_.size() - ignore_touches_after_);
+    }
+
+    PrimExpr access_predicate = Bool(true);
+
+    auto implies = [this](const PrimExpr& known, const PrimExpr& conjecture) -> bool {
+      With<ConstraintContext> constraint(analyzer_, known);
+      return analyzer_->CanProve(conjecture);
+    };
+
+    std::vector<std::pair<PrimExpr, PrimExpr>> known_subregion;
+    PrimExpr free_parameter_constraints = Bool(true);
+
+    for (; it != touch_points_.rend(); it++) {
+      const BufferTouch& touch = *it;
+
+      if (!op->buffer.same_as(touch.buffer)) {
+        // This is a different buffer, ignore
+        continue;
+      }
+
+      Optional<PrimExpr> touch_predicate_opt = touch.predicate(op->indices);
+      PrimExpr touch_predicate = analyzer_->Simplify(touch_predicate_opt.value());
+
+      // With<ConstraintContext> isn't safe to use in a std::vector,
+      // so instead we collect a single expression with all the extra
+      // constraints.
+      free_parameter_constraints =
+          free_parameter_constraints && touch.predicate.FreeParameterConstraints();
+      With<ConstraintContext> constraint(analyzer_, free_parameter_constraints);
+
+      if (touch.known_value.IsDefined() && implies(access_predicate, touch_predicate)) {
+        // This access resulted in a known value, return it.
+        PrimExpr value = touch.known_value(op->indices).value();
+        for (auto it = known_subregion.rbegin(); it != known_subregion.rend(); it++) {
+          value = if_then_else(it->first, it->second, value);
+        }
+        return value;
+      } else if (implies(access_predicate, logical_not(touch_predicate))) {
+        // The previous access didn't change the values we're
+        // interested in, so continue searching.
+      } else if (touch.known_value.IsDefined()) {
+        // The previous access resulted in a known value, but only for
+        // some of the indices we are interested in.  It's still
+        // possible that the same value
+        known_subregion.push_back({touch_predicate, touch.known_value(op->indices).value()});
+        access_predicate = access_predicate && !touch_predicate;
+      } else if (touch.touch_type == BufferTouch::AccessType::Read) {
+        // This access didn't change the buffer's contents, so
+        // continue backtracking.
+      } else {
+        // This BufferTouch writes values to the buffer that we might
+        // use, and we don't know what those values are.  Therefore,
+        // cannot simplify out the buffer access.
+        all_buffer_loads_removed_ = false;
+        return Parent::VisitExpr_(op);
+      }
+    }
+
+    // All known BufferTouch were examined without being able to
+    // determine the value of this buffer load.
+    all_buffer_loads_removed_ = false;
+    return Parent::VisitExpr_(op);
+  }
+
+  const std::vector<BufferTouch>& touch_points_;
+  size_t ignore_touches_after_;
+  bool all_buffer_loads_removed_{true};
+};
 
 // Find Read region of the tensor in the stmt.
 class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
@@ -329,7 +440,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   void VisitExpr_(const BufferLoadNode* op) override {
     Parent::VisitExpr_(op);
-    VisitAccess(GetRef<BufferLoad>(op), BufferTouch::AccessType::Read);
+    BufferLoad load = GetRef<BufferLoad>(op);
+    VisitAccess(load, BufferTouch::AccessType::Read, load);
   }
 
   void VisitStmt_(const BufferStoreNode* op) override {
@@ -462,12 +574,20 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
                                     const IntConstraintsTransform& transform,
                                     Optional<PrimExpr> opt_known_value) {
     if (!opt_known_value) {
-      return ParametrizedExpression(index_variables, PrimExpr());
+      return ParametrizedExpression(index_variables, NullOpt);
     }
 
     PrimExpr value = opt_known_value.value();
     value = Substitute(value, let_bindings_using_loop_);
     value = Substitute(value, transform->src_to_dst);
+
+    if (Optional<PrimExpr> without_buffer_load =
+            BufferConstraintSubstituter(touch_points_, -1, &analyzer_).WithoutBufferLoad(value)) {
+      value = without_buffer_load.value();
+    } else {
+      return ParametrizedExpression(index_variables, NullOpt);
+    }
+
     value = analyzer_.Simplify(value);
 
     auto free_params = transform->dst->ranges;
@@ -475,7 +595,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       return free_params.find(GetRef<Var>(var)) != free_params.end();
     });
     if (uses_free_param) {
-      return ParametrizedExpression(index_variables, PrimExpr());
+      return ParametrizedExpression(index_variables, NullOpt);
     } else {
       return ParametrizedExpression(index_variables, value);
     }
@@ -506,79 +626,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   // Map into touch_points_
   std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
-};
-
-class BufferConstraintSubstituter : public ExprMutator {
- public:
-  BufferConstraintSubstituter(const BufferTouchPattern& touch_pattern, size_t ignore_touches_after_,
-                              Analyzer* analyzer)
-      : touch_pattern_(touch_pattern),
-        analyzer_(analyzer),
-        ignore_touches_after_(ignore_touches_after_) {}
-
-  PrimExpr VisitExpr_(const BufferLoadNode* op) override {
-    auto it = touch_pattern_.touch_points_.rbegin();
-    if (ignore_touches_after_ < touch_pattern_.touch_points_.size()) {
-      it += ignore_touches_after_;
-    }
-
-    PrimExpr access_predicate = Bool(true);
-
-    auto implies = [this](const PrimExpr& known, const PrimExpr& conjecture) -> bool {
-      With<ConstraintContext> constraint(analyzer_, known);
-      return analyzer_->CanProve(conjecture);
-    };
-
-    std::vector<std::pair<PrimExpr, PrimExpr>> known_subregion;
-    PrimExpr free_parameter_constraints = Bool(true);
-
-    for (; it != touch_pattern_.touch_points_.rend(); it++) {
-      const BufferTouch& touch = *it;
-
-      PrimExpr touch_predicate = analyzer_->Simplify(touch.predicate(op->indices));
-
-      // With<ConstraintContext> isn't safe to use in a std::vector,
-      // so instead we collect a single expression with all the extra
-      // constraints.
-      free_parameter_constraints =
-          free_parameter_constraints && touch.predicate.FreeParameterConstraints();
-      With<ConstraintContext> constraint(analyzer_, free_parameter_constraints);
-
-      if (!op->buffer.same_as(touch.buffer)) {
-        // This is a different buffer, ignore
-      } else if (touch.known_value.IsDefined() && implies(access_predicate, touch_predicate)) {
-        // This access resulted in a known value, return it.
-        PrimExpr value = touch.known_value(op->indices);
-        for (auto it = known_subregion.rbegin(); it != known_subregion.rend(); it++) {
-          value = if_then_else(it->first, it->second, value);
-        }
-        return value;
-      } else if (implies(access_predicate, logical_not(touch_predicate))) {
-        // The previous access didn't change the values we're
-        // interested in, so continue searching.
-      } else if (touch.known_value.IsDefined()) {
-        // The previous access resulted in a known value, but only for
-        // some of the indices we are interested in.  It's still
-        // possible that the same value
-        known_subregion.push_back({touch.predicate(op->indices), touch.known_value(op->indices)});
-        access_predicate = access_predicate && !touch_predicate;
-      } else if (touch.touch_type == BufferTouch::AccessType::Read) {
-        // This access didn't change the buffer's contents, so
-        // continue backtracking.
-      } else {
-        // This BufferTouch writes values to the buffer that we might
-        // use, and we don't know what those values are.  Therefore,
-        // cannot simplify out the buffer access.
-        return GetRef<PrimExpr>(op);
-      }
-    }
-
-    return GetRef<PrimExpr>(op);
-  }
-
-  const BufferTouchPattern& touch_pattern_;
-  Analyzer* analyzer_;
-  size_t ignore_touches_after_;
 };
 
 BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
@@ -644,7 +691,7 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
     return it->second;
   }();
 
-  BufferConstraintSubstituter mutator(*this, context_index, analyzer);
+  BufferConstraintSubstituter mutator(touch_points_, context_index, analyzer);
   expr = mutator(expr);
 
   PrimExpr constraint = Bool(true);

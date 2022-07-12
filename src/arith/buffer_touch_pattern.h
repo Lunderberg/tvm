@@ -37,27 +37,27 @@ namespace arith {
 // Utility for expressing a parametric expression
 class ParametrizedExpression {
  public:
-  ParametrizedExpression(Array<tir::Var> parameter_vars, PrimExpr expression);
+  ParametrizedExpression(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression);
 
   /* \brief Evaluate the expression using the provided arguments
    */
-  PrimExpr operator()(Array<PrimExpr> args) const;
+  Optional<PrimExpr> operator()(Array<PrimExpr> args) const;
 
-  bool IsDefined() const { return expression_.defined(); }
+  bool IsDefined() const { return static_cast<bool>(expression_); }
   bool IsConstant() const;
 
   friend std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr);
 
  protected:
   Array<tir::Var> parameter_vars_;
-  PrimExpr expression_;
+  Optional<PrimExpr> expression_;
 };
 
 // Utility for expressing an boolean condition in terms of variable
 // parameters.
 class Predicate : public ParametrizedExpression {
  public:
-  Predicate(Array<tir::Var> parameter_vars, PrimExpr expression,
+  Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression,
             Map<tir::Var, Range> free_parameters);
 
   /* \brief Checks if this Predicate is a subset of another predicate
