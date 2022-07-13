@@ -429,23 +429,19 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   }
 
   void VisitExpr_(const LetNode* op) override {
+    BindLetVar binding;
     if (UsesLoopVar(op->value)) {
-      let_bindings_using_loop_[op->var.get()] = op->value;
-      loop_dependent_vars_.insert(op->var.get());
+      binding = BindLetVar(this, op->var, op->value);
     }
     Parent::VisitExpr_(op);
-    loop_dependent_vars_.erase(op->var.get());
-    let_bindings_using_loop_.erase(op->var.get());
   }
 
   void VisitStmt_(const LetStmtNode* op) override {
+    BindLetVar binding;
     if (UsesLoopVar(op->value)) {
-      let_bindings_using_loop_[op->var.get()] = op->value;
-      loop_dependent_vars_.insert(op->var.get());
+      binding = BindLetVar(this, op->var, op->value);
     }
     Parent::VisitStmt_(op);
-    loop_dependent_vars_.erase(op->var.get());
-    let_bindings_using_loop_.erase(op->var.get());
   }
 
   void VisitExpr_(const BufferLoadNode* op) override {
@@ -463,11 +459,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   // entire buffer.
 
   void VisitStmt_(const ForNode* op) override {
-    active_loop_iterators_.push_back(op->loop_var);
-    loop_dependent_vars_.insert(op->loop_var.get());
+    BindActiveLoopVar binding(this, op->loop_var);
     Parent::VisitStmt_(op);
-    loop_dependent_vars_.erase(op->loop_var.get());
-    active_loop_iterators_.pop_back();
   }
 
   bool UsesLoopVar(const PrimExpr& expr) {
@@ -500,9 +493,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // out.
     IntConstraintsTransform transform;
     if (lane_var) {
-      active_loop_iterators_.push_back(lane_var.value());
+      BindActiveLoopVar binding(this, lane_var.value());
       transform = SolveForBufferIndices(index_variables, index_expressions);
-      active_loop_iterators_.pop_back();
     } else {
       transform = SolveForBufferIndices(index_variables, index_expressions);
     }
@@ -649,6 +641,59 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     return predicate;
   }
+
+  struct BindActiveLoopVar {
+    BindActiveLoopVar() : self{nullptr} {}
+    BindActiveLoopVar(BufferTouchExtractor* self, Var var) : self(self), var(var) {
+      self->active_loop_iterators_.push_back(var);
+      self->loop_dependent_vars_.insert(var.get());
+    }
+
+    BindActiveLoopVar(const BindActiveLoopVar&) = delete;
+    BindActiveLoopVar& operator=(const BindActiveLoopVar&) = delete;
+
+    BindActiveLoopVar(BindActiveLoopVar&& other) : BindActiveLoopVar() {
+      std::swap(self, other.self);
+    }
+    BindActiveLoopVar& operator=(BindActiveLoopVar&& other) {
+      std::swap(self, other.self);
+      return *this;
+    }
+
+    ~BindActiveLoopVar() {
+      if (self) {
+        self->active_loop_iterators_.pop_back();
+      }
+    }
+    BufferTouchExtractor* self;
+    Var var;
+  };
+
+  struct BindLetVar {
+    BindLetVar() : self{nullptr} {}
+    BindLetVar(BufferTouchExtractor* self, Var var, PrimExpr value) : self(self), var(var) {
+      self->let_bindings_using_loop_[var.get()] = value;
+      self->loop_dependent_vars_.insert(var.get());
+    }
+
+    BindLetVar(const BindLetVar&) = delete;
+    BindLetVar& operator=(const BindLetVar&) = delete;
+
+    BindLetVar(BindLetVar&& other) : BindLetVar() { std::swap(self, other.self); }
+    BindLetVar& operator=(BindLetVar&& other) {
+      std::swap(self, other.self);
+      return *this;
+    }
+
+    ~BindLetVar() {
+      if (self) {
+        self->loop_dependent_vars_.erase(var.get());
+        self->let_bindings_using_loop_.erase(var.get());
+      }
+    }
+    BufferTouchExtractor* self;
+    Var var;
+  };
 
   // Track in order to know which Vars to write in terms of the buffer
   // indices and substitute out of the predicate.
