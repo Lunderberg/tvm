@@ -41,7 +41,11 @@ class ParametrizedExpression {
 
   /* \brief Evaluate the expression using the provided arguments
    */
-  Optional<PrimExpr> operator()(Array<PrimExpr> args) const;
+  Optional<PrimExpr> operator()(const Array<PrimExpr>& args) const;
+
+  /* \brief Evaluate the expression using the provided arguments
+   */
+  Optional<PrimExpr> operator()(const Array<Var>& args) const;
 
   bool IsDefined() const { return static_cast<bool>(expression_); }
   bool IsConstant() const;

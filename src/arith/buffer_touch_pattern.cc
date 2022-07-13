@@ -48,21 +48,33 @@ ParametrizedExpression::ParametrizedExpression(Array<Var> parameter_vars,
                                                Optional<PrimExpr> expression)
     : parameter_vars_(parameter_vars), expression_(expression) {}
 
-Optional<PrimExpr> ParametrizedExpression::operator()(Array<PrimExpr> args) const {
-  ICHECK_EQ(parameter_vars_.size(), args.size())
-      << "Expression was defined as having " << parameter_vars_.size()
-      << " parameters, but received " << args.size() << " arguments.";
+namespace {
+template <typename T>
+Optional<PrimExpr> SubstituteParamValues(const Array<Var>& param_vars, const Array<T>& param_values,
+                                         const Optional<PrimExpr>& expr) {
+  ICHECK_EQ(param_vars.size(), param_values.size())
+      << "Expression was defined as having " << param_vars.size() << " parameters, but received "
+      << param_values.size() << " arguments.";
 
-  if (!expression_) {
+  if (!expr) {
     return NullOpt;
   }
 
   Map<tir::Var, PrimExpr> var_map;
-  for (size_t i = 0; i < args.size(); i++) {
-    var_map.Set(parameter_vars_[i], args[i]);
+  for (size_t i = 0; i < param_values.size(); i++) {
+    var_map.Set(param_vars[i], param_values[i]);
   }
 
-  return Substitute(expression_.value(), var_map);
+  return Substitute(expr.value(), var_map);
+}
+}  // namespace
+
+Optional<PrimExpr> ParametrizedExpression::operator()(const Array<Var>& args) const {
+  return SubstituteParamValues(parameter_vars_, args, expression_);
+}
+
+Optional<PrimExpr> ParametrizedExpression::operator()(const Array<PrimExpr>& args) const {
+  return SubstituteParamValues(parameter_vars_, args, expression_);
 }
 
 bool ParametrizedExpression::IsConstant() const {
@@ -98,12 +110,7 @@ bool Predicate::IsSubsetOf(const Predicate& other) const {
     return false;
   }
 
-  Array<PrimExpr> vars_as_primexpr;
-  for (const auto& var : parameter_vars_) {
-    vars_as_primexpr.push_back(var);
-  }
-
-  PrimExpr other_predicate = other(vars_as_primexpr).value();
+  PrimExpr other_predicate = other(parameter_vars_).value();
 
   arith::Analyzer analyzer;
 
@@ -122,12 +129,7 @@ bool Predicate::IsDistinctFrom(const Predicate& other) const {
     return false;
   }
 
-  Array<PrimExpr> vars_as_primexpr;
-  for (const auto& var : parameter_vars_) {
-    vars_as_primexpr.push_back(var);
-  }
-
-  PrimExpr other_predicate = other(vars_as_primexpr).value();
+  PrimExpr other_predicate = other(parameter_vars_).value();
 
   arith::Analyzer analyzer;
 
@@ -146,12 +148,7 @@ Predicate Predicate::Difference(const Predicate& other) const {
     return Predicate(parameter_vars_, NullOpt, {});
   }
 
-  Array<PrimExpr> vars_as_primexpr;
-  for (const auto& var : parameter_vars_) {
-    vars_as_primexpr.push_back(var);
-  }
-
-  PrimExpr other_predicate = other(vars_as_primexpr).value();
+  PrimExpr other_predicate = other(parameter_vars_).value();
 
   arith::Analyzer analyzer;
 
