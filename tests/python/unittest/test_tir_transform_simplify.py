@@ -974,6 +974,29 @@ class TestNoSimplifyUsingPreLoopBufferValue(BaseBeforeAfter):
 
 
 @pytest.mark.xfail
+class TestSimplifyUsingPreLoopBufferValueOneBranchOnly(BaseBeforeAfter):
+    """A branch with a fixed point could be simplified
+
+    This is not supported in the current implementation.  If a loop
+    changes a buffer value at all, it is treated as an entirely
+    unknown value in later loop iterations.
+    """
+
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+        B[0] = 0
+        for i in T.serial(16):
+            if B[0] < 10:
+                B[0] = 1
+            else:
+                B[0] = A[i] + B[0]
+
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+        B[0] = 0
+        for i in T.serial(16):
+            B[0] = 1
+
+
+@pytest.mark.xfail
 class TestSimplifyNonConditional(BaseBeforeAfter):
     """Propagate a known value to later expressions
 

@@ -52,9 +52,13 @@ class ParametrizedExpression {
 
   friend std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr);
 
- protected:
+  // protected:
   Array<tir::Var> parameter_vars_;
   Optional<PrimExpr> expression_;
+
+  // TODO: Avoid having this as a friend class everywhere.
+  friend class BufferConstraintSubstituter;
+  friend class BufferTouchPattern;
 };
 
 // Utility for expressing an boolean condition in terms of variable
@@ -87,6 +91,13 @@ class Predicate : public ParametrizedExpression {
    */
   Predicate Difference(const Predicate& other) const;
 
+  /* \brief The difference of two predicates
+   *
+   * Returns a predicate that is true whenever this predicate is true
+   * and the other predicate is false.
+   */
+  Predicate Intersection(const Predicate& other) const;
+
   friend std::ostream& operator<<(std::ostream& os, const Predicate& expr);
 
   /* \brief Checks if this Predicate can be statically proven
@@ -105,10 +116,13 @@ class Predicate : public ParametrizedExpression {
    */
   bool CanDisprove(Array<PrimExpr> args, Analyzer* analyzer) const;
 
+  /* \brief Checks if this Predicate is always false */
+  bool IsAlwaysFalse() const;
+
   /* \brief Boolean expression defining ranges of free parameters */
   PrimExpr FreeParameterConstraints() const;
 
- private:
+  // private:
   Map<tir::Var, Range> free_parameters_;
 };
 
@@ -231,7 +245,71 @@ class BufferTouchPattern {
 
   friend std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern);
 
- private:
+  // private:
+ public:
+  void ForwardPropagateKnownValues();
+
+  struct BufferConstraint {
+    tir::Buffer buffer;
+    Predicate predicate;
+    ParametrizedExpression known_value;
+
+    bool IsDistinctFrom(const BufferConstraint& other) const;
+
+    void OverwriteBy(const BufferConstraint& other);
+
+    bool IsEquivalentTo(const BufferConstraint& other) const;
+
+    /* \brief Merge constraints that may overwrite each other.
+     *
+     * Assumes that "before" and "after" sets of constraints are
+     * internally consistent.
+     */
+    static std::vector<BufferConstraint> MergeSequentialConstraints(
+        const std::vector<BufferConstraint>& before, const std::vector<BufferConstraint>& after);
+
+    /* \brief Merge constraints that jointly apply
+     *
+     * If a constraint applies to the same indices in the same buffer,
+     * but cannot be shown to be the same value, it will be tracked as
+     * a NullOpt, with no additional information tracked.
+     */
+    static std::vector<BufferConstraint> MergeJointConstraints(
+        const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b);
+  };
+
+  struct ControlFlowBlock {
+    /* \brief Buffer touches that occur within the block
+     *
+     * All buffer touches within a block can be treated as occurring
+     * simultaneously.
+     */
+    std::vector<BufferTouch> touch_points;
+
+    /* \brief The blocks that occur after this block
+     *
+     * Lookup index into `control_flow_`
+     */
+    std::vector<int> successors;
+
+    /* \brief The blocks that occur before this block
+     *
+     * Lookup index into `control_flow_`
+     */
+    std::vector<int> predecessors;
+
+    // TODO: Remove index after done debugging.
+    int index;
+    std::string name;
+  };
+  friend std::ostream& operator<<(std::ostream& os, const ControlFlowBlock& pattern);
+
+  // TODO: Merge this into ControlFlowBlock
+  std::unordered_map<size_t, std::vector<BufferConstraint>> constraint_lookup_;
+
+  /* \brief The control flow that occurs within the analyzed statement */
+  std::vector<ControlFlowBlock> control_flow_;
+
   /* \brief An ordered list of buffer touches
    *
    * For all indices i and j, if i<j, then either buffer touch i
@@ -248,10 +326,18 @@ class BufferTouchPattern {
    */
   std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
 
+  /* \brief A lookup into control_flow_
+   *
+   * A map to look up the control flow block that contains the
+   * statement.
+   */
+  std::unordered_map<const tir::StmtNode*, size_t> control_flow_lookup_;
+
   /* \brief Assumptions that do not depend on buffer values */
   std::vector<PrimExpr> non_buffer_assumptions_;
 
   friend class BufferConstraintSubstituter;
+  friend class BufferTouchExtractor;
 };
 
 }  // namespace arith
