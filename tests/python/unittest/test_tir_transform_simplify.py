@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import pytest
+
 import tvm
 import tvm.testing
 
@@ -969,6 +971,23 @@ class TestNoSimplifyUsingPreLoopBufferValue(BaseBeforeAfter):
                 B[0] = A[i] + B[0]
 
     expected = before
+
+
+@pytest.mark.xfail
+class TestSimplifyNonConditional(BaseBeforeAfter):
+    """Propagate a known value to later expressions
+
+    This test is currently xfail, as the propagation of known buffer
+    values is only enabled when proving conditionals.
+    """
+
+    def before(A: T.Buffer[1, "int32"]):
+        A[0] = 0
+        A[0] = A[0] + 1
+
+    def expected(A: T.Buffer[1, "int32"]):
+        A[0] = 0
+        A[0] = 1
 
 
 class TestSimplifyUsingTransitiveKnownBufferValue(BaseBeforeAfter):
