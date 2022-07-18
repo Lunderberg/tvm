@@ -134,7 +134,7 @@ class BufferTouch {
   };
 
   BufferTouch(tir::Buffer buffer, Predicate predicate, AccessType touch_type,
-              ParametrizedExpression known_value, ObjectRef node);
+              ParametrizedExpression known_value, Array<PrimExpr> original_indices, ObjectRef node);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -145,6 +145,23 @@ class BufferTouch {
    */
   bool IsSubsetOf(const BufferTouch& other) const;
 
+  /* \brief Checks if this BufferTouch is a subset of another predicate
+   *
+   * Returns true if this is a buffer write that alters the value of
+   * another buffer touch, where that buffer touch occurs earlier in
+   * the body of a loop.
+   *
+   * \param preceding_in_body A BufferTouch that occurs at a preceding
+   * location within the body of a loop.
+   *
+   * \param loop_var The loop iteration variable.
+   *
+   * \return True if the these read/writes may introduce a dependency
+   * on a previous loop iteration, false otherwise.
+   */
+  bool IntroducesCrossLoopDependency(const BufferTouch& preceding_in_body, const Var& loop_var,
+                                     Analyzer* analyzer) const;
+
   friend std::ostream& operator<<(std::ostream& os, const BufferTouch& expr);
 
  private:
@@ -152,6 +169,7 @@ class BufferTouch {
   Predicate predicate;
   AccessType touch_type;
   ParametrizedExpression known_value;
+  Array<PrimExpr> original_indices;
 
   // The BufferLoad or BufferStore object that caused this touch.
   ObjectRef node;

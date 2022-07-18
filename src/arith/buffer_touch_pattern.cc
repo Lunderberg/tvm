@@ -244,11 +244,13 @@ std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
 }
 
 BufferTouch::BufferTouch(Buffer buffer, Predicate predicate, AccessType touch_type,
-                         ParametrizedExpression known_value, ObjectRef node)
+                         ParametrizedExpression known_value, Array<PrimExpr> original_indices,
+                         ObjectRef node)
     : buffer(buffer),
       predicate(predicate),
       touch_type(touch_type),
       known_value(known_value),
+      original_indices(original_indices),
       node(node) {}
 
 bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
@@ -257,6 +259,39 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
   } else {
     return this->predicate.IsSubsetOf(other.predicate);
   }
+}
+
+bool BufferTouch::IntroducesCrossLoopDependency(const BufferTouch& preceding_in_body,
+                                                const Var& loop_var, Analyzer* analyzer) const {
+  if (touch_type != AccessType::Write || preceding_in_body.touch_type != AccessType::Read ||
+      !buffer.same_as(preceding_in_body.buffer) ||
+      predicate.IsDistinctFrom(preceding_in_body.predicate)) {
+    return false;
+  }
+
+  ICHECK_EQ(original_indices.size(), preceding_in_body.original_indices.size());
+
+  Var prev_iter("prev", loop_var.dtype());
+  With<ConstraintContext> context(analyzer, loop_var > prev_iter);
+
+  for (size_t i = 0; i < original_indices.size(); i++) {
+    const PrimExpr& write_index = original_indices[i];
+    PrimExpr read_index = Substitute(preceding_in_body.original_indices[i], [&](const Var& var) {
+      if (var.same_as(loop_var)) {
+        return prev_iter;
+      } else {
+        return var;
+      }
+    });
+
+    if (!analyzer->CanProve(read_index != write_index)) {
+      std::cout << "Cannot prove that read index " << read_index
+                << " doesn't depend on previous write index " << write_index << std::endl;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
@@ -628,7 +663,52 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto loop_end = CurrentControlBlock();
     auto after_loop = AppendControlBlock("after loop over " + op->loop_var->name_hint);
     MarkControlFlow(loop_end, after_loop);
-    MarkControlFlow(loop_end, loop_start);
+
+    std::vector<size_t> to_visit = {loop_start};
+    std::unordered_set<size_t> marked = {loop_start};
+
+    std::vector<const BufferTouch*> touches;
+
+    while (to_visit.size()) {
+      size_t visiting = to_visit.back();
+      to_visit.pop_back();
+
+      const auto& block = out_->control_flow_[visiting];
+
+      for (const auto& touch : block.touch_points) {
+        touches.push_back(&touch);
+      }
+
+      for (size_t successor : block.successors) {
+        if (!marked.count(successor)) {
+          to_visit.push_back(successor);
+          marked.insert(successor);
+        }
+      }
+    }
+
+    bool depends_on_other_iterations = false;
+
+    for (size_t i = 0; i < touches.size(); i++) {
+      for (size_t j = 0; j < i; j++) {
+        const auto* read = touches[i];
+        const auto* write = touches[j];
+
+        if (write->IntroducesCrossLoopDependency(*read, op->loop_var, &analyzer_)) {
+          std::cout << "Read " << *read << " depends on previous loop iteration writing " << *write
+                    << std::endl;
+          depends_on_other_iterations = true;
+          break;
+        }
+      }
+      if (depends_on_other_iterations) {
+        break;
+      }
+    }
+
+    if (depends_on_other_iterations) {
+      MarkControlFlow(loop_end, loop_start);
+    }
   }
 
   void VisitStmt_(const IfThenElseNode* op) override {
@@ -782,7 +862,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Predicate predicate(index_variables, predicate_expr, transform->dst->ranges);
     ParametrizedExpression known_value(index_variables, known_value_expr);
 
-    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node);
+    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node->indices, node);
 
     out_->touch_points_.push_back(buffer_touch);
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
@@ -1518,14 +1598,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
     auto post_knowns =
         BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(prior_knowns, new_knowns);
-    std::cout << "\t"
-              << "Visiting control block " << visiting << " resulted in " << post_knowns.size()
-              << " total post-block statements at the end" << std::endl;
-    for (const auto& known : post_knowns) {
-      std::cout << "\t\t"
-                << "Buffer " << known.buffer->name << " where " << known.predicate
-                << " is equal to " << known.known_value << std::endl;
-    }
+    // std::cout << "\t"
+    //           << "Visiting control block " << visiting << " resulted in " << post_knowns.size()
+    //           << " total post-block statements at the end" << std::endl;
+    // for (const auto& known : post_knowns) {
+    //   std::cout << "\t\t"
+    //             << "Buffer " << known.buffer->name << " where " << known.predicate
+    //             << " is equal to " << known.known_value << std::endl;
+    // }
 
     // Step 4: If any changes are made to the pre- values of the
     // successor block, mark the successor block as needing to be
@@ -1540,24 +1620,24 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       //           << std::endl;
 
       if (it == known_after_block.end()) {
-        std::cout << "\t\t"
-                  << "First time that " << visiting << " has been examined" << std::endl;
+        // std::cout << "\t\t"
+        //           << "First time that " << visiting << " has been examined" << std::endl;
         return true;
       }
 
       const auto& previous_post_knowns = it->second;
 
       if (post_knowns.size() != previous_post_knowns.size()) {
-        std::cout << "\t\t"
-                  << "Found " << post_knowns.size() << " this time, but only "
-                  << previous_post_knowns.size() << " last time" << std::endl;
+        // std::cout << "\t\t"
+        //           << "Found " << post_knowns.size() << " this time, but only "
+        //           << previous_post_knowns.size() << " last time" << std::endl;
         return true;
       }
 
       for (size_t i = 0; i < post_knowns.size(); i++) {
         if (!post_knowns[i].IsEquivalentTo(previous_post_knowns[i])) {
-          std::cout << "\t\t"
-                    << "Found different constraint #" << i << " from last time" << std::endl;
+          // std::cout << "\t\t"
+          //           << "Found different constraint #" << i << " from last time" << std::endl;
           return true;
         }
       }
@@ -1570,13 +1650,13 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     if (has_updated_post) {
       known_after_block[visiting] = post_knowns;
       for (size_t successor : block.successors) {
-        std::cout << "\t"
-                  << "Queuing " << successor << " to be visited" << std::endl;
+        // std::cout << "\t"
+        //           << "Queuing " << successor << " to be visited" << std::endl;
         to_visit.insert(successor);
       }
     }
 
-    std::cout << "\t" << to_visit.size() << " remaining to be visited" << std::endl;
+    // std::cout << "\t" << to_visit.size() << " remaining to be visited" << std::endl;
 
     // for (auto& buffer_touch : block.touch_points) {
     //   std::cout << "\t"
@@ -1593,20 +1673,20 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     // }
   }
 
-  for (size_t i = 0; i < control_flow_.size(); i++) {
-    auto it = known_after_block.find(i);
-    if (it != known_after_block.end()) {
-      std::cout << "After block " << i << ", there are known facts about " << it->second.size()
-                << " buffers" << std::endl;
-      for (const auto& constraint : it->second) {
-        std::cout << "\t"
-                  << "Buffer " << constraint.buffer->name << " where " << constraint.predicate
-                  << " is equal to " << constraint.known_value << std::endl;
-      }
-    } else {
-      std::cout << "Block " << i << " was never visited." << std::endl;
-    }
-  }
+  // for (size_t i = 0; i < control_flow_.size(); i++) {
+  //   auto it = known_after_block.find(i);
+  //   if (it != known_after_block.end()) {
+  //     std::cout << "After block " << i << ", there are known facts about " << it->second.size()
+  //               << " buffers" << std::endl;
+  //     for (const auto& constraint : it->second) {
+  //       std::cout << "\t"
+  //                 << "Buffer " << constraint.buffer->name << " where " << constraint.predicate
+  //                 << " is equal to " << constraint.known_value << std::endl;
+  //     }
+  //   } else {
+  //     std::cout << "Block " << i << " was never visited." << std::endl;
+  //   }
+  // }
 
   constraint_lookup_ = known_after_block;
 }
