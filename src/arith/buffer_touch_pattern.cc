@@ -285,8 +285,8 @@ bool BufferTouch::IntroducesCrossLoopDependency(const BufferTouch& preceding_in_
     });
 
     if (!analyzer->CanProve(read_index != write_index)) {
-      std::cout << "Cannot prove that read index " << read_index
-                << " doesn't depend on previous write index " << write_index << std::endl;
+      // std::cout << "Cannot prove that read index " << read_index
+      //           << " doesn't depend on previous write index " << write_index << std::endl;
       return true;
     }
   }
@@ -345,7 +345,8 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
     if (auto opt = FollowPredecessorBlock(context_block, op, Bool(true))) {
       return opt.value();
     } else {
-      std::cout << "Could not replace " << GetRef<PrimExpr>(op) << " with known value" << std::endl;
+      // std::cout << "Could not replace " << GetRef<PrimExpr>(op) << " with known value" <<
+      // std::endl;
       return GetRef<PrimExpr>(op);
     }
   }
@@ -353,34 +354,35 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
   Optional<PrimExpr> FollowPredecessorBlock(const BufferTouchPattern::ControlFlowBlock& block,
                                             const BufferLoadNode* op, PrimExpr access_predicate) {
     IncreaseDepth temp(this);
-    std::cout << std::string(depth * 2, ' ') << "Attempting to replace " << GetRef<PrimExpr>(op)
-              << " by visiting the " << block.predecessors.size() << " predecessors"
-              << " of block " << block.index << " (name = '" << block.name << "')" << std::endl;
+    // std::cout << std::string(depth * 2, ' ') << "Attempting to replace " << GetRef<PrimExpr>(op)
+    //           << " by visiting the " << block.predecessors.size() << " predecessors"
+    //           << " of block " << block.index << " (name = '" << block.name << "')" << std::endl;
 
     Optional<PrimExpr> result = NullOpt;
     for (size_t predecessor_index : block.predecessors) {
       IncreaseDepth temp2(this);
       const auto& predecessor = touch_pattern_.control_flow_[predecessor_index];
-      std::cout << std::string(depth * 2, ' ') << "Checking constraints provided by predecessor "
-                << predecessor.index << " (name = '" << predecessor.name << "')" << std::endl;
+      // std::cout << std::string(depth * 2, ' ') << "Checking constraints provided by predecessor "
+      //           << predecessor.index << " (name = '" << predecessor.name << "')" << std::endl;
       auto opt_value = ApplyKnownValue(predecessor, op, access_predicate);
-      std::cout << std::string(depth * 2, ' ') << "In context of predecessor " << predecessor_index
-                << " value " << GetRef<PrimExpr>(op) << " is known to be " << opt_value
-                << std::endl;
+      // std::cout << std::string(depth * 2, ' ') << "In context of predecessor " <<
+      // predecessor_index
+      //           << " value " << GetRef<PrimExpr>(op) << " is known to be " << opt_value
+      //           << std::endl;
       if (!opt_value) {
-        std::cout << std::string(depth * 2, ' ') << "Unknown value for predecessor "
-                  << predecessor_index
-                  << ", therefore cannot prove to be the same for all predecessors" << std::endl;
+        // std::cout << std::string(depth * 2, ' ') << "Unknown value for predecessor "
+        //           << predecessor_index
+        //           << ", therefore cannot prove to be the same for all predecessors" << std::endl;
         return GetRef<PrimExpr>(op);
       } else if (!result) {
-        std::cout << std::string(depth * 2, ' ')
-                  << "This was the first predecessor checked, so it is consistent by definition"
-                  << std::endl;
+        // std::cout << std::string(depth * 2, ' ')
+        //           << "This was the first predecessor checked, so it is consistent by definition"
+        //           << std::endl;
         result = opt_value;
       } else if (!analyzer_->CanProveEqual(opt_value.value(), result.value())) {
-        std::cout << std::string(depth * 2, ' ') << "Value " << opt_value << " for predecessor "
-                  << predecessor_index << " wasn't equal to previous value " << result
-                  << ", bailing out" << std::endl;
+        // std::cout << std::string(depth * 2, ' ') << "Value " << opt_value << " for predecessor "
+        //           << predecessor_index << " wasn't equal to previous value " << result
+        //           << ", bailing out" << std::endl;
         return NullOpt;
         // return GetRef<PrimExpr>(op);
       }
@@ -392,9 +394,9 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
   Optional<PrimExpr> ApplyKnownValue(const BufferTouchPattern::ControlFlowBlock& block,
                                      const BufferLoadNode* op, PrimExpr access_predicate) {
     IncreaseDepth temp(this);
-    std::cout << std::string(depth * 2, ' ') << "Attempting to replace " << GetRef<PrimExpr>(op)
-              << " using information in block " << block.index << ", accessed with predicate "
-              << access_predicate << std::endl;
+    // std::cout << std::string(depth * 2, ' ') << "Attempting to replace " << GetRef<PrimExpr>(op)
+    //           << " using information in block " << block.index << ", accessed with predicate "
+    //           << access_predicate << std::endl;
 
     auto implies = [this](const PrimExpr& known, const PrimExpr& conjecture) -> bool {
       With<ConstraintContext> constraint(analyzer_, known);
@@ -584,8 +586,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
 
     if (buffer_exprs.empty()) {
-      std::cout << "Found non-buffer assumption in scope " << CurrentScopePredicate()
-                << ", stating that " << assumption << std::endl;
+      // std::cout << "Found non-buffer assumption in scope " << CurrentScopePredicate()
+      //           << ", stating that " << assumption << std::endl;
       out_->non_buffer_assumptions_.push_back(!CurrentScopePredicate() || assumption);
       return;
     }
@@ -616,6 +618,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // the clearing of previous in KnownBufferValue.
 
     VisitAccess(load, BufferTouch::AccessType::Read, value, additional_predicate);
+    // Appending a control block ensures that all control blocks have
+    // at most one statement that changes the known buffer contents.
+    auto prev_block = CurrentControlBlock();
+    std::stringstream ss;
+    ss << "after T.assume of " << assumption;
+    auto new_block = AppendControlBlock(ss.str());
+    MarkControlFlow(prev_block, new_block);
   }
 
   void VisitExpr_(const LetNode* op) override {
@@ -643,7 +652,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   void VisitStmt_(const BufferStoreNode* op) override {
     Parent::VisitStmt_(op);
     VisitAccess(GetRef<BufferStore>(op), BufferTouch::AccessType::Write, op->value);
-    // Appending a control block ensures that all control blocks have at most
+    // Appending a control block ensures that all control blocks have
+    // at most one statement that changes the buffer contents.
     auto prev_block = CurrentControlBlock();
     auto new_block = AppendControlBlock("after bufferstore into " + op->buffer->name);
     MarkControlFlow(prev_block, new_block);
@@ -695,8 +705,9 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
         const auto* write = touches[j];
 
         if (write->IntroducesCrossLoopDependency(*read, op->loop_var, &analyzer_)) {
-          std::cout << "Read " << *read << " depends on previous loop iteration writing " << *write
-                    << std::endl;
+          // std::cout << "Read " << *read << " depends on previous loop iteration writing " <<
+          // *write
+          //           << std::endl;
           depends_on_other_iterations = true;
           break;
         }
@@ -1051,7 +1062,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
 BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
   BufferTouchExtractor::Extract(this, stmt);
-  std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
+  // std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
   ForwardPropagateKnownValues();
 }
 
@@ -1215,20 +1226,21 @@ std::vector<BufferTouchPattern::BufferConstraint>
 BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
     const std::vector<BufferTouchPattern::BufferConstraint>& before,
     const std::vector<BufferTouchPattern::BufferConstraint>& after) {
-  std::vector<BufferTouchPattern::BufferConstraint> output = after;
-  for (auto known : before) {
-    // std::cout << "Examining constraint " << known.predicate << std::endl;
-    for (const auto& delta : after) {
-      known.OverwriteBy(delta);
-      // std::cout << "\t"
-      //           << "Overwriting by " << delta.predicate << " results in " << known.predicate
-      //           << std::endl;
-    }
+  std::vector<BufferTouchPattern::BufferConstraint> output;
+  output.insert(output.end(), before.begin(), before.end());
+  output.insert(output.end(), after.begin(), after.end());
 
-    if (!known.predicate.IsAlwaysFalse()) {
-      output.push_back(known);
+  for (size_t i = 0; i < output.size(); i++) {
+    for (size_t j = i + 1; j < output.size(); j++) {
+      output[i].OverwriteBy(output[j]);
     }
   }
+
+  output.erase(std::remove_if(output.begin(), output.end(),
+                              [](const auto& constraint) -> bool {
+                                return constraint.predicate.IsAlwaysFalse();
+                              }),
+               output.end());
 
   return output;
 }
@@ -1479,17 +1491,17 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     }
   }
 
-  std::cout << "Beginning search from control blocks [";
-  bool is_first = true;
-  for (const auto& i : to_visit) {
-    if (is_first) {
-      is_first = false;
-    } else {
-      std::cout << ", ";
-    }
-    std::cout << i;
-  }
-  std::cout << "]" << std::endl;
+  // std::cout << "Beginning search from control blocks [";
+  // bool is_first = true;
+  // for (const auto& i : to_visit) {
+  //   if (is_first) {
+  //     is_first = false;
+  //   } else {
+  //     std::cout << ", ";
+  //   }
+  //   std::cout << i;
+  // }
+  // std::cout << "]" << std::endl;
 
   std::unordered_map<size_t, std::vector<BufferTouchPattern::BufferConstraint>> known_after_block;
 
@@ -1500,8 +1512,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     to_visit.erase(visiting);
     ControlFlowBlock& block = control_flow_[visiting];
 
-    std::cout << "Visiting control block " << visiting << ", block.index = " << block.index
-              << ", block.name = '" << block.name << "'" << std::endl;
+    // std::cout << "Visiting control block " << visiting << ", block.index = " << block.index
+    //           << ", block.name = '" << block.name << "'" << std::endl;
 
     // Step 0: Pull in prior knowns from the predecessors
 
@@ -1598,6 +1610,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
     auto post_knowns =
         BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(prior_knowns, new_knowns);
+
     // std::cout << "\t"
     //           << "Visiting control block " << visiting << " resulted in " << post_knowns.size()
     //           << " total post-block statements at the end" << std::endl;
