@@ -936,7 +936,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     for (const auto& loop_var : active_loop_iterators_) {
       loop_vars.push_back(loop_var);
       IntSet loop_set = analyzer_.int_set(loop_var);
-      Range loop_range = Range(loop_set.min(), loop_set.max() + 1);
+      auto max = loop_set.HasUpperBound() ? loop_set.max() + 1 : loop_set.max();
+      Range loop_range = Range(loop_set.min(), max);
       ranges.Set(loop_var, loop_range);
     }
 
