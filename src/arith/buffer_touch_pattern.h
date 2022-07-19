@@ -23,6 +23,7 @@
  */
 
 #include <tvm/arith/analyzer.h>
+#include <tvm/arith/int_solver.h>
 #include <tvm/runtime/container/array.h>
 #include <tvm/tir/buffer.h>
 #include <tvm/tir/stmt.h>
@@ -134,7 +135,8 @@ class BufferTouch {
   };
 
   BufferTouch(tir::Buffer buffer, Predicate predicate, AccessType touch_type,
-              ParametrizedExpression known_value, Array<PrimExpr> original_indices, ObjectRef node);
+              ParametrizedExpression known_value, Array<PrimExpr> original_indices,
+              Map<Var, PrimExpr> loop_var_to_axis_var, ObjectRef node);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -166,10 +168,16 @@ class BufferTouch {
 
  private:
   tir::Buffer buffer;
+
+  // TODO: Merge predicate/known_value into this class?
   Predicate predicate;
   AccessType touch_type;
   ParametrizedExpression known_value;
   Array<PrimExpr> original_indices;
+
+  // Map usable to substitute out loop variables, resulting in
+  // expressions in terms of the buffer axis variables.
+  Map<Var, PrimExpr> loop_var_to_axis_var;
 
   // The BufferLoad or BufferStore object that caused this touch.
   ObjectRef node;

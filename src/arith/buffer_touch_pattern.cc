@@ -24,7 +24,6 @@
 
 #include "buffer_touch_pattern.h"
 
-#include <tvm/arith/int_solver.h>
 #include <tvm/runtime/registry.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/builtin.h>
@@ -258,12 +257,13 @@ std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
 
 BufferTouch::BufferTouch(Buffer buffer, Predicate predicate, AccessType touch_type,
                          ParametrizedExpression known_value, Array<PrimExpr> original_indices,
-                         ObjectRef node)
+                         Map<Var, PrimExpr> loop_var_to_axis_var, ObjectRef node)
     : buffer(buffer),
       predicate(predicate),
       touch_type(touch_type),
       known_value(known_value),
       original_indices(original_indices),
+      loop_var_to_axis_var(loop_var_to_axis_var),
       node(node) {}
 
 bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
@@ -889,7 +889,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Predicate predicate(index_variables, predicate_expr, transform->dst->ranges);
     ParametrizedExpression known_value(index_variables, known_value_expr);
 
-    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node->indices, node);
+    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node->indices,
+                             transform->src_to_dst, node);
 
     out_->touch_points_.push_back(buffer_touch);
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
@@ -1221,11 +1222,11 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
   return true;
 }
 
-  /* \brief Merge constraints that may overwrite each other.
-   *
-   * Assumes that "before" and "after" sets of constraints are
-   * internally consistent.
-   */
+/* \brief Merge constraints that may overwrite each other.
+ *
+ * Assumes that "before" and "after" sets of constraints are
+ * internally consistent.
+ */
 std::vector<BufferTouchPattern::BufferConstraint>
 BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
     const std::vector<BufferTouchPattern::BufferConstraint>& before,
@@ -1331,6 +1332,8 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
 
     PrimExpr access_predicate = Bool(true);
 
+    // std::cout << "Examining BufferLoad " << GetRef<PrimExpr>(op) << std::endl;
+
     for (const BufferTouchPattern::BufferConstraint& constraint : knowns_) {
       ICHECK(constraint.predicate.IsDefined());
 
@@ -1360,7 +1363,10 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
         // The constraint provides a known known value, but only for
         // some of the indices we are interested in.  Other locations
         // may have a different constraint applied.
-        conditions_.push_back(access_predicate);
+        // std::cout << "\t"
+        //           << "Found partially known value for access condition "
+        //           << (access_predicate && touch_predicate) << std::endl;
+        conditions_.push_back(access_predicate && touch_predicate);
         access_predicate = access_predicate && !touch_predicate;
       } else {
         // This BufferTouch writes values to the buffer that we might
@@ -1370,6 +1376,8 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
       }
     }
 
+    // std::cout << "\t"
+    //           << "All remaining access is the same condition, " << access_predicate << std::endl;
     conditions_.push_back(access_predicate);
 
     return GetRef<PrimExpr>(op);
@@ -1569,16 +1577,22 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
             BufferRegionCollector::Collect(prior_knowns, known_value, &analyzer);
 
         // std::cout << "\t\t"
-        //           << "Regions of interest are " << regions << std::endl;
+        //           << "Regions of interest for " << known_value << " are " << regions <<
+        //           std::endl;
         for (const auto& region : regions) {
           With<ConstraintContext> region_context(&analyzer, region);
           auto opt_value = BufferConstraintApplication::Apply(prior_knowns, known_value, &analyzer);
+          PrimExpr region_with_predicate =
+              predicate && Substitute(region, touch.loop_var_to_axis_var);
           // std::cout << "\t\t"
           //           << "Simplified from " << touch.known_value.expression_ << " to " << opt_value
-          //           << " in region " << region << std::endl;
-          new_knowns.push_back({touch.buffer,
-                                Predicate(axis_vars, predicate, touch.predicate.free_parameters_),
-                                ParametrizedExpression(axis_vars, opt_value)});
+          //           << " in region " << region << " with full predicate " <<
+          //           region_with_predicate
+          //           << std::endl;
+          new_knowns.push_back(
+              {touch.buffer,
+               Predicate(axis_vars, region_with_predicate, touch.predicate.free_parameters_),
+               ParametrizedExpression(axis_vars, opt_value)});
         }
       } else {
         // Overwritten with unknown value wherever the predicate is true
