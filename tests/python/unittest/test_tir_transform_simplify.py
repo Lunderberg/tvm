@@ -806,11 +806,11 @@ class TestSimplifyUsingPartiallyKnownBufferConditional(BaseBeforeAfter):
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
-            if i >= 14:
+            if 14 <= i:
                 T.assume(A[i] == 0)
 
         for i in T.serial(16):
-            if i >= 14:
+            if 14 <= i:
                 if A[i] == 0:
                     A[i] = 42
 
@@ -837,7 +837,7 @@ class TestSimplifyUsingPartiallyKnownBufferExpression(BaseBeforeAfter):
             T.assume(i < 14 or A[i] == 0)
 
         for i in T.serial(16):
-            if i >= 14:
+            if 14 <= i:
                 if A[i] == 0:
                     A[i] = 42
 
