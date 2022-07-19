@@ -46,6 +46,19 @@ namespace arith {
 
 using namespace tir;
 
+namespace {
+bool HasBufferLoad(PrimExpr expr) {
+  struct Visitor : public ExprVisitor {
+    void VisitExpr_(const BufferLoadNode* node) override { found_buffer_load = true; }
+    bool found_buffer_load{false};
+  };
+
+  Visitor visitor;
+  visitor(expr);
+  return visitor.found_buffer_load;
+}
+}  // namespace
+
 ParametrizedExpression::ParametrizedExpression(Array<Var> parameter_vars,
                                                Optional<PrimExpr> expression)
     : parameter_vars_(parameter_vars), expression_(expression) {}
@@ -817,6 +830,9 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       transform = SolveForBufferIndices(index_variables, index_expressions);
     }
 
+    // std::cout << "Transform of indices " << index_expressions << " is " << transform->src_to_dst
+    //           << " with free variables " << transform->dst << std::endl;
+
     // Normalization function, applied to both the predicate and the
     // known value.  Converts from an expression in terms of loop
     // iterators which may contain BufferLoad to an expression in
@@ -860,15 +876,15 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     predicate_expr = normalize_expr(predicate_expr);
     known_value_expr = normalize_expr(known_value_expr);
 
-    if (known_value_expr) {
-      const auto& free_params = transform->dst->ranges;
-      bool uses_free_param = UsesVar(known_value_expr.value(), [&](const VarNode* var) {
-        return free_params.find(GetRef<Var>(var)) != free_params.end();
-      });
-      if (uses_free_param) {
-        known_value_expr = NullOpt;
-      }
-    }
+    // if (known_value_expr) {
+    //   const auto& free_params = transform->dst->ranges;
+    //   bool uses_free_param = UsesVar(known_value_expr.value(), [&](const VarNode* var) {
+    //     return free_params.find(GetRef<Var>(var)) != free_params.end();
+    //   });
+    //   if (uses_free_param) {
+    //     known_value_expr = NullOpt;
+    //   }
+    // }
 
     Predicate predicate(index_variables, predicate_expr, transform->dst->ranges);
     ParametrizedExpression known_value(index_variables, known_value_expr);
@@ -919,7 +935,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     for (const auto& loop_var : active_loop_iterators_) {
       loop_vars.push_back(loop_var);
       IntSet loop_set = analyzer_.int_set(loop_var);
-      Range loop_range = Range(loop_set.min(), loop_set.max());
+      Range loop_range = Range(loop_set.min(), loop_set.max() + 1);
       ranges.Set(loop_var, loop_range);
     }
 
@@ -1064,6 +1080,7 @@ BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
   BufferTouchExtractor::Extract(this, stmt);
   // std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
   ForwardPropagateKnownValues();
+  // std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlowBlock& block) {
@@ -1115,19 +1132,6 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
     }
   }
   return os;
-}
-
-namespace {
-bool HasBufferLoad(PrimExpr expr) {
-  struct Visitor : public ExprVisitor {
-    void VisitExpr_(const BufferLoadNode* node) override { found_buffer_load = true; }
-    bool found_buffer_load{false};
-  };
-
-  Visitor visitor;
-  visitor(expr);
-  return visitor.found_buffer_load;
-}
 }
 
 bool BufferTouchPattern::BufferConstraint::IsDistinctFrom(
