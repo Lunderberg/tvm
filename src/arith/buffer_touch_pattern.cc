@@ -1756,6 +1756,12 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
     return it->second;
   }();
 
+  PrimExpr constraint = Bool(true);
+  for (const auto& known : non_buffer_assumptions_) {
+    constraint = constraint && known;
+  }
+  With<ConstraintContext> constraint_context(analyzer, constraint);
+
   auto it = constraint_lookup_.find(context_index);
   if (it != constraint_lookup_.end()) {
     if (auto opt_expr = BufferConstraintApplication::Apply(it->second, expr, analyzer)) {
