@@ -71,7 +71,9 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     auto config = config_opt.value_or(AttrsWithDefaultValues<arith::SimplifyConfig>());
     analyzer->rewrite_simplify.SetEnabledExtensions(config->GetEnabledExtensions());
 
+    std::cout << "Starting collection of touch pattern" << std::endl;
     BufferTouchPattern touch_pattern(stmt);
+    std::cout << "Finished collecting touch pattern" << std::endl;
     StmtSimplifier simplifier(analyzer, std::move(touch_pattern));
     return simplifier(std::move(stmt));
   }

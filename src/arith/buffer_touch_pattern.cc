@@ -38,6 +38,7 @@
 #include "constraint_extract.h"
 #include "ir_mutator_with_analyzer.h"
 #include "ir_visitor_with_analyzer.h"
+#include "narrow_expression_to_true.h"
 #include "unwrap_vector_expr.h"
 
 namespace tvm {
@@ -876,6 +877,27 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     predicate_expr = normalize_expr(predicate_expr);
     known_value_expr = normalize_expr(known_value_expr);
 
+    Optional<PrimExpr> has_known_value_expr = Bool(false);
+    Optional<PrimExpr> known_untouched_expr = Bool(false);
+
+    if (predicate_expr) {
+      PrimExpr expr = predicate_expr.value();
+      {
+        PrimExpr narrowed = arith::NarrowExpressionToTrue(expr, transform->dst->ranges);
+        PrimExpr simplified = analyzer_.Simplify(narrowed);
+        std::cout << "Predicate expression " << expr << " can be narrowed to parameter-less "
+                  << narrowed << ", which simplifies to " << simplified << std::endl;
+        has_known_value_expr = simplified;
+      }
+      {
+        PrimExpr narrowed = arith::NarrowExpressionToTrue(!expr, transform->dst->ranges);
+        PrimExpr simplified = analyzer_.Simplify(narrowed);
+        std::cout << "Untouched expression " << expr << " can be narrowed to parameter-less "
+                  << narrowed << ", which simplifies to " << simplified << std::endl;
+        known_untouched_expr = simplified;
+      }
+    }
+
     // if (known_value_expr) {
     //   const auto& free_params = transform->dst->ranges;
     //   bool uses_free_param = UsesVar(known_value_expr.value(), [&](const VarNode* var) {
@@ -1080,7 +1102,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
 BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
   BufferTouchExtractor::Extract(this, stmt);
-  // std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
+  std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
+  // std::cout << "Intentional segfault: " << *static_cast<char*>(nullptr) << std::endl;
   ForwardPropagateKnownValues();
   // std::cout << "asdfasdf: Touch pattern" << *this << std::endl;
 }
@@ -1245,6 +1268,8 @@ BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
   output.erase(std::remove_if(output.begin(), output.end(),
                               [](const auto& constraint) -> bool {
                                 return constraint.predicate.IsAlwaysFalse();
+                                // return constraint.predicate.IsAlwaysFalse() ||
+                                //        !constraint.known_value.IsDefined();
                               }),
                output.end());
 
@@ -1504,17 +1529,17 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     }
   }
 
-  // std::cout << "Beginning search from control blocks [";
-  // bool is_first = true;
-  // for (const auto& i : to_visit) {
-  //   if (is_first) {
-  //     is_first = false;
-  //   } else {
-  //     std::cout << ", ";
-  //   }
-  //   std::cout << i;
-  // }
-  // std::cout << "]" << std::endl;
+  std::cout << "Beginning search from control blocks [";
+  bool is_first = true;
+  for (const auto& i : to_visit) {
+    if (is_first) {
+      is_first = false;
+    } else {
+      std::cout << ", ";
+    }
+    std::cout << i;
+  }
+  std::cout << "]" << std::endl;
 
   std::unordered_map<size_t, std::vector<BufferTouchPattern::BufferConstraint>> known_after_block;
 
@@ -1525,8 +1550,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     to_visit.erase(visiting);
     ControlFlowBlock& block = control_flow_[visiting];
 
-    // std::cout << "Visiting control block " << visiting << ", block.index = " << block.index
-    //           << ", block.name = '" << block.name << "'" << std::endl;
+    std::cout << "Visiting control block " << visiting << ", block.index = " << block.index
+              << ", block.name = '" << block.name << "'" << std::endl;
 
     // Step 0: Pull in prior knowns from the predecessors
 
@@ -1539,14 +1564,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       }
     }
 
-    // std::cout << "\t"
-    //           << "Visiting control block " << visiting << " starts with " << prior_knowns.size()
-    //           << " prior-block statements" << std::endl;
-    // for (const auto& known : prior_knowns) {
-    //   std::cout << "\t\t"
-    //             << "Buffer " << known.buffer->name << " where " << known.predicate
-    //             << " is equal to " << known.known_value << std::endl;
-    // }
+    std::cout << "\t"
+              << "Visiting control block " << visiting << " starts with " << prior_knowns.size()
+              << " prior-block statements" << std::endl;
+    for (const auto& known : prior_knowns) {
+      std::cout << "\t\t"
+                << "Buffer " << known.buffer->name << " where " << known.predicate
+                << " is equal to " << known.known_value << std::endl;
+    }
 
     // Step 1: Propagate the known values from before the control
     // block into known values for the control block.
@@ -1577,19 +1602,17 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         Array<PrimExpr> regions =
             BufferRegionCollector::Collect(prior_knowns, known_value, &analyzer);
 
-        // std::cout << "\t\t"
-        //           << "Regions of interest for " << known_value << " are " << regions <<
-        //           std::endl;
+        std::cout << "\t\t"
+                  << "Regions of interest for " << known_value << " are " << regions << std::endl;
         for (const auto& region : regions) {
           With<ConstraintContext> region_context(&analyzer, region);
           auto opt_value = BufferConstraintApplication::Apply(prior_knowns, known_value, &analyzer);
           PrimExpr region_with_predicate =
               predicate && Substitute(region, touch.loop_var_to_axis_var);
-          // std::cout << "\t\t"
-          //           << "Simplified from " << touch.known_value.expression_ << " to " << opt_value
-          //           << " in region " << region << " with full predicate " <<
-          //           region_with_predicate
-          //           << std::endl;
+          std::cout << "\t\t"
+                    << "Simplified from " << touch.known_value.expression_ << " to " << opt_value
+                    << " in region " << region << " with full predicate " << region_with_predicate
+                    << std::endl;
           new_knowns.push_back(
               {touch.buffer,
                Predicate(axis_vars, region_with_predicate, touch.predicate.free_parameters_),
@@ -1603,14 +1626,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       }
     }
 
-    // std::cout << "\t"
-    //           << "Visiting control block " << visiting << " resulted in " << new_knowns.size()
-    //           << " new post-block statements at the end" << std::endl;
-    // for (const auto& known : new_knowns) {
-    //   std::cout << "\t\t"
-    //             << "Buffer " << known.buffer->name << " where " << known.predicate
-    //             << " is equal to " << known.known_value << std::endl;
-    // }
+    std::cout << "\t"
+              << "Visiting control block " << visiting << " resulted in " << new_knowns.size()
+              << " new post-block statements at the end" << std::endl;
+    for (const auto& known : new_knowns) {
+      std::cout << "\t\t"
+                << "Buffer " << known.buffer->name << " where " << known.predicate
+                << " is equal to " << known.known_value << std::endl;
+    }
 
     // Step 2: Propagate all constraints through to the end of the
     // control block.
