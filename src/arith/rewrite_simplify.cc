@@ -254,10 +254,10 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
 
 std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& constraint) {
   size_t old_literal_size = scoped_constraints_.size();
-  // we will compare the already simplified result with the constraint,
-  // so simplify the constraint as well
-  PrimExpr new_constraint = operator()(constraint);
-  for (const PrimExpr& subconstraint : ExtractConstraints(new_constraint)) {
+
+  // The parent scope has already simplified the constraint, no need
+  // to simplify it again.
+  for (const PrimExpr& subconstraint : ExtractConstraints(constraint)) {
     if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
       scoped_constraints_.push_back(subconstraint);
       // We could apply this during TryMatchLiteralConstraint, but
@@ -270,7 +270,7 @@ std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& c
       } else {
         negation = subconstraint == make_zero(subconstraint.dtype());
       }
-      negation = operator()(negation);
+      negation = RewriteBooleanOperators(negation);
       scoped_constraints_.push_back(Not(negation));
     }
   }
@@ -1548,23 +1548,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
   if (auto const_res = TryConstFold<Not>(op->a)) return const_res.value();
   if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
-  // Pattern var to match any expression
-  PVar<PrimExpr> x, y;
-  PVar<int> lanes;
-  if (op->dtype.lanes() != 1) {
-    TVM_TRY_REWRITE(!broadcast(x, lanes), broadcast(!x, lanes));
-  }
-
-  TVM_TRY_REWRITE(!(!x), x);
-  TVM_TRY_REWRITE(!(x <= y), y < x);
-  TVM_TRY_REWRITE(!(x >= y), x < y);
-  TVM_TRY_REWRITE(!(x < y), y <= x);
-  TVM_TRY_REWRITE(!(x > y), x <= y);
-  TVM_TRY_REWRITE(!(x == y), x != y);
-  TVM_TRY_REWRITE(!(x != y), x == y);
-  TVM_TRY_RECURSIVE_REWRITE(!(x || y), (!x) && (!y));
-  TVM_TRY_RECURSIVE_REWRITE(!(x && y), (!x) || (!y));
-  return ret;
+  return RewriteBooleanOperators(ret);
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
@@ -1822,6 +1806,56 @@ std::function<void()> RewriteSimplifier::EnableExtraSimplifications() {
 RewriteSimplifier::RewriteSimplifier(Analyzer* parent) : impl_(new Impl(parent)) {}
 
 RewriteSimplifier::~RewriteSimplifier() { delete impl_; }
+
+namespace {
+/* Utility for rewriting only boolean portions of an expression
+ *
+ * Intended for application on an expression that has previously been
+ * simplified, but has subsequent manipulations performed.
+ * (e.g. Finding the simplified negation of a conditional without
+ * performing a full simplification.)
+ */
+class BooleanRewriter : public ExprMutator {
+ private:
+  PrimExpr VisitExpr(const PrimExpr& expr) override {
+    if (expr.dtype().is_bool()) {
+      return ExprMutator::VisitExpr(expr);
+    } else {
+      return expr;
+    }
+  }
+
+  PrimExpr VisitExpr_(const NotNode* op) override {
+    PrimExpr ret = GetRef<PrimExpr>(op);
+
+    PVar<PrimExpr> x, y;
+    PVar<int> lanes;
+    if (op->dtype.lanes() != 1) {
+      TVM_TRY_REWRITE(!broadcast(x, lanes), broadcast(!x, lanes));
+    }
+
+    TVM_TRY_RECURSIVE_REWRITE(!(!x), x);
+    TVM_TRY_RECURSIVE_REWRITE(!(x || y), (!x) && (!y));
+    TVM_TRY_RECURSIVE_REWRITE(!(x && y), (!x) || (!y));
+    TVM_TRY_REWRITE(!(x <= y), y < x);
+    TVM_TRY_REWRITE(!(x >= y), x < y);
+    TVM_TRY_REWRITE(!(x < y), y <= x);
+    TVM_TRY_REWRITE(!(x > y), x <= y);
+    TVM_TRY_REWRITE(!(x == y), x != y);
+    TVM_TRY_REWRITE(!(x != y), x == y);
+
+    return ret;
+  }
+
+  PrimExpr VisitExpr_(const GTNode* op) override { return this->VisitExpr(op->b < op->a); }
+
+  PrimExpr VisitExpr_(const GENode* op) override { return this->VisitExpr(op->b <= op->a); }
+
+  PrimExpr RecursiveRewrite(const PrimExpr& expr) { return VisitExpr(expr); }
+};
+}  // namespace
+
+PrimExpr RewriteBooleanOperators(const PrimExpr& expr) { return BooleanRewriter()(expr); }
 
 }  // namespace arith
 }  // namespace tvm

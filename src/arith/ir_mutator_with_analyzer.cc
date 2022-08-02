@@ -26,6 +26,8 @@
 #include <tvm/tir/builtin.h>
 #include <tvm/tir/op.h>
 
+#include "rewrite_simplify.h"
+
 namespace tvm {
 namespace arith {
 
@@ -96,7 +98,7 @@ Stmt IRMutatorWithAnalyzer::VisitStmt_(const IfThenElseNode* op) {
     then_case = this->VisitStmt(op->then_case);
   }
   if (op->else_case.defined()) {
-    With<ConstraintContext> ctx(analyzer_, analyzer_->rewrite_simplify(Not(real_condition)));
+    With<ConstraintContext> ctx(analyzer_, RewriteBooleanOperators(Not(real_condition)));
     else_case = this->VisitStmt(op->else_case);
   }
   if (is_one(real_condition)) return then_case;
@@ -159,7 +161,7 @@ PrimExpr IRMutatorWithAnalyzer::VisitExpr_(const CallNode* op) {
       true_value = this->VisitExpr(op->args[1]);
     }
     {
-      With<ConstraintContext> constraint(analyzer_, analyzer_->rewrite_simplify(Not(cond)));
+      With<ConstraintContext> constraint(analyzer_, RewriteBooleanOperators(Not(cond)));
       false_value = this->VisitExpr(op->args[2]);
     }
     if (is_zero(cond)) {
@@ -201,7 +203,7 @@ PrimExpr IRMutatorWithAnalyzer::VisitExpr_(const SelectNode* op) {
     true_value = VisitExpr(op->true_value);
   }
   {
-    With<ConstraintContext> constraint(analyzer_, analyzer_->rewrite_simplify(Not(cond)));
+    With<ConstraintContext> constraint(analyzer_, RewriteBooleanOperators(Not(cond)));
     false_value = VisitExpr(op->false_value);
   }
   if (is_zero(cond)) {
