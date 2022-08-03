@@ -990,13 +990,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       IntSet interval = analyzer_.int_set(index);
 
       if (interval.IsSinglePoint()) {
-        predicate = predicate && (var == interval.PointValue());
+        predicate = predicate && (var == analyzer_.Simplify(interval.PointValue()));
       } else {
         if (interval.HasLowerBound()) {
-          predicate = predicate && (var >= interval.min());
+          predicate = predicate && (var >= analyzer_.Simplify(interval.min()));
         }
         if (interval.HasUpperBound()) {
-          predicate = predicate && (var <= interval.max());
+          predicate = predicate && (var <= analyzer_.Simplify(interval.max()));
         }
       }
     }
