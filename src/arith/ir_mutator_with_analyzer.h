@@ -62,9 +62,6 @@ class IRMutatorWithAnalyzer : public tir::StmtExprMutator {
   PrimExpr VisitExpr_(const tir::CallNode* op) override;
   PrimExpr VisitExpr_(const tir::ReduceNode* op) override;
 
-  PrimExpr VisitExpr_(const tir::AndNode* op) override;
-  PrimExpr VisitExpr_(const tir::OrNode* op) override;
-
  protected:
   /*! \brief internal analyzer field. */
   Analyzer* analyzer_;

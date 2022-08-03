@@ -165,6 +165,120 @@ class TestSimplifyLENodeToEqualNode(BaseBeforeAfter):
         A[0] = i == j
 
 
+class TestSimplifyRHSOfBooleanAndUsingLHS(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts.
+
+    In `A and B`, the result of `B` only matters when `A` is
+    true, and can be simplified under that context.  This test
+    simplifies `n < 10` under the assumption that `n < 5`.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 5 and n < 10
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 5
+
+
+class TestSimplifyLHSOfBooleanAndUsingRHS(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts for their arguments.
+
+    Like TestSimplifyRHSOfBooleanAndUsingLHS, but using the RHS to
+    simplify the LHS.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 10 and n < 5
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 5
+
+
+class TestSimplifyTripleOfBooleanAndUsingFirst(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts for their arguments.
+
+    Like TestSimplifyRHSOfBooleanAndUsingLHS, but both the first
+    and second arguments must be used to simplify.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32):
+        A[0] = ((n == m) and (n <= m)) and (n >= m)
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32):
+        A[0] = n == m
+
+
+class TestSimplifyTripleOfBooleanAndUsingSecond(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts for their arguments.
+
+    Like TestSimplifyRHSOfBooleanAndUsingLHS, but the middle
+    argument condition must be used to simplify the other two.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32):
+        A[0] = ((n <= m) and (n == m)) and (n >= m)
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32):
+        A[0] = n == m
+
+
+class TestSimplifyTripleOfBooleanAndUsingThird(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts for their arguments.
+
+    Like TestSimplifyRHSOfBooleanAndUsingLHS, but both the first
+    and second arguments must be used to simplify.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32):
+        A[0] = ((n <= m) and (n >= m)) and (n == m)
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32):
+        A[0] = n == m
+
+
+class TestSimplifyRHSOfBooleanOrUsingLHS(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts.
+
+    In `A or B`, the result of `B` only matters when `A` is false, so
+    `B` can be simplified under the assumption that `A` is false.
+    This test simplifies `n < 5` under the assumption that `!(n < 10)`
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 10 or n < 5
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 10
+
+
+class TestSimplifyLHSOfBooleanOrUsingRHS(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts for their arguments.
+
+    Like TestSimplifyRHSOfBooleanOrUsingLHS, but using the RHS to
+    simplify the LHS.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 5 or n < 10
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32):
+        A[0] = n < 10
+
+
+class TestSimplifyBooleanOrWithThreeConditions(BaseBeforeAfter):
+    """Boolean expressions can introduce contexts for their arguments.
+
+    Like TestSimplifyRHSOfBooleanOrUsingLHS, but the middle condition
+    must be used to simplify the right-most condition.
+    """
+
+    def before(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32, i: T.int32, j: T.int32):
+        A[0] = ((i <= j) or (n <= m)) or (n == m)
+
+    def expected(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32, i: T.int32, j: T.int32):
+        A[0] = (i <= j) or (n <= m)
+
+
 class TestLoadStoreNoop(BaseBeforeAfter):
     """Store of a value that was just read from the same location is a no-op."""
 

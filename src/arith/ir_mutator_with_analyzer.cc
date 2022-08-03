@@ -230,33 +230,5 @@ PrimExpr IRMutatorWithAnalyzer::VisitExpr_(const ReduceNode* op) {
   return StmtExprMutator::VisitExpr_(op);
 }
 
-PrimExpr IRMutatorWithAnalyzer::VisitExpr_(const AndNode* op) {
-  PrimExpr a = this->VisitExpr(op->a);
-  PrimExpr b;
-  {
-    With<ConstraintContext> constraint(analyzer_, a);
-    b = this->VisitExpr(op->b);
-  }
-  if (a.same_as(op->a) && b.same_as(op->b)) {
-    return GetRef<PrimExpr>(op);
-  } else {
-    return And(a, b);
-  }
-}
-
-PrimExpr IRMutatorWithAnalyzer::VisitExpr_(const OrNode* op) {
-  PrimExpr a = this->VisitExpr(op->a);
-  PrimExpr b;
-  {
-    With<ConstraintContext> constraint(analyzer_, Not(a));
-    b = this->VisitExpr(op->b);
-  }
-  if (a.same_as(op->a) && b.same_as(op->b)) {
-    return GetRef<PrimExpr>(op);
-  } else {
-    return Or(a, b);
-  }
-}
-
 }  // namespace arith
 }  // namespace tvm

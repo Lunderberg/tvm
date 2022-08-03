@@ -1552,82 +1552,215 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
-  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
-  op = ret.as<AndNode>();
-  if (auto const_res = TryConstFold<And>(op->a, op->b)) return const_res.value();
-  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+  std::vector<PrimExpr> subexprs = ExtractConstraints(GetRef<PrimExpr>(op), false);
+  ICHECK_GE(subexprs.size(), 2);
 
-  // Pattern var to match any expression
-  PVar<PrimExpr> x, y;
-  // Pattern var match IntImm
-  PVar<IntImm> c1, c2;
-  PVar<int> lanes;
+  bool modified = false;
 
-  if (op->dtype.lanes() != 1) {
-    TVM_TRY_REWRITE(broadcast(x, lanes) && broadcast(y, lanes), broadcast(x && y, lanes));
+  // Simplify each of the subexpressions under the assumption that all
+  // other subexpressions are true.
+  for (size_t i = 0; i < subexprs.size(); i++) {
+    std::vector<With<ConstraintContext>> context;
+    context.reserve(subexprs.size() - 1);
+
+    PrimExpr remainder = Bool(true);
+    for (size_t j = 0; j < subexprs.size(); j++) {
+      if (i != j) {
+        context.emplace_back(analyzer_, subexprs[j]);
+      }
+    }
+
+    PrimExpr simplified = VisitExpr(subexprs[i]);
+    if (!simplified.same_as(subexprs[i])) {
+      modified = true;
+    }
+    subexprs[i] = simplified;
+
+    while (context.size()) {
+      context.pop_back();
+    }
   }
 
-  auto cfalse = PConst<PrimExpr>(make_const(op->dtype, false));
-  TVM_TRY_REWRITE(x == y && x != y, cfalse);
-  TVM_TRY_REWRITE(x != y && x == y, cfalse);
-  TVM_TRY_REWRITE(x && !x, cfalse);
-  TVM_TRY_REWRITE(x <= y && y < x, cfalse);
-  TVM_TRY_REWRITE(y < x && x <= y, cfalse);
-  TVM_TRY_REWRITE(x <= y && y <= x, x == y);
+  // Rules to simplify a pair of conditions.  Returns NullOpt if no
+  // simplification is possible.
+  auto pairwise_simplify = [this](const PrimExpr& a, const PrimExpr& b) -> Optional<PrimExpr> {
+    if (auto const_res = TryConstFold<And>(a, b)) return const_res.value();
 
-  TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
+    PrimExpr ret = a && b;
 
-  TVM_TRY_REWRITE_IF(x < c1 && c2 <= x, cfalse, c2.Eval()->value >= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 <= x && x < c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(x <= c1 && c2 < x, cfalse, c2.Eval()->value >= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 < x && x <= c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
+    if (auto match = TryMatchLiteralConstraint(ret)) {
+      return match.value();
+    }
 
-  TVM_TRY_REWRITE_IF(x <= c1 && c2 <= x, cfalse, c2.Eval()->value > c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 <= x && x <= c1, cfalse, c2.Eval()->value > c1.Eval()->value);
+    // Pattern var to match any expression
+    PVar<PrimExpr> x, y;
+    // Pattern var match IntImm
+    PVar<IntImm> c1, c2;
+    PVar<int> lanes;
 
-  TVM_TRY_REWRITE(x == c1 && x != c2, x == c1 && c1 != c2);
-  TVM_TRY_REWRITE(x != c2 && x == c1, x == c1 && c1 != c2);
+    if (ret->dtype.lanes() != 1) {
+      TVM_TRY_REWRITE(broadcast(x, lanes) && broadcast(y, lanes), broadcast(x && y, lanes));
+    }
+
+    auto cfalse = PConst<PrimExpr>(make_const(ret->dtype, false));
+    TVM_TRY_REWRITE(x == y && x != y, cfalse);
+    TVM_TRY_REWRITE(x != y && x == y, cfalse);
+    TVM_TRY_REWRITE(x && !x, cfalse);
+    TVM_TRY_REWRITE(x <= y && y < x, cfalse);
+    TVM_TRY_REWRITE(y < x && x <= y, cfalse);
+    TVM_TRY_REWRITE(x <= y && y <= x, x == y);
+
+    TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
+
+    TVM_TRY_REWRITE_IF(x < c1 && c2 <= x, cfalse, c2.Eval()->value >= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 <= x && x < c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(x <= c1 && c2 < x, cfalse, c2.Eval()->value >= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 < x && x <= c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
+
+    TVM_TRY_REWRITE_IF(x <= c1 && c2 <= x, cfalse, c2.Eval()->value > c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 <= x && x <= c1, cfalse, c2.Eval()->value > c1.Eval()->value);
+
+    TVM_TRY_REWRITE(x == c1 && x != c2, x == c1 && c1 != c2);
+    TVM_TRY_REWRITE(x != c2 && x == c1, x == c1 && c1 != c2);
+
+    return NullOpt;
+  };
+
+  // Check each pairwise set of subexpressions for simplifications
+  for (size_t i = 0; i < subexprs.size(); i++) {
+    for (size_t j = i + 1; j < subexprs.size(); j++) {
+      PrimExpr& a = subexprs[i];
+      PrimExpr& b = subexprs[j];
+      if (a.defined() && b.defined()) {
+        if (Optional<PrimExpr> pairwise = pairwise_simplify(a, b)) {
+          a = PrimExpr();
+          b = pairwise.value();
+          modified = true;
+        }
+      }
+    }
+  }
+
+  if (!modified) {
+    return GetRef<PrimExpr>(op);
+  }
+
+  // Merge all remaining subexpressions
+  PrimExpr ret = Bool(true);
+  for (const auto& subexpr : subexprs) {
+    if (subexpr.defined()) {
+      ret = ret && subexpr;
+    }
+  }
   return ret;
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
-  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
-  op = ret.as<OrNode>();
-  if (auto const_res = TryConstFold<Or>(op->a, op->b)) return const_res.value();
-  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+  std::vector<PrimExpr> subexprs = ExtractComponents(GetRef<PrimExpr>(op));
+  ICHECK_GE(subexprs.size(), 2);
 
-  // Pattern var to match any expression
-  PVar<PrimExpr> x, y;
-  // Pattern var match IntImm
-  PVar<IntImm> c1, c2;
-  PVar<int> lanes;
+  bool modified = false;
 
-  if (op->dtype.lanes() != 1) {
-    TVM_TRY_REWRITE(broadcast(x, lanes) || broadcast(y, lanes), broadcast(x || y, lanes));
+  // Simplify each of the subexpressions under the assumption that all
+  // other subexpressions are false.
+  for (size_t i = 0; i < subexprs.size(); i++) {
+    std::vector<With<ConstraintContext>> context;
+    context.reserve(subexprs.size() - 1);
+
+    PrimExpr remainder = Bool(true);
+    for (size_t j = 0; j < subexprs.size(); j++) {
+      if (i != j) {
+        context.emplace_back(analyzer_, RewriteBooleanOperators(Not(subexprs[j])));
+      }
+    }
+
+    PrimExpr simplified = VisitExpr(subexprs[i]);
+    if (!simplified.same_as(subexprs[i])) {
+      modified = true;
+    }
+
+    subexprs[i] = simplified;
+
+    while (context.size()) {
+      context.pop_back();
+    }
   }
 
-  auto ctrue = PConst<PrimExpr>(make_const(op->dtype, true));
+  // Rules to simplify a pair of conditions.  Returns NullOpt if no
+  // simplification is possible.
+  auto pairwise_simplify = [this](const PrimExpr& a, const PrimExpr& b) -> Optional<PrimExpr> {
+    if (auto const_res = TryConstFold<Or>(a, b)) return const_res.value();
 
-  TVM_TRY_REWRITE(x == y || x != y, ctrue);
-  TVM_TRY_REWRITE(x != y || x == y, ctrue);
-  TVM_TRY_REWRITE(x || !x, ctrue);
-  TVM_TRY_REWRITE(x <= y || y < x, ctrue);
-  TVM_TRY_REWRITE(y < x || x <= y, ctrue);
+    PrimExpr ret = a || b;
 
-  TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);
+    if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
-  TVM_TRY_REWRITE_IF(x <= c1 || c2 < x, ctrue, c2.Eval()->value <= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 < x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(x < c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value);
-  TVM_TRY_REWRITE_IF(c2 <= x || x < c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
+    // Pattern var to match any expression
+    PVar<PrimExpr> x, y;
+    // Pattern var match IntImm
+    PVar<IntImm> c1, c2;
+    PVar<int> lanes;
 
-  TVM_TRY_REWRITE_IF(x <= c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
-  TVM_TRY_REWRITE_IF(c2 <= x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
+    if (ret->dtype.lanes() != 1) {
+      TVM_TRY_REWRITE(broadcast(x, lanes) || broadcast(y, lanes), broadcast(x || y, lanes));
+    }
 
-  TVM_TRY_REWRITE(x != c1 || x == c2, x != c1 || c1 == c2);
-  TVM_TRY_REWRITE(x == c2 || x != c1, x != c1 || c1 == c2);
+    auto ctrue = PConst<PrimExpr>(make_const(ret->dtype, true));
+
+    TVM_TRY_REWRITE(x == y || x != y, ctrue);
+    TVM_TRY_REWRITE(x != y || x == y, ctrue);
+    TVM_TRY_REWRITE(x || !x, ctrue);
+    TVM_TRY_REWRITE(x <= y || y < x, ctrue);
+    TVM_TRY_REWRITE(y < x || x <= y, ctrue);
+    TVM_TRY_REWRITE(x <= y || y <= x, ctrue);
+    TVM_TRY_REWRITE(x <= y || x == y, x <= y);
+    TVM_TRY_REWRITE(x == y || x <= y, x <= y);
+    TVM_TRY_REWRITE(x < y || x == y, x <= y);
+    TVM_TRY_REWRITE(x == y || x <= y, x <= y);
+
+    TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);
+
+    TVM_TRY_REWRITE_IF(x <= c1 || c2 < x, ctrue, c2.Eval()->value <= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 < x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(x < c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value);
+    TVM_TRY_REWRITE_IF(c2 <= x || x < c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
+
+    TVM_TRY_REWRITE_IF(x <= c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
+    TVM_TRY_REWRITE_IF(c2 <= x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
+
+    TVM_TRY_REWRITE(x != c1 || x == c2, x != c1 || c1 == c2);
+    TVM_TRY_REWRITE(x == c2 || x != c1, x != c1 || c1 == c2);
+    return NullOpt;
+  };
+
+  // Check each pairwise set of subexpressions for simplifications
+  for (size_t i = 0; i < subexprs.size(); i++) {
+    for (size_t j = i + 1; j < subexprs.size(); j++) {
+      PrimExpr& a = subexprs[i];
+      PrimExpr& b = subexprs[j];
+      if (a.defined() && b.defined()) {
+        if (Optional<PrimExpr> pairwise = pairwise_simplify(a, b)) {
+          a = PrimExpr();
+          b = pairwise.value();
+          modified = true;
+        }
+      }
+    }
+  }
+
+  if (!modified) {
+    return GetRef<PrimExpr>(op);
+  }
+
+  // Merge all remaining subexpressions
+  PrimExpr ret = Bool(false);
+  for (const auto& subexpr : subexprs) {
+    if (subexpr.defined()) {
+      ret = ret || subexpr;
+    }
+  }
   return ret;
 }
 
