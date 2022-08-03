@@ -1350,7 +1350,7 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryMatchLiteralConstraint(const Prim
   PrimExpr negation = Not(expr);
 
   ExprDeepEqual expr_equal;
-  for (const auto& constraint : analyzer_->constraint_tracker.CurrentlyKnown()) {
+  for (const auto& constraint : scoped_constraints_) {
     if (expr_equal(constraint, expr)) {
       return make_const(expr->dtype, true);
     }
@@ -1896,9 +1896,9 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LetNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const BufferLoadNode* op) {
-  if (auto opt = analyzer_->constraint_tracker.KnownBufferValue(op->buffer, op->indices)) {
-    return opt.value();
-  }
+  // if (auto opt = analyzer_->constraint_tracker.KnownBufferValue(op->buffer, op->indices)) {
+  //   return opt.value();
+  // }
   return IRMutatorWithAnalyzer::VisitExpr_(op);
 }
 

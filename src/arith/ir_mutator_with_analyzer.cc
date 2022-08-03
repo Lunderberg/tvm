@@ -39,9 +39,9 @@ Stmt IRMutatorWithAnalyzer::VisitStmt(const Stmt& stmt) {
   // Provide this value to the analyzer here instead of in
   // VisitStmt_(const BufferStoreNode*), so that this occurs after any
   // modification by subclasses.
-  if (auto* op = output.as<BufferStoreNode>()) {
-    analyzer_->constraint_tracker.KnownBufferValue(op->buffer, op->indices, op->value);
-  }
+  // if (auto* op = output.as<BufferStoreNode>()) {
+  //   analyzer_->constraint_tracker.KnownBufferValue(op->buffer, op->indices, op->value);
+  // }
 
   return output;
 }

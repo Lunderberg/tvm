@@ -79,7 +79,7 @@ void ConstraintContext::EnterWithScope() {
   recovery_functions_.push_back(analyzer_->rewrite_simplify.EnterConstraint(constraint_));
   recovery_functions_.push_back(analyzer_->int_set.EnterConstraint(constraint_));
   recovery_functions_.push_back(analyzer_->transitive_comparisons.EnterConstraint(constraint_));
-  recovery_functions_.push_back(analyzer_->constraint_tracker.EnterScopedConstraint(constraint_));
+  // recovery_functions_.push_back(analyzer_->constraint_tracker.EnterScopedConstraint(constraint_));
 }
 
 void ConstraintContext::ExitWithScope() {
@@ -94,7 +94,7 @@ void ConstraintContext::ExitWithScope() {
 
 void EnableExtraSimplificationContext::EnterWithScope() {
   ICHECK(recovery_functions_.size() == 0);
-  recovery_functions_.push_back(analyzer_->constraint_tracker.EnableExtraSimplifications());
+  // recovery_functions_.push_back(analyzer_->constraint_tracker.EnableExtraSimplifications());
   recovery_functions_.push_back(analyzer_->rewrite_simplify.EnableExtraSimplifications());
 }
 
@@ -114,7 +114,7 @@ void SuppressConstraintContext::EnterWithScope() {
   recovery_functions_.push_back(analyzer_->modular_set.SuppressConstraints());
   recovery_functions_.push_back(analyzer_->rewrite_simplify.SuppressConstraints());
   recovery_functions_.push_back(analyzer_->int_set.SuppressConstraints());
-  recovery_functions_.push_back(analyzer_->constraint_tracker.SuppressConstraints());
+  // recovery_functions_.push_back(analyzer_->constraint_tracker.SuppressConstraints());
 }
 
 void SuppressConstraintContext::ExitWithScope() {
