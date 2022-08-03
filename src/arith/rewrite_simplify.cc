@@ -1573,6 +1573,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   TVM_TRY_REWRITE(x && !x, cfalse);
   TVM_TRY_REWRITE(x <= y && y < x, cfalse);
   TVM_TRY_REWRITE(y < x && x <= y, cfalse);
+  TVM_TRY_REWRITE(x <= y && y <= x, x == y);
 
   TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
   TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);

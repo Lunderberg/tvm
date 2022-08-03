@@ -155,6 +155,16 @@ class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
         return inner
 
 
+class TestSimplifyLENodeToEqualNode(BaseBeforeAfter):
+    """If neither value is greater than each other, they are equal."""
+
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i <= j and j <= i
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i == j
+
+
 class TestLoadStoreNoop(BaseBeforeAfter):
     """Store of a value that was just read from the same location is a no-op."""
 
