@@ -1187,6 +1187,8 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
     return false;
   }
 
+  ExprDeepEqual deep_equal;
+
   Analyzer analyzer;
   With<ConstraintContext> context(&analyzer, predicate.FreeParameterConstraints() &&
                                                  other.predicate.FreeParameterConstraints());
@@ -1200,21 +1202,25 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
   if (predicate.IsDefined() && other.predicate.IsDefined()) {
     PrimExpr predicate_expr = predicate.expression_.value();
     PrimExpr other_predicate_expr = other.predicate(predicate.parameter_vars_).value();
-    if (!implies(predicate_expr, other_predicate_expr)) {
-      // std::cout << "\t\t\t"
-      //           << "Cannot use " << predicate_expr << " to prove " << other_predicate_expr
-      //           << std::endl;
-      return false;
-    }
 
-    if (!implies(other_predicate_expr, predicate_expr)) {
-      // std::cout << "\t\t\t"
-      //           << "Cannot use " << other_predicate_expr << " to prove " << predicate_expr
-      //           << std::endl;
-      return false;
-    }
-    bool equivalent_predicates = implies(predicate_expr, other_predicate_expr) &&
-                                 implies(other_predicate_expr, predicate_expr);
+    // TODO: Remove these debug breakdowns of "equivalent_predicates"
+    // bool is_deep_equal = deep_equal(predicate_expr, other_predicate_expr);
+    // if (!is_deep_equal && !implies(predicate_expr, other_predicate_expr)) {
+    //   std::cout << "\t\t\t"
+    //             << "Cannot use " << predicate_expr << " to prove " << other_predicate_expr
+    //             << std::endl;
+    //   return false;
+    // }
+
+    // if (!is_deep_equal && !implies(other_predicate_expr, predicate_expr)) {
+    //   std::cout << "\t\t\t"
+    //             << "Cannot use " << other_predicate_expr << " to prove " << predicate_expr
+    //             << std::endl;
+    //   return false;
+    // }
+    bool equivalent_predicates = deep_equal(predicate_expr, other_predicate_expr) ||
+                                 (implies(predicate_expr, other_predicate_expr) &&
+                                  implies(other_predicate_expr, predicate_expr));
     if (!equivalent_predicates) {
       return false;
     }
@@ -1229,7 +1235,8 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
   if (known_value.IsDefined() && other.known_value.IsDefined()) {
     PrimExpr known_expr = known_value.expression_.value();
     PrimExpr other_known_expr = other.known_value(known_value.parameter_vars_).value();
-    if (!analyzer.CanProveEqual(known_expr, other_known_expr)) {
+    if (!deep_equal(known_expr, other_known_expr) &&
+        !analyzer.CanProveEqual(known_expr, other_known_expr)) {
       // std::cout << "\t\t\t"
       //           << "Can't prove that " << known_expr << " is equal to " << other_known_expr
       //           << std::endl;
