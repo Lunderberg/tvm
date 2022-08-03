@@ -132,6 +132,7 @@ class BufferTouch {
   enum class AccessType {
     Read,
     Write,
+    Assume,
   };
 
   BufferTouch(tir::Buffer buffer, Predicate predicate, AccessType touch_type,

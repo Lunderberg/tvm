@@ -277,7 +277,9 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
 
 bool BufferTouch::IntroducesCrossLoopDependency(const BufferTouch& preceding_in_body,
                                                 const Var& loop_var, Analyzer* analyzer) const {
-  if (touch_type != AccessType::Write || preceding_in_body.touch_type != AccessType::Read ||
+  if (touch_type != AccessType::Write ||
+      (preceding_in_body.touch_type != AccessType::Read &&
+       preceding_in_body.touch_type != AccessType::Assume) ||
       !buffer.same_as(preceding_in_body.buffer) ||
       predicate.IsDistinctFrom(preceding_in_body.predicate)) {
     return false;
@@ -309,9 +311,10 @@ bool BufferTouch::IntroducesCrossLoopDependency(const BufferTouch& preceding_in_
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
-  auto touch_type = (tp.touch_type == BufferTouch::AccessType::Read)    ? "read"
-                    : (tp.touch_type == BufferTouch::AccessType::Write) ? "write"
-                                                                        : "opaque";
+  auto touch_type = (tp.touch_type == BufferTouch::AccessType::Read)     ? "read"
+                    : (tp.touch_type == BufferTouch::AccessType::Write)  ? "write"
+                    : (tp.touch_type == BufferTouch::AccessType::Assume) ? "assume"
+                                                                         : "???";
   os << "BufferTouch(" << tp.buffer->name << ", " << touch_type << ", " << tp.predicate;
   if (tp.known_value.IsDefined()) {
     os << ", known_value = " << tp.known_value;
@@ -475,7 +478,8 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
         // }
         known_subregion.push_back({touch_predicate, value});
         access_predicate = access_predicate && !touch_predicate;
-      } else if (touch.touch_type == BufferTouch::AccessType::Read) {
+      } else if (touch.touch_type == BufferTouch::AccessType::Read ||
+                 touch.touch_type == BufferTouch::AccessType::Assume) {
         // This access didn't change the buffer's contents, so
         // continue backtracking.
       } else {
@@ -631,7 +635,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // constraints.  Will need to split out the BufferConstraint from
     // the clearing of previous in KnownBufferValue.
 
-    VisitAccess(load, BufferTouch::AccessType::Read, value, additional_predicate);
+    VisitAccess(load, BufferTouch::AccessType::Assume, value, additional_predicate);
     // Appending a control block ensures that all control blocks have
     // at most one statement that changes the known buffer contents.
     auto prev_block = CurrentControlBlock();
@@ -1586,6 +1590,10 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     std::vector<BufferTouchPattern::BufferConstraint> new_knowns;
 
     for (auto& touch : block.touch_points) {
+      if (touch.touch_type == BufferTouch::AccessType::Read) {
+        continue;
+      }
+
       Array<Var> axis_vars = touch.known_value.parameter_vars_;
 
       PrimExpr predicate = Bool(true);
@@ -1878,7 +1886,9 @@ Optional<PrimExpr> BufferTouchPattern::KnownValue(
   for (auto it = access_iter + 1; it != touch_points_.rend(); it++) {
     // If a previous write touched the same indices, then we can use
     // the recorded values at those indices.
-    if (it->touch_type == BufferTouch::AccessType::Write && access_iter->IsSubsetOf(*it)) {
+    if ((it->touch_type == BufferTouch::AccessType::Write ||
+         it->touch_type == BufferTouch::AccessType::Assume) &&
+        access_iter->IsSubsetOf(*it)) {
       return it->known_value(indices);
     }
   }
