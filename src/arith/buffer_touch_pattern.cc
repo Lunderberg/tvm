@@ -1709,6 +1709,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       return false;
     }();
 
+    // TODO: Have a maximum number of times that blocks may be
+    // visited, to guard against infinite loops.
     if (has_updated_post) {
       known_after_block[visiting] = post_knowns;
       for (size_t successor : block.successors) {
