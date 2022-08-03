@@ -1600,9 +1600,10 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
       Array<Var> axis_vars = touch.known_value.parameter_vars_;
 
+      With<ConstraintContext> context(&analyzer, touch.predicate.FreeParameterConstraints());
+
       PrimExpr predicate = Bool(true);
       if (touch.predicate.IsDefined()) {
-        With<ConstraintContext> context(&analyzer, touch.predicate.FreeParameterConstraints());
         auto opt_predicate = BufferConstraintApplication::Apply(
             prior_knowns, touch.predicate(axis_vars).value(), &analyzer);
         // If a predicate depends on a buffer value, assume that it could impact any location.
@@ -1613,9 +1614,6 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       }
 
       if (touch.known_value.IsDefined()) {
-        With<ConstraintContext> context(&analyzer, predicate);
-        With<ConstraintContext> context2(&analyzer, touch.predicate.FreeParameterConstraints());
-
         PrimExpr known_value = touch.known_value.expression_.value();
 
         Array<PrimExpr> regions =
@@ -1624,18 +1622,35 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         std::cout << "\t\t"
                   << "Regions of interest for " << known_value << " are " << regions << std::endl;
         for (const auto& region : regions) {
-          With<ConstraintContext> region_context(&analyzer, region);
-          auto opt_value = BufferConstraintApplication::Apply(prior_knowns, known_value, &analyzer);
+          Optional<PrimExpr> opt_value;
+          {
+            With<ConstraintContext> context(&analyzer, predicate);
+            With<ConstraintContext> region_context(&analyzer, region);
+            opt_value = BufferConstraintApplication::Apply(prior_knowns, known_value, &analyzer);
+          }
           PrimExpr region_with_predicate =
-              predicate && Substitute(region, touch.loop_var_to_axis_var);
+              analyzer.Simplify(predicate && Substitute(region, touch.loop_var_to_axis_var));
           std::cout << "\t\t"
                     << "Simplified from " << touch.known_value.expression_ << " to " << opt_value
                     << " in region " << region << " with full predicate " << region_with_predicate
                     << std::endl;
-          new_knowns.push_back(
-              {touch.buffer,
-               Predicate(axis_vars, region_with_predicate, touch.predicate.free_parameters_),
-               ParametrizedExpression(axis_vars, opt_value)});
+          // The predicate surrounding this touch point may be
+          // disjoint from the predicate for the region of known
+          // access.  Only track regions that may have a value
+          // present.
+          auto* as_int = as_const_int(region_with_predicate);
+          if (as_int == nullptr || *as_int) {
+            Map<tir::Var, Range> free_parameters;
+            for (const Var& var : UndefinedVars(region_with_predicate)) {
+              auto it = touch.predicate.free_parameters_.find(var);
+              if (it != touch.predicate.free_parameters_.end()) {
+                free_parameters.Set((*it).first, (*it).second);
+              }
+            }
+            new_knowns.push_back({touch.buffer,
+                                  Predicate(axis_vars, region_with_predicate, free_parameters),
+                                  ParametrizedExpression(axis_vars, opt_value)});
+          }
         }
       } else {
         // Overwritten with unknown value wherever the predicate is true
