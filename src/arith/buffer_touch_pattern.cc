@@ -1334,20 +1334,7 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
     BufferRegionCollector collector(knowns, analyzer);
     collector(expr);
 
-    std::unordered_set<PrimExpr, StructuralHash, StructuralEqual> dedup;
-
-    for (PrimExpr condition : collector.conditions_) {
-      condition = analyzer->Simplify(condition);
-      if (!as_const_int(condition)) {
-        dedup.insert(condition);
-      }
-    }
-
-    std::vector<PrimExpr> conditions{dedup.begin(), dedup.end()};
-    if (conditions.empty()) {
-      conditions.push_back(Bool(true));
-    }
-    return conditions;
+    return {collector.condition_set_.begin(), collector.condition_set_.end()};
   }
 
  private:
@@ -1368,6 +1355,8 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
     PrimExpr free_parameter_constraints = Bool(true);
 
     PrimExpr access_predicate = Bool(true);
+
+    std::vector<PrimExpr> new_regions;
 
     // std::cout << "Examining BufferLoad " << GetRef<PrimExpr>(op) << std::endl;
 
@@ -1403,7 +1392,7 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
         // std::cout << "\t"
         //           << "Found partially known value for access condition "
         //           << (access_predicate && touch_predicate) << std::endl;
-        conditions_.push_back(access_predicate && touch_predicate);
+        new_regions.push_back(access_predicate && touch_predicate);
         access_predicate = access_predicate && !touch_predicate;
       } else {
         // This BufferTouch writes values to the buffer that we might
@@ -1415,12 +1404,27 @@ class BufferRegionCollector : public IRMutatorWithAnalyzer {
 
     // std::cout << "\t"
     //           << "All remaining access is the same condition, " << access_predicate << std::endl;
-    conditions_.push_back(access_predicate);
+
+    if (new_regions.size()) {
+      new_regions.push_back(access_predicate);
+
+      Analyzer local_analyzer;
+      std::unordered_set<PrimExpr, StructuralHash, StructuralEqual> updated_regions;
+      for (const auto& prev_region : condition_set_) {
+        for (const auto& new_region : new_regions) {
+          PrimExpr intersection = local_analyzer.Simplify(prev_region && new_region);
+          if (!as_const_int(intersection)) {
+            updated_regions.insert(intersection);
+          }
+        }
+      }
+      condition_set_ = updated_regions;
+    }
 
     return GetRef<PrimExpr>(op);
   }
 
-  std::vector<PrimExpr> conditions_;
+  std::unordered_set<PrimExpr, StructuralHash, StructuralEqual> condition_set_ = {Bool(true)};
   const std::vector<BufferTouchPattern::BufferConstraint>& knowns_;
 };
 
