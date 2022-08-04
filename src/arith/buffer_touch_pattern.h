@@ -295,13 +295,39 @@ class BufferTouchPattern {
     static std::vector<BufferConstraint> MergeSequentialConstraints(
         const std::vector<BufferConstraint>& before, const std::vector<BufferConstraint>& after);
 
+    /*! \brief Simplify and remove overwritten constraints
+     *
+     * Given a vector of constraints, where later constraints may
+     * overwrite earlier constraints, produce a set of disjoint
+     * constraints representing the final state after all constraints
+     * have been applied.
+     *
+     * \param constraints The vector of constraints, from oldest to newest.
+     *
+     * \return A set of disjoint constraints
+     */
+    static std::vector<BufferConstraint> SimplifyOverwrittenConstraints(
+        std::vector<BufferConstraint> constraints);
+
+    /*! \brief Simplify disjoint
+     *
+     * Given a vector of disjoint constraints, merge any constraints
+     * that produce the same known value.
+     *
+     * \param constraints The initial disjoing constraints.
+     *
+     * \return A set of disjoint constraints
+     */
+    static std::vector<BufferConstraint> MergeDisjointConstraints(
+        std::vector<BufferConstraint> constraints);
+
     /* \brief Merge constraints that jointly apply
      *
      * If a constraint applies to the same indices in the same buffer,
      * but cannot be shown to be the same value, it will be tracked as
      * a NullOpt, with no additional information tracked.
      */
-    static std::vector<BufferConstraint> MergeJointConstraints(
+    static std::vector<BufferConstraint> MergePredecessorConstraints(
         const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b);
   };
 

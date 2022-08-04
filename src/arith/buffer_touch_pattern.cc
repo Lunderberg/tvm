@@ -723,9 +723,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
         const auto* write = touches[j];
 
         if (write->IntroducesCrossLoopDependency(*read, op->loop_var, &analyzer_)) {
-          // std::cout << "Read " << *read << " depends on previous loop iteration writing " <<
-          // *write
-          //           << std::endl;
+          std::cout << "Read " << *read << " depends on previous loop iteration writing " << *write
+                    << std::endl;
           depends_on_other_iterations = true;
           break;
         }
@@ -1288,6 +1287,73 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
   return true;
 }
 
+std::vector<BufferTouchPattern::BufferConstraint>
+BufferTouchPattern::BufferConstraint::SimplifyOverwrittenConstraints(
+    std::vector<BufferTouchPattern::BufferConstraint> constraints) {
+  for (size_t i = 0; i < constraints.size(); i++) {
+    for (size_t j = i + 1; j < constraints.size(); j++) {
+      constraints[i].OverwriteBy(constraints[j]);
+    }
+  }
+
+  constraints.erase(std::remove_if(constraints.begin(), constraints.end(),
+                                   [](const auto& constraint) -> bool {
+                                     return constraint.predicate.IsAlwaysFalse() ||
+                                            !constraint.known_value.IsDefined();
+                                   }),
+                    constraints.end());
+
+  return constraints;
+}
+
+std::vector<BufferTouchPattern::BufferConstraint>
+BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
+    std::vector<BufferTouchPattern::BufferConstraint> constraints) {
+  Analyzer analyzer;
+
+  for (size_t i = 0; i < constraints.size(); i++) {
+    for (size_t j = i + 1; j < constraints.size(); j++) {
+      auto& a = constraints[i];
+      auto& b = constraints[j];
+      if (a.buffer.same_as(b.buffer) && a.predicate.IsDefined() && b.predicate.IsDefined() &&
+          a.known_value.IsDefined() && b.known_value.IsDefined()) {
+        auto axis_vars = a.predicate.parameter_vars_;
+
+        PrimExpr union_predicate =
+            analyzer.Simplify(a.predicate.expression_ || b.predicate(axis_vars));
+        PrimExpr value_a = a.known_value(axis_vars).value();
+        PrimExpr value_b = b.known_value(axis_vars).value();
+
+        Map<Var, Range> free_parameters = a.predicate.free_parameters_;
+        for (const auto& pair : b.predicate.free_parameters_) {
+          free_parameters.Set(pair.first, pair.second);
+        }
+
+        With<ConstraintContext> context(&analyzer, union_predicate);
+        analyzer.Bind(free_parameters);
+
+        if (analyzer.CanProveEqual(value_a, value_b)) {
+          BufferTouchPattern::BufferConstraint new_constraint{
+              a.buffer, Predicate(axis_vars, union_predicate, free_parameters),
+              ParametrizedExpression(axis_vars, value_a)};
+          a = std::move(new_constraint);
+          b.predicate.expression_ = NullOpt;
+        }
+      }
+    }
+  }
+
+  constraints.erase(std::remove_if(constraints.begin(), constraints.end(),
+                                   [](const auto& constraint) -> bool {
+                                     return constraint.predicate.IsAlwaysFalse() ||
+                                            !constraint.predicate.IsDefined() ||
+                                            !constraint.known_value.IsDefined();
+                                   }),
+                    constraints.end());
+
+  return constraints;
+}
+
 /* \brief Merge constraints that may overwrite each other.
  *
  * Assumes that "before" and "after" sets of constraints are
@@ -1301,59 +1367,43 @@ BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
   output.insert(output.end(), before.begin(), before.end());
   output.insert(output.end(), after.begin(), after.end());
 
-  for (size_t i = 0; i < output.size(); i++) {
-    for (size_t j = i + 1; j < output.size(); j++) {
-      output[i].OverwriteBy(output[j]);
-    }
-  }
-
-  output.erase(std::remove_if(output.begin(), output.end(),
-                              [](const auto& constraint) -> bool {
-                                return constraint.predicate.IsAlwaysFalse();
-                                // return constraint.predicate.IsAlwaysFalse() ||
-                                //        !constraint.known_value.IsDefined();
-                              }),
-               output.end());
+  output = SimplifyOverwrittenConstraints(std::move(output));
 
   return output;
 }
 
 std::vector<BufferTouchPattern::BufferConstraint>
-BufferTouchPattern::BufferConstraint::MergeJointConstraints(
+BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
     const std::vector<BufferTouchPattern::BufferConstraint>& a,
     const std::vector<BufferTouchPattern::BufferConstraint>& b) {
+  // For a constraint to be in the output, it must be present in both
+  // inputs.
   Analyzer analyzer;
 
-  std::vector<BufferTouchPattern::BufferConstraint> conflicts;
+  std::vector<BufferTouchPattern::BufferConstraint> consistent_constraints;
   for (const auto& ai : a) {
     for (const auto& bi : b) {
-      if (!ai.IsDistinctFrom(bi)) {
+      if (ai.buffer.same_as(bi.buffer)) {
         Predicate predicate = ai.predicate.Intersection(bi.predicate);
+        if (!predicate.IsAlwaysFalse()) {
+          auto axis_vars = predicate.parameter_vars_;
+          With<ConstraintContext> context(
+              &analyzer,
+              predicate.FreeParameterConstraints() && predicate.expression_.value_or(Bool(true)));
+          Optional<PrimExpr> known_value_a = ai.known_value(axis_vars);
+          Optional<PrimExpr> known_value_b = bi.known_value(axis_vars);
 
-        auto axis_vars = predicate.parameter_vars_;
-        With<ConstraintContext> context(&analyzer, predicate.FreeParameterConstraints() &&
-                                                       predicate.expression_.value_or(Bool(true)));
-        Optional<PrimExpr> known_value_a = ai.known_value(axis_vars);
-        Optional<PrimExpr> known_value_b = bi.known_value(axis_vars);
-
-        Optional<PrimExpr> known_value = NullOpt;
-        bool is_consistent = known_value_a && known_value_b &&
-                             analyzer.CanProveEqual(known_value_a.value(), known_value_b.value());
-        if (!is_consistent) {
-          ParametrizedExpression known_value(axis_vars, NullOpt);
-          conflicts.push_back({ai.buffer, predicate, known_value});
+          bool is_consistent = known_value_a && known_value_b &&
+                               analyzer.CanProveEqual(known_value_a.value(), known_value_b.value());
+          if (is_consistent) {
+            consistent_constraints.push_back({ai.buffer, predicate, ai.known_value});
+          }
         }
       }
     }
   }
 
-  std::vector<BufferTouchPattern::BufferConstraint> concat = MergeSequentialConstraints(a, b);
-
-  if (conflicts.size()) {
-    return MergeSequentialConstraints(concat, conflicts);
-  } else {
-    return concat;
-  }
+  return MergeDisjointConstraints(std::move(consistent_constraints));
 }
 
 namespace {
@@ -1798,12 +1848,18 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     std::cout << "]" << std::endl;
 
     std::vector<BufferTouchPattern::BufferConstraint> prior_knowns;
+    bool found_first_predecessor = false;
     for (size_t predecessor : block.predecessors) {
       if (visited_once.count(predecessor)) {
         auto it = known_after_block.find(predecessor);
         if (it != known_after_block.end()) {
-          prior_knowns =
-              BufferTouchPattern::BufferConstraint::MergeJointConstraints(prior_knowns, it->second);
+          if (found_first_predecessor) {
+            prior_knowns = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
+                prior_knowns, it->second);
+          } else {
+            prior_knowns = it->second;
+            found_first_predecessor = true;
+          }
         }
       }
     }
