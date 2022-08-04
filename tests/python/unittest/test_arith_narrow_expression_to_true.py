@@ -27,10 +27,14 @@ j = tir.Var("j", "int32")
 n = tir.Var("n", "int32")
 m = tir.Var("m", "int32")
 b = tir.Var("b", "bool")
+buf = tir.decl_buffer(16, "int32", "buf")
+
+tir_false = tir.IntImm("bool", False)
+tir_true = tir.IntImm("bool", True)
 
 before, expected = tvm.testing.parameters(
-    [tir.IntImm("bool", True), tir.IntImm("bool", True)],
-    [tir.IntImm("bool", False), tir.IntImm("bool", False)],
+    [tir_true, tir_true],
+    [tir_false, tir_false],
     [b, b],
     [i > 5, i > 5],
     [i > n, i > 7],
@@ -57,6 +61,13 @@ before, expected = tvm.testing.parameters(
     # Need to do some constant folding to remove `7 <= 5`
     # [i + (n == 5) < 10, 1],
     [tir.Not(i < n), tir.Not(i < 7)],
+    ### Buffer handling
+    [buf.vload(0) > 0, tir_false],
+    [buf.vload(0) > i, tir_false],
+    [buf.vload(i) > 0, tir_false],
+    [tir.And(buf.vload(i) > 0, i <= 0), tir.And(tir_false, i <= 0)],
+    [tir.Or(buf.vload(i) > 0, i <= n), tir.Or(tir_false, i <= 0)],
+    [tir.Or(tir.Not(buf.vload(i) > 0), i <= n), tir.Or(tir_false, i <= 0)],
 )
 
 

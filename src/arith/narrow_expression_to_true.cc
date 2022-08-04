@@ -78,7 +78,10 @@ class ExpressionNarrowerToTrue : public tir::ExprMutator {
       return this->VisitExpr(t->b);
     }();
 
-    if (a.same_as(t->a) && b.same_as(t->b)) {
+    if (buffer_load_in_current_comparison_) {
+      buffer_load_in_current_comparison_ = false;
+      return Bool(CurrentContext() == Context::Minimize);
+    } else if (a.same_as(t->a) && b.same_as(t->b)) {
       return std::move(t);
     } else {
       return T(a, b);
@@ -122,6 +125,11 @@ class ExpressionNarrowerToTrue : public tir::ExprMutator {
     auto current = CurrentContext();
     WithContext context(this, OppositeContext(current));
     return !VisitExpr(op->a);
+  }
+
+  PrimExpr VisitExpr_(const BufferLoadNode* op) override {
+    buffer_load_in_current_comparison_ = true;
+    return GetRef<PrimExpr>(op);
   }
 
   PrimExpr VisitExpr_(const VarNode* op) override {
@@ -175,6 +183,7 @@ class ExpressionNarrowerToTrue : public tir::ExprMutator {
 
   std::vector<Context> context_stack_;
   Map<Var, Range> ranges_;
+  bool buffer_load_in_current_comparison_{false};
 };
 
 PrimExpr NarrowExpressionToTrue(PrimExpr expr, Map<Var, Range> ranges) {

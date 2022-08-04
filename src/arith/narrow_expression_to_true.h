@@ -31,8 +31,7 @@
 namespace tvm {
 namespace arith {
 
-/* \brief Given a true expression that includes free parameter,
- * generate a true expression without the free parameters.
+/* \brief Narrow a true expression a more easily provable condition.
  *
  * This function provides two guarantees:
  *
@@ -41,6 +40,8 @@ namespace arith {
  *
  * 2. The resulting expression does not contain any of the free
  * parameters.
+ *
+ * 3. The resulting expression does not contain any BufferLoad
  *
  * \param expr The expression to be examined.
  *
