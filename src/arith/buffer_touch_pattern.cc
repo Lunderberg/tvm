@@ -866,8 +866,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       free_params = new_params;
     }
 
-    // std::cout << "Transform of indices " << index_expressions << " is " << loop_var_to_axis_var
-    //           << " with free variables " << free_params << std::endl;
+    std::cout << "Transform of indices " << index_expressions << " is " << loop_var_to_axis_var
+              << " with free variables " << free_params << std::endl;
 
     // Normalization function, applied to both the predicate and the
     // known value.  Converts from an expression in terms of loop
@@ -1373,13 +1373,8 @@ class BufferRegionCollector : public ExprVisitor {
   static std::vector<Region> Collect(
       const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
       const std::vector<Optional<PrimExpr>>& exprs, const Map<Var, Range>& all_free_parameters,
-      PrimExpr control_flow_predicate) {
-    Analyzer analyzer;
-    for (const auto& pair : all_free_parameters) {
-      analyzer.Bind(pair.first, pair.second);
-    }
-
-    BufferRegionCollector collector(knowns, all_free_parameters, control_flow_predicate, &analyzer);
+      Analyzer* analyzer) {
+    BufferRegionCollector collector(knowns, all_free_parameters, analyzer);
     for (const auto& expr : exprs) {
       if (expr) {
         collector(expr.value());
@@ -1393,12 +1388,8 @@ class BufferRegionCollector : public ExprVisitor {
   using Parent = ExprVisitor;
 
   BufferRegionCollector(const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
-                        const Map<Var, Range>& all_free_parameters, PrimExpr control_flow_predicate,
-                        Analyzer* analyzer)
-      : analyzer_(analyzer),
-        knowns_(knowns),
-        all_free_parameters_(all_free_parameters),
-        control_flow_predicate_(control_flow_predicate) {
+                        const Map<Var, Range>& all_free_parameters, Analyzer* analyzer)
+      : analyzer_(analyzer), knowns_(knowns), all_free_parameters_(all_free_parameters) {
     regions_.push_back(Region{Bool(true), {}});
   }
 
@@ -1429,23 +1420,21 @@ class BufferRegionCollector : public ExprVisitor {
                 << "Examining constraint with predicate " << constraint.predicate << std::endl;
       std::cout << "\t\t"
                 << "Substituting indices, constraint applies iff " << touch_predicate << std::endl;
-      PrimExpr always_touched =
-          NarrowExpressionToTrue(control_flow_predicate_ && touch_predicate, all_free_parameters_);
+      PrimExpr always_touched = NarrowExpressionToTrue(touch_predicate, all_free_parameters_);
       std::cout << "\t\t"
                 << "Removing free parameters, constraint applies if " << always_touched
                 << std::endl;
       always_touched = analyzer_->Simplify(always_touched);
       std::cout << "\t\t\t"
                 << "Simplified = " << always_touched << std::endl;
-      PrimExpr never_touched =
-          NarrowExpressionToTrue(control_flow_predicate_ && !touch_predicate, all_free_parameters_);
+      PrimExpr never_touched = NarrowExpressionToTrue(!touch_predicate, all_free_parameters_);
       std::cout << "\t\t"
                 << "Removing free parameters, constraint doesn't apply if " << never_touched
                 << std::endl;
       never_touched = analyzer_->Simplify(never_touched);
       std::cout << "\t\t\t"
                 << "Simplified = " << analyzer_->Simplify(never_touched) << std::endl;
-      PrimExpr partially_touched = control_flow_predicate_ && (!always_touched && !never_touched);
+      PrimExpr partially_touched = !always_touched && !never_touched;
       std::cout << "\t\t"
                 << "Removing free parameters, constraint sometimes applies if " << partially_touched
                 << std::endl;
@@ -1582,7 +1571,6 @@ class BufferRegionCollector : public ExprVisitor {
   std::vector<Region> regions_;
   const std::vector<BufferTouchPattern::BufferConstraint>& knowns_;
   const Map<Var, Range>& all_free_parameters_;
-  PrimExpr control_flow_predicate_;
 };
 
 class BufferConstraintApplication : public IRMutatorWithAnalyzer {
@@ -1619,6 +1607,9 @@ class BufferConstraintApplication : public IRMutatorWithAnalyzer {
   PrimExpr VisitExpr_(const BufferLoadNode* op) override {
     auto it = known_values_.find(op);
     if (it != known_values_.end() && it->second) {
+      std::cout << "\t\t\t"
+                << "Replacing BufferLoad " << GetRef<PrimExpr>(op) << " with known value of "
+                << it->second << std::endl;
       return it->second.value();
     } else {
       return GetRef<PrimExpr>(op);
@@ -1779,10 +1770,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   Analyzer analyzer;
 
   Map<Var, Range> all_free_parameters = GetAllFreeParameters();
-
-  for (const auto& pair : all_free_parameters) {
-    analyzer.Bind(pair.first, pair.second);
-  }
+  analyzer.Bind(all_free_parameters);
 
   while (to_visit.size()) {
     size_t visiting = *to_visit.begin();
@@ -1840,26 +1828,50 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       }
 
       Array<Var> axis_vars = touch.known_value.parameter_vars_;
-
       PrimExpr predicate = touch.predicate(axis_vars).value();
-      Optional<PrimExpr> known_value = touch.known_value(axis_vars);
-      auto regions = BufferRegionCollector::Collect(prior_knowns, {predicate, known_value},
-                                                    all_free_parameters, predicate);
 
+      // If this touch is a write, any preceding known values must be
+      // removed.  In case of data-dependent predicates that cannot be
+      // proven, assume that the maximum possible overwrites occur.
       if (touch.touch_type == BufferTouch::AccessType::Write) {
-        BufferTouchPattern::BufferConstraint overwrite{touch.buffer, touch.predicate,
-                                                       ParametrizedExpression(axis_vars, NullOpt)};
+        PrimExpr overwritten = analyzer.Simplify(!NarrowExpressionToTrue(!predicate, {}));
+        BufferTouchPattern::BufferConstraint overwrite{
+            touch.buffer, Predicate(axis_vars, overwritten, touch.predicate.free_parameters_),
+            ParametrizedExpression(axis_vars, NullOpt)};
         new_knowns.push_back(overwrite);
       }
 
+      Optional<PrimExpr> known_value = touch.known_value(axis_vars);
+      auto regions = BufferRegionCollector::Collect(prior_knowns, {predicate, known_value},
+                                                    all_free_parameters, &analyzer);
+
+      std::cout << "\t"
+                << "Regions of interest are [";
+      for (size_t i = 0; i < regions.size(); i++) {
+        if (i) {
+          std::cout << ", ";
+        }
+        std::cout << regions[i].region_predicate;
+      }
+      std::cout << "]" << std::endl;
+
       for (const auto& region : regions) {
-        Optional<PrimExpr> updated_predicate =
-            BufferConstraintApplication::Apply(region.known_values, predicate, &analyzer);
+        std::cout << "\t\t"
+                  << "Within region " << region.region_predicate << std::endl;
+        Optional<PrimExpr> updated_predicate = BufferConstraintApplication::Apply(
+            region.known_values, region.region_predicate && predicate, &analyzer);
+        std::cout << "\t\t\t"
+                  << "Buffer predicate simplifies from " << predicate << " to " << updated_predicate
+                  << std::endl;
         Optional<PrimExpr> updated_value = NullOpt;
         if (known_value) {
           updated_value = BufferConstraintApplication::Apply(region.known_values,
                                                              known_value.value(), &analyzer);
         }
+        std::cout << "\t\t\t"
+                  << "Known value simplifies from " << known_value << " to " << updated_value
+                  << std::endl;
+
         if (updated_predicate && updated_value && !is_const_false(updated_predicate.value())) {
           Map<tir::Var, Range> free_parameters;
           for (const Var& var : UndefinedVars(updated_predicate.value())) {
@@ -2046,7 +2058,7 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
     // to reach this statement?  Might need to track that in the
     // ControlFlowBlock.
     auto regions =
-        BufferRegionCollector::Collect(it->second, {expr}, GetAllFreeParameters(), Bool(true));
+        BufferRegionCollector::Collect(it->second, {expr}, GetAllFreeParameters(), analyzer);
     if (regions.size() == 1 && analyzer->CanProve(regions[0].region_predicate)) {
       if (auto opt_expr =
               BufferConstraintApplication::Apply(regions[0].known_values, expr, analyzer)) {
