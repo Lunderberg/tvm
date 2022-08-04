@@ -360,6 +360,9 @@ class BufferTouchPattern {
    */
   std::unordered_map<const tir::StmtNode*, size_t> control_flow_lookup_;
 
+  /*! \brief All free parameters across all constraint predicates */
+  Map<Var, Range> GetAllFreeParameters() const;
+
   /* \brief Assumptions that do not depend on buffer values */
   std::vector<PrimExpr> non_buffer_assumptions_;
 
