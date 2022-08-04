@@ -835,8 +835,39 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       transform = SolveForBufferIndices(index_variables, index_expressions);
     }
 
-    // std::cout << "Transform of indices " << index_expressions << " is " << transform->src_to_dst
-    //           << " with free variables " << transform->dst << std::endl;
+    Map<Var, PrimExpr> loop_var_to_axis_var = transform->src_to_dst;
+    Map<Var, Range> free_params = transform->dst->ranges;
+
+    // The arith::SolveLinearEquation sometimes introduces free
+    // parameters with extent of one.  Filtering them out here avoids
+    // needing to track them through later simplifications.
+    bool has_extent_one_params = false;
+    for (const auto& pair : free_params) {
+      if (is_const_int(pair.second->extent, 1)) {
+        has_extent_one_params = true;
+        break;
+      }
+    }
+    if (has_extent_one_params) {
+      Analyzer analyzer;
+      analyzer.Bind(free_params);
+      Map<Var, PrimExpr> new_map;
+      for (const auto& pair : loop_var_to_axis_var) {
+        new_map.Set(pair.first, analyzer.Simplify(pair.second));
+      }
+      loop_var_to_axis_var = new_map;
+
+      Map<Var, Range> new_params;
+      for (const auto& pair : free_params) {
+        if (!is_const_int(pair.second->extent, 1)) {
+          new_params.Set(pair.first, pair.second);
+        }
+      }
+      free_params = new_params;
+    }
+
+    // std::cout << "Transform of indices " << index_expressions << " is " << loop_var_to_axis_var
+    //           << " with free variables " << free_params << std::endl;
 
     // Normalization function, applied to both the predicate and the
     // known value.  Converts from an expression in terms of loop
@@ -854,7 +885,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       if (lane_var) {
         expr = UnwrapVectorExpr(expr, lane_var.value());
       }
-      expr = Substitute(expr, transform->src_to_dst);
+      expr = Substitute(expr, loop_var_to_axis_var);
 
       // if (Optional<PrimExpr> without_buffer_load =
       //         BufferConstraintSubstituter(out_->touch_points_, -1, &analyzer_)
@@ -881,29 +912,29 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     predicate_expr = normalize_expr(predicate_expr);
     known_value_expr = normalize_expr(known_value_expr);
 
-    Optional<PrimExpr> has_known_value_expr = Bool(false);
-    Optional<PrimExpr> known_untouched_expr = Bool(false);
+    // Optional<PrimExpr> has_known_value_expr = Bool(false);
+    // Optional<PrimExpr> known_untouched_expr = Bool(false);
 
-    if (predicate_expr) {
-      PrimExpr expr = predicate_expr.value();
-      {
-        PrimExpr narrowed = arith::NarrowExpressionToTrue(expr, transform->dst->ranges);
-        PrimExpr simplified = analyzer_.Simplify(narrowed);
-        std::cout << "Predicate expression " << expr << " can be narrowed to parameter-less "
-                  << narrowed << ", which simplifies to " << simplified << std::endl;
-        has_known_value_expr = simplified;
-      }
-      {
-        PrimExpr narrowed = arith::NarrowExpressionToTrue(!expr, transform->dst->ranges);
-        PrimExpr simplified = analyzer_.Simplify(narrowed);
-        std::cout << "Untouched expression " << expr << " can be narrowed to parameter-less "
-                  << narrowed << ", which simplifies to " << simplified << std::endl;
-        known_untouched_expr = simplified;
-      }
-    }
+    // if (predicate_expr) {
+    //   PrimExpr expr = predicate_expr.value();
+    //   {
+    //     PrimExpr narrowed = arith::NarrowExpressionToTrue(expr, free_params);
+    //     PrimExpr simplified = analyzer_.Simplify(narrowed);
+    //     std::cout << "Predicate expression " << expr << " can be narrowed to parameter-less "
+    //               << narrowed << ", which simplifies to " << simplified << std::endl;
+    //     has_known_value_expr = simplified;
+    //   }
+    //   {
+    //     PrimExpr narrowed = arith::NarrowExpressionToTrue(!expr, free_params);
+    //     PrimExpr simplified = analyzer_.Simplify(narrowed);
+    //     std::cout << "Untouched expression " << expr << " can be narrowed to parameter-less "
+    //               << narrowed << ", which simplifies to " << simplified << std::endl;
+    //     known_untouched_expr = simplified;
+    //   }
+    // }
 
     // if (known_value_expr) {
-    //   const auto& free_params = transform->dst->ranges;
+    //   const auto& free_params = free_params;
     //   bool uses_free_param = UsesVar(known_value_expr.value(), [&](const VarNode* var) {
     //     return free_params.find(GetRef<Var>(var)) != free_params.end();
     //   });
@@ -912,11 +943,11 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     //   }
     // }
 
-    Predicate predicate(index_variables, predicate_expr, transform->dst->ranges);
+    Predicate predicate(index_variables, predicate_expr, free_params);
     ParametrizedExpression known_value(index_variables, known_value_expr);
 
     BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node->indices,
-                             transform->src_to_dst, node);
+                             loop_var_to_axis_var, node);
 
     out_->touch_points_.push_back(buffer_touch);
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
