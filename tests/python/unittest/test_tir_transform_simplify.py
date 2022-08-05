@@ -1046,6 +1046,63 @@ class TestNoSimplifyUsingOverwrittenValue(BaseBeforeAfter):
     expected = before
 
 
+class TestNoSimplifyUsingLoopDependentBufferValue(BaseBeforeAfter):
+    """Do not simplify assuming reads are invariant
+
+    If a buffer's value changes across loop iterations, the buffer's
+    value before the loop should not be used to simplify conditionals
+    within the loop.
+    """
+
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+        B[0] = 0
+        for i in T.serial(16):
+            if B[0] < 10:
+                B[0] = A[i] * 2 + B[0]
+            else:
+                B[0] = A[i] + B[0]
+
+    expected = before
+
+
+class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
+    """A known value may be used until it is overwritten
+
+    Like TestNoSimplifyUsingOverwrittenValue, but the use of the
+    known `A[i]` value occurs before it is overwritten.
+
+    Like TestNoSimplifyUsingLoopDependentBufferValue, but the loop
+    iterations are all independent.
+    """
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            if A[i] == 0:
+                A[i] = 42
+
+            if i == 0:
+                A[i] = 5
+
+            if A[i] == 0:
+                A[i] = 42
+
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            T.assume(A[i] == 0)
+
+        for i in T.serial(16):
+            A[i] = 42
+
+            if i == 0:
+                A[i] = 5
+
+            if A[i] == 0:
+                A[i] = 42
+
+
 class TestSimplifyUsingKnownPartOfPartiallyOverwrittenBuffer(BaseBeforeAfter):
     """A write only invalidates prior known values where that write occurs
 
@@ -1078,23 +1135,30 @@ class TestSimplifyUsingKnownPartOfPartiallyOverwrittenBuffer(BaseBeforeAfter):
                 A[i] = 42
 
 
-class TestNoSimplifyUsingPreLoopBufferValue(BaseBeforeAfter):
-    """Do not simplify assuming reads are invariant
+class TestSimplifyElementWiseUsingPreLoopBufferValue(BaseBeforeAfter):
+    """Allow data-Do not simplify assuming reads are invariant
 
-    If a buffer's value changes across loop iterations, the buffer's
-    value before the loop should not be used to simplify conditionals
-    within the loop.
+    If an element-wise loop reads and overwrites a buffer value, the
+    pre-loop buffer value may be used to simplify conditions that
+    occur prior to the write.
     """
 
-    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
-        B[0] = 0
+    def before(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
         for i in T.serial(16):
-            if B[0] < 10:
-                B[0] = A[i] * 2 + B[0]
-            else:
-                B[0] = A[i] + B[0]
+            B[i] = 0
 
-    expected = before
+        for i in T.serial(16):
+            if B[i] < 10:
+                B[i] = A[i] * 2 + B[i]
+            else:
+                B[i] = A[i] + B[i]
+
+    def expected(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            B[i] = 0
+
+        for i in T.serial(16):
+            B[i] = A[i] * 2 + B[i]
 
 
 @pytest.mark.xfail
@@ -1207,7 +1271,6 @@ class TestSimplifyUsingPartiallyProvenBufferValue(BaseBeforeAfter):
 
     Even if a constraint can't be solved for all values in an
     assignment, it may be provable in part of a buffer.  Here,
-
     """
 
     def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
