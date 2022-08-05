@@ -747,6 +747,7 @@ TVM_DLL const Op& dma_copy();
 TVM_DLL const Op& dma_wait();
 
 /*!
+
  * \brief Start a group of DMA copies
  *
  * Any call to `dma_copy()` that occurs after `dma_start_group()` will

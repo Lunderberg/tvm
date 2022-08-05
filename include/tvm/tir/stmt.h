@@ -1604,6 +1604,11 @@ constexpr const char* warp_execution = "warp_execution";
 constexpr const char* meta_schedule_inline_rule = "meta_schedule.inline_rule";
 
 /*!
+ * \brief Mark that a block's body is to be extracted out into a subroutine.
+ */
+constexpr const char* extract_as_subroutine = "extract_as_subroutine";
+
+/*!
  * \brief Check if attr_key is a pragma key extension
  * \param attr_key The attr key to be compared
  * \return true if it is a pragma key

@@ -461,6 +461,14 @@ TVM_DLL Pass LowerInitBlock();
 TVM_DLL Pass PlanAndUpdateBufferAllocationLocation();
 
 /*!
+ * \brief Extract blocks annotated with "extract_as_subroutine" as
+ *        separate PrimFuncs within the IRModule.
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass ExtractSubroutineBlocks();
+
+/*!
  * \brief Substitute all the block vars with the PrimExprs they are bound to, indicated by the
  *        corresponding iter_values in BlockRealize, for opaque blocks by removing all
  *.        the iter_values in BlockRealize and iter_vars in Block.
