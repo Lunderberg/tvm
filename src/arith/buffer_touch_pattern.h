@@ -162,8 +162,8 @@ class BufferTouch {
    * \return True if the these read/writes may introduce a dependency
    * on a previous loop iteration, false otherwise.
    */
-  bool IntroducesCrossLoopDependency(const BufferTouch& preceding_in_body, const Var& loop_var,
-                                     Analyzer* analyzer) const;
+  bool ProvablyCrossLoopIndependent(const BufferTouch& preceding_in_body, const Var& loop_var,
+                                    Analyzer* analyzer) const;
 
   friend std::ostream& operator<<(std::ostream& os, const BufferTouch& expr);
 

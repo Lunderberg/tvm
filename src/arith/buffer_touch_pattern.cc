@@ -275,39 +275,41 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
   }
 }
 
-bool BufferTouch::IntroducesCrossLoopDependency(const BufferTouch& preceding_in_body,
-                                                const Var& loop_var, Analyzer* analyzer) const {
+bool BufferTouch::ProvablyCrossLoopIndependent(const BufferTouch& preceding_in_body,
+                                               const Var& loop_var, Analyzer* analyzer) const {
   if (touch_type != AccessType::Write ||
       (preceding_in_body.touch_type != AccessType::Read &&
        preceding_in_body.touch_type != AccessType::Assume) ||
       !buffer.same_as(preceding_in_body.buffer) ||
       predicate.IsDistinctFrom(preceding_in_body.predicate)) {
-    return false;
+    return true;
   }
 
   ICHECK_EQ(original_indices.size(), preceding_in_body.original_indices.size());
 
-  Var prev_iter("prev", loop_var.dtype());
-  With<ConstraintContext> context(analyzer, loop_var > prev_iter);
+  Var delta("delta", loop_var.dtype());
+  PrimExpr prev_iter = loop_var - delta;
+  With<ConstraintContext> context(analyzer, 0 < delta);
 
   for (size_t i = 0; i < original_indices.size(); i++) {
     const PrimExpr& write_index = original_indices[i];
-    PrimExpr read_index = Substitute(preceding_in_body.original_indices[i], [&](const Var& var) {
-      if (var.same_as(loop_var)) {
-        return prev_iter;
-      } else {
-        return var;
-      }
-    });
+    PrimExpr read_index =
+        Substitute(preceding_in_body.original_indices[i], [&](const Var& var) -> PrimExpr {
+          if (var.same_as(loop_var)) {
+            return prev_iter;
+          } else {
+            return var;
+          }
+        });
 
     if (!analyzer->CanProve(read_index != write_index)) {
       // std::cout << "Cannot prove that read index " << read_index
       //           << " doesn't depend on previous write index " << write_index << std::endl;
-      return true;
+      return false;
     }
   }
 
-  return false;
+  return true;
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
@@ -722,7 +724,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
         const auto* read = touches[i];
         const auto* write = touches[j];
 
-        if (write->IntroducesCrossLoopDependency(*read, op->loop_var, &analyzer_)) {
+        if (!write->ProvablyCrossLoopIndependent(*read, op->loop_var, &analyzer_)) {
           std::cout << "Read " << *read << " depends on previous loop iteration writing " << *write
                     << std::endl;
           depends_on_other_iterations = true;
