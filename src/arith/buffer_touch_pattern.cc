@@ -277,6 +277,7 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
 
 bool BufferTouch::ProvablyCrossLoopIndependent(const BufferTouch& preceding_in_body,
                                                const Var& loop_var, Analyzer* analyzer) const {
+  // return false;
   if (touch_type != AccessType::Write ||
       (preceding_in_body.touch_type != AccessType::Read &&
        preceding_in_body.touch_type != AccessType::Assume) ||
