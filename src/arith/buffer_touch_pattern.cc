@@ -2510,15 +2510,17 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
   }
   With<ConstraintContext> constraint_context(analyzer, constraint);
 
-  auto constraints = constraint_lookup_.at(context_index);
-  std::cout << "\t"
-            << "There are " << constraints.size() << " known constraints at this location"
-            << std::endl;
-  for (const auto& constraint : constraints) {
-    std::cout << "\t\t"
-              << "Buffer " << constraint.buffer->name << " is " << constraint.known_value
-              << " for predicate " << constraint.predicate << std::endl;
-  }
+  // auto it = constraint_lookup_.find(context_index);
+  // ICHECK(it != constraint_lookup_.end());
+  // auto constraints = it->second;
+  // std::cout << "\t"
+  //           << "There are " << constraints.size() << " known constraints at this location"
+  //           << std::endl;
+  // for (const auto& constraint : constraints) {
+  //   std::cout << "\t\t"
+  //             << "Buffer " << constraint.buffer->name << " is " << constraint.known_value
+  //             << " for predicate " << constraint.predicate << std::endl;
+  // }
 
   BufferConstraintApply mutator(*this, context_index, analyzer);
   expr = mutator(expr);
