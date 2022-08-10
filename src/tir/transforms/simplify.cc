@@ -74,6 +74,8 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     std::cout << "Starting collection of touch pattern" << std::endl;
     BufferTouchPattern touch_pattern(stmt);
     std::cout << "Finished collecting touch pattern" << std::endl;
+    std::cout << "========================================================== " << std::endl;
+    std::cout << "Touch pattern: \n" << touch_pattern << std::endl;
     StmtSimplifier simplifier(analyzer, std::move(touch_pattern));
     return simplifier(std::move(stmt));
   }
@@ -203,6 +205,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
    * inlining and tracking known buffer values.
    */
   Optional<Bool> ProveCondition(PrimExpr condition) const {
+    std::cout << "Attempting to prove conditional " << condition << std::endl;
     condition = Substitute(condition, non_inlined_bindings_);
     condition = touch_pattern_.SimplifyInContext(condition, current_stmt_.value(), analyzer_);
     if (const int64_t* as_int = as_const_int(condition)) {

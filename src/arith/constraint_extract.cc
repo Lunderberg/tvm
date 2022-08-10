@@ -32,48 +32,90 @@
 namespace tvm {
 namespace arith {
 
-void CollectConstraints(const PrimExpr& expr, std::vector<PrimExpr>* collect,
-                        bool keep_composite_constraints) {
+template <typename F>
+void CollectConstraints(const PrimExpr& expr, F callback, bool keep_composite_constraints) {
   if (keep_composite_constraints) {
-    collect->push_back(expr);
+    callback(expr);
   }
 
   PVar<PrimExpr> x, y;
   if ((x && y).Match(expr)) {
-    CollectConstraints(x.Eval(), collect, keep_composite_constraints);
-    CollectConstraints(y.Eval(), collect, keep_composite_constraints);
+    CollectConstraints(x.Eval(), callback, keep_composite_constraints);
+    CollectConstraints(y.Eval(), callback, keep_composite_constraints);
   } else if ((!(x || y)).Match(expr)) {
-    CollectConstraints(RewriteBooleanOperators(tir::Not(x.Eval())), collect,
+    CollectConstraints(RewriteBooleanOperators(tir::Not(x.Eval())), callback,
                        keep_composite_constraints);
-    CollectConstraints(RewriteBooleanOperators(tir::Not(y.Eval())), collect,
+    CollectConstraints(RewriteBooleanOperators(tir::Not(y.Eval())), callback,
                        keep_composite_constraints);
   } else if (!keep_composite_constraints) {
-    collect->push_back(expr);
+    callback(expr);
   }
 }
 
 std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr, bool keep_composite_constraints) {
   std::vector<PrimExpr> out;
-  CollectConstraints(expr, &out, keep_composite_constraints);
+  CollectConstraints(
+      expr, [&](const PrimExpr& part) { out.push_back(part); }, keep_composite_constraints);
   return out;
 }
 
-void CollectComponents(const PrimExpr& expr, std::vector<PrimExpr>* collect) {
+void CollectConstraints2(const PrimExpr& expr, std::function<void(const PrimExpr&)> callback) {
+  PVar<PrimExpr> x, y, z;
+  if ((x && y).Match(expr)) {
+    CollectConstraints2(x.Eval(), callback);
+    CollectConstraints2(y.Eval(), callback);
+  } else if ((x || (y && z)).Match(expr) || ((y && z) || x).Match(expr)) {
+    CollectConstraints2(x.Eval(), [&](const PrimExpr& x_part) {
+      CollectConstraints2(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part || y_part); });
+      CollectConstraints2(z.Eval(), [&](const PrimExpr& z_part) { callback(x_part || z_part); });
+    });
+  } else if ((!(x || y)).Match(expr)) {
+    CollectConstraints2(RewriteBooleanOperators(tir::Not(x.Eval())), callback);
+    CollectConstraints2(RewriteBooleanOperators(tir::Not(y.Eval())), callback);
+  } else if ((y >= x).Match(expr) || (x <= y).Match(expr)) {
+    callback(x.Eval() == y.Eval() || x.Eval() < y.Eval());
+  } else if ((y != x).Match(expr)) {
+    callback(x.Eval() < y.Eval() || y.Eval() < x.Eval());
+  } else {
+    callback(expr);
+  }
+}
+
+std::vector<PrimExpr> ExtractConstraints2(const PrimExpr& expr) {
+  std::vector<PrimExpr> out;
+  CollectConstraints2(expr, [&](const PrimExpr& part) { out.push_back(part); });
+  return out;
+}
+
+std::vector<std::vector<PrimExpr>> ExtractAndOfOrs(const PrimExpr& expr) {
+  std::vector<std::vector<PrimExpr>> out;
+  CollectConstraints2(expr, [&](const PrimExpr& part) { out.push_back(ExtractComponents(part)); });
+  return out;
+}
+
+PrimExpr ConvertToAndOfOrs(const PrimExpr& expr) {
+  PrimExpr output = Bool(true);
+  CollectConstraints2(expr, [&](const PrimExpr& part) { output = output && part; });
+  return output;
+}
+
+template <typename F>
+void CollectComponents(const PrimExpr& expr, F callback) {
   PVar<PrimExpr> x, y;
   if ((x || y).Match(expr)) {
-    CollectComponents(x.Eval(), collect);
-    CollectComponents(y.Eval(), collect);
+    CollectComponents(x.Eval(), callback);
+    CollectComponents(y.Eval(), callback);
   } else if ((!(x && y)).Match(expr)) {
-    CollectComponents(RewriteBooleanOperators(tir::Not(x.Eval())), collect);
-    CollectComponents(RewriteBooleanOperators(tir::Not(y.Eval())), collect);
+    CollectComponents(RewriteBooleanOperators(tir::Not(x.Eval())), callback);
+    CollectComponents(RewriteBooleanOperators(tir::Not(y.Eval())), callback);
   } else {
-    collect->push_back(expr);
+    callback(expr);
   }
 }
 
 std::vector<PrimExpr> ExtractComponents(const PrimExpr& expr) {
   std::vector<PrimExpr> out;
-  CollectComponents(expr, &out);
+  CollectComponents(expr, [&](const PrimExpr& part) { out.push_back(part); });
   return out;
 }
 

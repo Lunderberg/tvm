@@ -366,8 +366,10 @@ PrimExpr div(PrimExpr a, PrimExpr b, Span span) {
 }
 
 PrimExpr truncdiv(PrimExpr a, PrimExpr b, Span span) {
-  ICHECK(a.dtype().is_int() || a.dtype().is_uint()) << a;
-  ICHECK(b.dtype().is_int() || b.dtype().is_uint()) << b;
+  ICHECK(a.dtype().is_int() || a.dtype().is_uint())
+      << "Expected integer, but received " << a << " of type " << a.dtype();
+  ICHECK(b.dtype().is_int() || b.dtype().is_uint())
+      << "Expected integer, but received " << b << " of type " << b.dtype();
   return div(a, b, span);
 }
 
@@ -389,24 +391,30 @@ PrimExpr shapediv(PrimExpr a, PrimExpr b, Span span) { return ceildiv(a, b, span
 PrimExpr indexmod(PrimExpr a, PrimExpr b, Span span) { return floormod(a, b, span); }
 
 PrimExpr floordiv(PrimExpr a, PrimExpr b, Span span) {
-  ICHECK(a.dtype().is_int() || a.dtype().is_uint()) << a;
-  ICHECK(b.dtype().is_int() || b.dtype().is_uint()) << b;
+  ICHECK(a.dtype().is_int() || a.dtype().is_uint())
+      << "Expected integer, but received " << a << " of type " << a.dtype();
+  ICHECK(b.dtype().is_int() || b.dtype().is_uint())
+      << "Expected integer, but received " << b << " of type " << b.dtype();
   BinaryOpMatchTypes(a, b, span);
   if (auto ret = arith::TryConstFold<tir::FloorDiv>(a, b)) return ret.value();
   return tir::FloorDiv(a, b, span);
 }
 
 PrimExpr ceildiv(PrimExpr a, PrimExpr b, Span span) {
-  ICHECK(a.dtype().is_int() || a.dtype().is_uint()) << a;
-  ICHECK(b.dtype().is_int() || b.dtype().is_uint()) << b;
+  ICHECK(a.dtype().is_int() || a.dtype().is_uint())
+      << "Expected integer, but received " << a << " of type " << a.dtype();
+  ICHECK(b.dtype().is_int() || b.dtype().is_uint())
+      << "Expected integer, but received " << b << " of type " << b.dtype();
   BinaryOpMatchTypes(a, b, span);
   if (auto ret = arith::TryConstFold<tir::FloorDiv>(a + b - 1, b)) return ret.value();
   return tir::FloorDiv(a + b - 1, b, span);
 }
 
 PrimExpr floormod(PrimExpr a, PrimExpr b, Span span) {
-  ICHECK(a.dtype().is_int() || a.dtype().is_uint()) << a;
-  ICHECK(b.dtype().is_int() || b.dtype().is_uint()) << b;
+  ICHECK(a.dtype().is_int() || a.dtype().is_uint())
+      << "Expected integer, but received " << a << " of type " << a.dtype();
+  ICHECK(b.dtype().is_int() || b.dtype().is_uint())
+      << "Expected integer, but received " << b << " of type " << b.dtype();
   BinaryOpMatchTypes(a, b, span);
   if (auto ret = arith::TryConstFold<tir::FloorMod>(a, b)) return ret.value();
   return tir::FloorMod(a, b, span);
@@ -558,7 +566,6 @@ PrimExpr operator>>(PrimExpr a, PrimExpr b) { return right_shift(a, b); }
 
 PrimExpr right_shift(PrimExpr a, PrimExpr b, Span span) {
   type_check_integer_args(a, b, ">> operator (right shift)");
-
   BinaryOpMatchTypes(a, b, span);
   TVM_INDEX_CONST_PROPAGATION({
     const DataType& rtype = a.dtype();

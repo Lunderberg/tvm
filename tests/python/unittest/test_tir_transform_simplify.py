@@ -1065,6 +1065,33 @@ class TestNoSimplifyUsingLoopDependentBufferValue(BaseBeforeAfter):
     expected = before
 
 
+class TestRemoveTransitivelyProvableCondition(BaseBeforeAfter):
+    """Remove comparisons that may be proven using multiple others
+
+    Here, the `0 < i` and `i <= j` conditions can be used to prove
+    that `0 < j`.
+    """
+
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = j <= 15 and i <= j and 0 < j and 0 < i
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i <= j and j <= 15 and 0 < i
+
+
+class TestTemp(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = (j <= 15 and 0 <= j and i == 0) or (j <= 15 and i <= j and 0 < j and 0 < i)
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = (j <= 15 and 0 <= j and i == 0) or (i <= j and j <= 15 and 0 < i)
+        # A[0] = (j <= 15 and i <= j and i == 0) or (j <= 15 and i <= j and 0 < j and 0 < i)
+        # A[0] = (j <= 15 and i <= j and i == 0) or (j <= 15 and i <= j and 0 < i)
+        # A[0] = j <= 15 and i <= j and 0 <= i
+        # A[0] = j <= 15 and 0 <= i and i <= j
+        # A[0] = j <= 15 and 0 <= j and i <= j
+
+
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     """A known value may be used until it is overwritten
 
@@ -1081,7 +1108,7 @@ class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
 
         for i in T.serial(16):
             if A[i] == 0:
-                A[i] = 42
+                A[i] = 17
 
             if i == 0:
                 A[i] = 5
@@ -1094,7 +1121,7 @@ class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
             T.assume(A[i] == 0)
 
         for i in T.serial(16):
-            A[i] = 42
+            A[i] = 17
 
             if i == 0:
                 A[i] = 5

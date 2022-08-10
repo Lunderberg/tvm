@@ -115,7 +115,10 @@ std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr) {
 
 Predicate::Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression,
                      Map<tir::Var, Range> free_parameters)
-    : ParametrizedExpression(parameter_vars, expression), free_parameters_(free_parameters) {}
+    : ParametrizedExpression(parameter_vars, expression), free_parameters_(free_parameters) {
+  ICHECK(!expression || expression.value().dtype().is_bool())
+      << "Predicate should be boolean expression, but received " << expression;
+}
 
 bool Predicate::IsSubsetOf(const Predicate& other) const {
   ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
@@ -171,6 +174,8 @@ Predicate Predicate::Difference(const Predicate& other) const {
   With<ConstraintContext> other_params(&analyzer, other.FreeParameterConstraints());
 
   PrimExpr new_predicate_expr = analyzer.Simplify(expression_.value() && !other_predicate);
+  new_predicate_expr = ConvertToAndOfOrs(new_predicate_expr);
+  new_predicate_expr = analyzer.Simplify(new_predicate_expr);
 
   Map<tir::Var, Range> new_free_params = free_parameters_;
   for (const auto& pair : other.free_parameters_) {
@@ -209,6 +214,47 @@ Predicate Predicate::Intersection(const Predicate& other) const {
   }
 
   return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
+}
+
+void Predicate::Remap(const Map<Var, PrimExpr>& var_remap) {
+  if (var_remap.empty() || !expression_) {
+    return;
+  }
+
+  expression_ = Substitute(expression_.value(), var_remap);
+}
+
+void Predicate::Simplify(Analyzer* analyzer) {
+  if (!expression_) {
+    return;
+  }
+
+  With<ConstraintContext> context(analyzer, FreeParameterConstraints());
+
+  PrimExpr expr = analyzer->Simplify(expression_.value());
+
+  // Remove any free parameters that are no longer needed.  Using
+  // Map::erase instead of constructing a new Map, to allow
+  // CopyOnWrite.
+  if (free_parameters_.size()) {
+    std::unordered_set<const VarNode*> undefined;
+    for (const auto& var : UndefinedVars(expr)) {
+      undefined.insert(var.get());
+    }
+
+    Array<Var> to_remove;
+    for (const auto& pair : free_parameters_) {
+      if (!undefined.count(pair.first.get())) {
+        to_remove.push_back(pair.first);
+      }
+    }
+
+    for (const auto& var : to_remove) {
+      free_parameters_.erase(var);
+    }
+  }
+
+  expression_ = expr;
 }
 
 bool Predicate::CanProve(Array<PrimExpr> args, Analyzer* analyzer) const {
@@ -277,7 +323,7 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other) const {
 
 bool BufferTouch::ProvablyCrossLoopIndependent(const BufferTouch& preceding_in_body,
                                                const Var& loop_var, Analyzer* analyzer) const {
-  // return false;
+  return false;
   if (touch_type != AccessType::Write ||
       (preceding_in_body.touch_type != AccessType::Read &&
        preceding_in_body.touch_type != AccessType::Assume) ||
@@ -379,7 +425,8 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
     //           << " of block " << block.index << " (name = '" << block.name << "')" << std::endl;
 
     Optional<PrimExpr> result = NullOpt;
-    for (size_t predecessor_index : block.predecessors) {
+    for (const auto& predecessor_edge : block.predecessors) {
+      size_t predecessor_index = predecessor_edge.from_index;
       IncreaseDepth temp2(this);
       const auto& predecessor = touch_pattern_.control_flow_[predecessor_index];
       // std::cout << std::string(depth * 2, ' ') << "Checking constraints provided by predecessor "
@@ -541,6 +588,51 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
   };
 };
 
+class BufferConstraintApply : public IRMutatorWithAnalyzer {
+ public:
+  using Parent = IRMutatorWithAnalyzer;
+
+  BufferConstraintApply(const BufferTouchPattern& touch_pattern, size_t context_index,
+                        Analyzer* analyzer)
+      : Parent(analyzer), touch_pattern_(touch_pattern), context_index_(context_index) {}
+
+  using Parent::VisitExpr_;
+
+  PrimExpr VisitExpr_(const BufferLoadNode* op) override {
+    auto it = touch_pattern_.constraint_lookup_.find(context_index_);
+    ICHECK(it != touch_pattern_.constraint_lookup_.end())
+        << "Cannot find constraints for context " << context_index_;
+    const auto& knowns = it->second;
+
+    std::cout << "Found BufferLoad " << GetRef<PrimExpr>(op) << std::endl;
+
+    for (const auto& known : knowns) {
+      if (!op->buffer.same_as(known.buffer)) {
+        std::cout << "Known value applies to a different buffer, skipping" << std::endl;
+        // This is a different buffer, so continue searching.
+        continue;
+      }
+
+      PrimExpr predicate = known.predicate(op->indices).value();
+      std::cout << "Predicate " << known.predicate << " at indices " << op->indices << " is "
+                << predicate << ", simplified = " << analyzer_->Simplify(predicate) << std::endl;
+      if (analyzer_->CanProve(predicate)) {
+        std::cout << "Can prove the predicate, replacing with the known value "
+                  << known.known_value(op->indices).value() << std::endl;
+        return known.known_value(op->indices).value();
+      } else {
+        std::cout << "Cannot prove that the predicate is true" << std::endl;
+      }
+    }
+
+    return GetRef<PrimExpr>(op);
+  }
+
+ private:
+  const BufferTouchPattern& touch_pattern_;
+  size_t context_index_;
+};
+
 // Find Read region of the tensor in the stmt.
 class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
  public:
@@ -684,16 +776,19 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   // entire buffer.
 
   void VisitStmt_(const ForNode* op) override {
+    out_->iterator_ranges_.Set(op->loop_var, Range::FromMinExtent(op->min, op->extent));
+
     auto before_loop = CurrentControlBlock();
     auto loop_start = AppendControlBlock("start of loop over " + op->loop_var->name_hint);
-    MarkControlFlow(before_loop, loop_start);
+    MarkControlFlow(before_loop, loop_start, {}, {}, op->loop_var == op->min);
 
     BindActiveLoopVar binding(this, op->loop_var);
     Parent::VisitStmt_(op);
 
     auto loop_end = CurrentControlBlock();
     auto after_loop = AppendControlBlock("after loop over " + op->loop_var->name_hint);
-    MarkControlFlow(loop_end, after_loop);
+    MarkControlFlow(loop_end, after_loop,
+                    {{op->loop_var, analyzer_.Simplify(op->min + op->extent)}});
 
     std::vector<size_t> to_visit = {loop_start};
     std::unordered_set<size_t> marked = {loop_start};
@@ -738,7 +833,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
 
     if (depends_on_other_iterations) {
-      MarkControlFlow(loop_end, loop_start);
+      std::stringstream d_name;
+      d_name << op->loop_var->name_hint << "_delta";
+      Var delta(d_name.str(), op->loop_var.dtype());
+      // PrimExpr predicate = op->loop_var > op->min;
+      MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}}, {},
+                      op->loop_var > op->min);
+      // MarkControlFlow(loop_end, loop_start, {}, {}, op->loop_var > op->min);
     }
   }
 
@@ -914,6 +1015,30 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     predicate_expr = normalize_expr(predicate_expr);
     known_value_expr = normalize_expr(known_value_expr);
 
+    std::cout << "Initial predicate is " << predicate_expr << std::endl;
+
+    PrimExpr loop_predicate = Bool(true);
+    for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
+      Var loop_var = *it;
+
+      auto expr_it = loop_var_to_axis_var.find(loop_var);
+      ICHECK(expr_it != loop_var_to_axis_var.end());
+      PrimExpr loop_expr = (*expr_it).second;
+
+      loop_predicate = (loop_var >= loop_expr) || ((loop_var == loop_expr) && loop_predicate);
+    }
+    std::cout << "\t"
+              << "Loop-based predicate is " << loop_predicate << std::endl;
+
+    {
+      Analyzer local_analyzer;
+      predicate_expr = local_analyzer.Simplify(predicate_expr.value() && loop_predicate);
+    }
+    // predicate_expr = predicate_expr.value() && loop_predicate;
+    // predicate_expr = analyzer_.Simplify(predicate_expr.value() && loop_predicate);
+    std::cout << "\t"
+              << "Updated predicate with loops is " << predicate_expr << std::endl;
+
     // Optional<PrimExpr> has_known_value_expr = Bool(false);
     // Optional<PrimExpr> known_untouched_expr = Bool(false);
 
@@ -1054,12 +1179,15 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   size_t CurrentControlBlock() { return out_->control_flow_.size() - 1; }
 
   /* \brief Mark a possible control from one block to another */
-  void MarkControlFlow(size_t from_block, size_t to_block) {
+  void MarkControlFlow(size_t from_block, size_t to_block, Map<Var, PrimExpr> var_remap = {},
+                       Map<Var, Range> remap_var_ranges = {},
+                       Optional<PrimExpr> predicate = NullOpt) {
     ICHECK_LE(from_block, out_->control_flow_.size());
     ICHECK_LE(to_block, out_->control_flow_.size());
 
     out_->control_flow_[from_block].successors.push_back(to_block);
-    out_->control_flow_[to_block].predecessors.push_back(from_block);
+    out_->control_flow_[to_block].predecessors.push_back(BufferTouchPattern::ControlFlowPredecessor{
+        from_block, var_remap, remap_var_ranges, predicate});
   }
 
   struct BindActiveLoopVar {
@@ -1159,7 +1287,13 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlow
     if (i) {
       os << ", ";
     }
-    os << block.predecessors[i];
+    os << block.predecessors[i].from_index;
+    if (block.predecessors[i].var_remap.size()) {
+      os << " with remap " << block.predecessors[i].var_remap;
+    }
+    if (block.predecessors[i].predicate) {
+      os << " with postcondition " << block.predecessors[i].predicate;
+    }
   }
   os << "]\n";
 
@@ -1188,11 +1322,23 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
   for (size_t i = 0; i < pattern.control_flow_.size(); i++) {
     os << "\t"
        << "ControlBlock[" << i << "] (name = '" << pattern.control_flow_[i].name
-       << "') = " << pattern.control_flow_[i];
-    if (i + 1 < pattern.control_flow_.size()) {
-      os << "\n";
+       << "') = " << pattern.control_flow_[i] << "\n";
+  }
+
+  os << "Touch pattern contains " << pattern.constraint_lookup_.size()
+     << " known locations through the control flow"
+     << "\n";
+  for (const auto& state : pattern.constraint_lookup_) {
+    os << "\t"
+       << "Location " << state.first << " has " << state.second.size() << " known conditions"
+       << "\n";
+    for (const auto& constraint : state.second) {
+      os << "\t\t"
+         << "Buffer " << constraint.buffer->name << " is " << constraint.known_value << " when "
+         << constraint.predicate << "\n";
     }
   }
+
   return os;
 }
 
@@ -1323,7 +1469,7 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
         auto axis_vars = a.predicate.parameter_vars_;
 
         PrimExpr union_predicate =
-            analyzer.Simplify(a.predicate.expression_ || b.predicate(axis_vars));
+            analyzer.Simplify(a.predicate.expression_.value() || b.predicate(axis_vars).value());
         PrimExpr value_a = a.known_value(axis_vars).value();
         PrimExpr value_b = b.known_value(axis_vars).value();
 
@@ -1336,6 +1482,14 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
         analyzer.Bind(free_parameters);
 
         if (analyzer.CanProveEqual(value_a, value_b)) {
+          std::cout << "Trying to simplify " << union_predicate << std::endl;
+          union_predicate = ConvertToAndOfOrs(union_predicate);
+          std::cout << "\t"
+                    << "As AND of ORs: " << union_predicate << std::endl;
+          union_predicate = analyzer.Simplify(union_predicate);
+          std::cout << "\t"
+                    << "Then simplified: " << union_predicate << std::endl;
+
           BufferTouchPattern::BufferConstraint new_constraint{
               a.buffer, Predicate(axis_vars, union_predicate, free_parameters),
               ParametrizedExpression(axis_vars, value_a)};
@@ -1376,12 +1530,54 @@ BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
 }
 
 std::vector<BufferTouchPattern::BufferConstraint>
+BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostcondition(
+    const std::vector<BufferTouchPattern::BufferConstraint>& a_constraints,
+    const std::vector<BufferTouchPattern::BufferConstraint>& b_constraints, PrimExpr a_condition,
+    PrimExpr b_condition) {
+  Analyzer analyzer;
+
+  std::vector<BufferTouchPattern::BufferConstraint> output;
+  std::vector<bool> a_used(a_constraints.size(), false);
+  std::vector<bool> b_used(b_constraints.size(), false);
+
+  for (size_t i = 0; i < a_constraints.size(); i++) {
+    if (!a_used[i]) {
+      auto constraint = a_constraints[i];
+      if (constraint.predicate.expression_) {
+        constraint.predicate.expression_ = constraint.predicate.expression_.value() && a_condition;
+        constraint.predicate.Simplify(&analyzer);
+      }
+      output.push_back(std::move(constraint));
+    }
+  }
+
+  for (size_t i = 0; i < b_constraints.size(); i++) {
+    if (!b_used[i]) {
+      auto constraint = b_constraints[i];
+      if (constraint.predicate.expression_) {
+        constraint.predicate.expression_ = constraint.predicate.expression_.value() && b_condition;
+        constraint.predicate.Simplify(&analyzer);
+      }
+      output.push_back(std::move(constraint));
+    }
+  }
+
+  return MergeDisjointConstraints(std::move(output));
+}
+
+std::vector<BufferTouchPattern::BufferConstraint>
 BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
     const std::vector<BufferTouchPattern::BufferConstraint>& a,
-    const std::vector<BufferTouchPattern::BufferConstraint>& b) {
+    const std::vector<BufferTouchPattern::BufferConstraint>& b, Optional<PrimExpr> a_condition) {
   // For a constraint to be in the output, it must be present in both
   // inputs.
   Analyzer analyzer;
+
+  std::vector<With<ConstraintContext>> contexts;
+  contexts.reserve(1);
+  if (a_condition) {
+    contexts.emplace_back(&analyzer, a_condition.value());
+  }
 
   std::vector<BufferTouchPattern::BufferConstraint> consistent_constraints;
   for (const auto& ai : a) {
@@ -1404,6 +1600,10 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
         }
       }
     }
+  }
+
+  while (contexts.size()) {
+    contexts.pop_back();
   }
 
   return MergeDisjointConstraints(std::move(consistent_constraints));
@@ -1457,7 +1657,8 @@ class BufferRegionCollector : public ExprVisitor {
 
     std::vector<Known> new_regions;
 
-    std::cout << "Collecting regions, examining BufferLoad " << GetRef<PrimExpr>(op) << std::endl;
+    // std::cout << "Collecting regions, examining BufferLoad " << GetRef<PrimExpr>(op) <<
+    // std::endl;
 
     for (const BufferTouchPattern::BufferConstraint& constraint : knowns_) {
       ICHECK(constraint.predicate.IsDefined());
@@ -1469,31 +1670,32 @@ class BufferRegionCollector : public ExprVisitor {
 
       PrimExpr touch_predicate = analyzer_->Simplify(constraint.predicate(op->indices).value());
 
-      std::cout << "\t"
-                << "Examining constraint with predicate " << constraint.predicate << std::endl;
-      std::cout << "\t\t"
-                << "Substituting indices, constraint applies iff " << touch_predicate << std::endl;
+      // std::cout << "\t"
+      //           << "Examining constraint with predicate " << constraint.predicate << std::endl;
+      // std::cout << "\t\t"
+      //           << "Substituting indices, constraint applies iff " << touch_predicate
+      //           << std::endl;
       PrimExpr always_touched = NarrowExpressionToTrue(touch_predicate, all_free_parameters_);
-      std::cout << "\t\t"
-                << "Removing free parameters, constraint applies if " << always_touched
-                << std::endl;
+      // std::cout << "\t\t"
+      //           << "Removing free parameters, constraint applies if " << always_touched
+      //           << std::endl;
       always_touched = analyzer_->Simplify(always_touched);
-      std::cout << "\t\t\t"
-                << "Simplified = " << always_touched << std::endl;
+      // std::cout << "\t\t\t"
+      //           << "Simplified = " << always_touched << std::endl;
       PrimExpr never_touched = NarrowExpressionToTrue(!touch_predicate, all_free_parameters_);
-      std::cout << "\t\t"
-                << "Removing free parameters, constraint doesn't apply if " << never_touched
-                << std::endl;
+      // std::cout << "\t\t"
+      //           << "Removing free parameters, constraint doesn't apply if " << never_touched
+      //           << std::endl;
       never_touched = analyzer_->Simplify(never_touched);
-      std::cout << "\t\t\t"
-                << "Simplified = " << analyzer_->Simplify(never_touched) << std::endl;
+      // std::cout << "\t\t\t"
+      //           << "Simplified = " << analyzer_->Simplify(never_touched) << std::endl;
       PrimExpr partially_touched = !always_touched && !never_touched;
-      std::cout << "\t\t"
-                << "Removing free parameters, constraint sometimes applies if " << partially_touched
-                << std::endl;
+      // std::cout << "\t\t"
+      //           << "Removing free parameters, constraint sometimes applies if "
+      //           << partially_touched << std::endl;
       partially_touched = analyzer_->Simplify(partially_touched);
-      std::cout << "\t\t\t"
-                << "Simplified = " << analyzer_->Simplify(partially_touched) << std::endl;
+      // std::cout << "\t\t\t"
+      //           << "Simplified = " << analyzer_->Simplify(partially_touched) << std::endl;
 
       if (!is_const_false(always_touched)) {
         Optional<PrimExpr> known_value = constraint.known_value(op->indices);
@@ -1552,9 +1754,10 @@ class BufferRegionCollector : public ExprVisitor {
       //   // new_regions.push_back(access_predicate && never_touched);
       //   // access_predicate = access_predicate && partially_touched;
 
-      //   PrimExpr always_touched = NarrowExpressionToTrue(touch_predicate, all_free_parameters_);
-      //   PrimExpr never_touched = NarrowExpressionToTrue(!touch_predicate, all_free_parameters_);
-      //   PrimExpr partially_touched = !always_touched && !never_touched;
+      //   PrimExpr always_touched = NarrowExpressionToTrue(touch_predicate,
+      //   all_free_parameters_); PrimExpr never_touched =
+      //   NarrowExpressionToTrue(!touch_predicate, all_free_parameters_); PrimExpr
+      //   partially_touched = !always_touched && !never_touched;
 
       //   new_regions.push_back(analyzer_->Simplify(access_predicate && always_touched));
       //   new_regions.push_back(analyzer_->Simplify(access_predicate && never_touched));
@@ -1572,21 +1775,22 @@ class BufferRegionCollector : public ExprVisitor {
 
     // std::cout << "\t"
     //           << "All remaining access is the same condition, " << access_predicate
-    //           << ", which simplifies to " << analyzer_->Simplify(access_predicate) << std::endl;
+    //           << ", which simplifies to " << analyzer_->Simplify(access_predicate) <<
+    //           std::endl;
 
-    std::cout << "Regions before update = [";
-    {
-      bool first = true;
-      for (const auto& prev : regions_) {
-        if (first) {
-          first = false;
-        } else {
-          std::cout << ", ";
-        }
-        std::cout << prev.region_predicate;
-      }
-    }
-    std::cout << "]" << std::endl;
+    // std::cout << "Regions before update = [";
+    // {
+    //   bool first = true;
+    //   for (const auto& prev : regions_) {
+    //     if (first) {
+    //       first = false;
+    //     } else {
+    //       std::cout << ", ";
+    //     }
+    //     std::cout << prev.region_predicate;
+    //   }
+    // }
+    // std::cout << "]" << std::endl;
 
     if (new_regions.size()) {
       Analyzer local_analyzer;
@@ -1605,19 +1809,19 @@ class BufferRegionCollector : public ExprVisitor {
       regions_ = updated_regions;
     }
 
-    std::cout << "Regions after update = [";
-    {
-      bool first = true;
-      for (const auto& prev : regions_) {
-        if (first) {
-          first = false;
-        } else {
-          std::cout << ", ";
-        }
-        std::cout << prev.region_predicate;
-      }
-    }
-    std::cout << "]" << std::endl;
+    // std::cout << "Regions after update = [";
+    // {
+    //   bool first = true;
+    //   for (const auto& prev : regions_) {
+    //     if (first) {
+    //       first = false;
+    //     } else {
+    //       std::cout << ", ";
+    //     }
+    //     std::cout << prev.region_predicate;
+    //   }
+    // }
+    // std::cout << "]" << std::endl;
   }
 
   Analyzer* analyzer_;
@@ -1626,19 +1830,25 @@ class BufferRegionCollector : public ExprVisitor {
   const Map<Var, Range>& all_free_parameters_;
 };
 
-class BufferConstraintApplication : public IRMutatorWithAnalyzer {
+class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
  public:
   static Optional<PrimExpr> Apply(
       const std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>>& known_values,
       PrimExpr expr, Analyzer* analyzer) {
-    BufferConstraintApplication mutator(known_values, analyzer);
+    BufferRegionValueReplacer mutator(known_values, analyzer);
+    std::cout << "\t\t\t\t"
+              << "Starting with expression " << expr << std::endl;
     PrimExpr result = mutator(expr);
+    std::cout << "\t\t\t\t"
+              << "Replaced BufferLoad for " << result << std::endl;
     // Simplification must occur after the substitution, as known
     // values may provide enable simplifications.  Also, cannot track
     // whether a BufferLoad was
     result = analyzer->Simplify(result);
+    std::cout << "\t\t\t\t"
+              << "Simplified to " << result << std::endl;
     if (HasBufferLoad(result)) {
-      std::cout << "\t\t\t"
+      std::cout << "\t\t\t\t"
                 << "Simplified result is " << result << ", which contains a bufferload"
                 << std::endl;
       return NullOpt;
@@ -1650,7 +1860,7 @@ class BufferConstraintApplication : public IRMutatorWithAnalyzer {
  private:
   using Parent = IRMutatorWithAnalyzer;
 
-  BufferConstraintApplication(
+  BufferRegionValueReplacer(
       const std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>>& known_values,
       Analyzer* analyzer)
       : Parent(analyzer), known_values_(known_values) {}
@@ -1660,7 +1870,7 @@ class BufferConstraintApplication : public IRMutatorWithAnalyzer {
   PrimExpr VisitExpr_(const BufferLoadNode* op) override {
     auto it = known_values_.find(op);
     if (it != known_values_.end() && it->second) {
-      std::cout << "\t\t\t"
+      std::cout << "\t\t\t\t"
                 << "Replacing BufferLoad " << GetRef<PrimExpr>(op) << " with known value of "
                 << it->second << std::endl;
       return it->second.value();
@@ -1698,7 +1908,8 @@ class BufferConstraintApplication : public IRMutatorWithAnalyzer {
   //       continue;
   //     }
 
-  //     PrimExpr touch_predicate = analyzer_->Simplify(constraint.predicate(op->indices).value());
+  //     PrimExpr touch_predicate =
+  //     analyzer_->Simplify(constraint.predicate(op->indices).value());
 
   //     std::cout << "\t\t"
   //               << "Predicate to determine if this touch applies is " << touch_predicate
@@ -1772,6 +1983,12 @@ Map<Var, Range> BufferTouchPattern::GetAllFreeParameters() const {
         ret.Set(pair.first, pair.second);
       }
     }
+
+    for (const auto& pred : block.predecessors) {
+      for (const auto& pair : pred.remap_var_ranges) {
+        ret.Set(pair.first, pair.second);
+      }
+    }
   }
   return ret;
 }
@@ -1823,6 +2040,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   Analyzer analyzer;
 
   Map<Var, Range> all_free_parameters = GetAllFreeParameters();
+  analyzer.Bind(iterator_ranges_);
   analyzer.Bind(all_free_parameters);
 
   while (to_visit.size()) {
@@ -1841,31 +2059,217 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       if (i) {
         std::cout << ", ";
       }
-      size_t pred = block.predecessors[i];
-      if (visited_once.count(pred)) {
-        std::cout << pred;
+      const auto& pred = block.predecessors[i];
+      if (visited_once.count(pred.from_index)) {
+        std::cout << pred.from_index;
       } else {
-        std::cout << "(" << pred << ")";
+        std::cout << "(" << pred.from_index << ")";
       }
     }
     std::cout << "]" << std::endl;
 
-    std::vector<BufferTouchPattern::BufferConstraint> prior_knowns;
-    bool found_first_predecessor = false;
-    for (size_t predecessor : block.predecessors) {
-      if (visited_once.count(predecessor)) {
-        auto it = known_after_block.find(predecessor);
+    // bool all_predecessors_visited = true;
+    // for (const auto& predecessor : block.predecessors) {
+    //   if (!visited_once.count(predecessor.from_index)) {
+    //     all_predecessors_visited = false;
+    //     break;
+    //   }
+    // }
+
+    auto prior_knowns = [&]() -> std::vector<BufferTouchPattern::BufferConstraint> {
+      ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
+
+      auto adjust_priors = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
+                               Map<Var, PrimExpr> var_remap) {
+        for (auto& prior : priors) {
+          prior.predicate.Remap(var_remap);
+          prior.predicate.expression_ = ConvertToAndOfOrs(prior.predicate.expression_.value());
+          prior.predicate.Simplify(&analyzer);
+        }
+        return priors;
+      };
+
+      if (block.predecessors.size() == 0) {
+        // Block has no predecessors, nothing is known initially
+        std::cout << "\t\t"
+                  << "No predecessor blocks, no known values" << std::endl;
+        return {};
+      } else if (block.predecessors.size() == 1) {
+        // Block has only a single predecessor
+        const auto& pred = block.predecessors[0];
+        size_t prev_index = pred.from_index;
+        std::cout << "\t\t"
+                  << "Only " << prev_index << " as predecessor, copying priors" << std::endl;
+        auto it = known_after_block.find(prev_index);
         if (it != known_after_block.end()) {
-          if (found_first_predecessor) {
-            prior_knowns = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
-                prior_knowns, it->second);
-          } else {
-            prior_knowns = it->second;
-            found_first_predecessor = true;
-          }
+          return adjust_priors(it->second, pred.var_remap);
+        } else {
+          return {};
         }
       }
-    }
+
+      const auto& pred_a = block.predecessors[0];
+      const auto& pred_b = block.predecessors[1];
+
+      auto it_a = known_after_block.find(pred_a.from_index);
+      auto it_b = known_after_block.find(pred_b.from_index);
+      if (it_a == known_after_block.end() && it_b == known_after_block.end()) {
+        std::cout << "\t\t"
+                  << "Neither predicate visited, no known values" << std::endl;
+        return {};
+      } else if (it_a == known_after_block.end()) {
+        std::cout << "\t\t"
+                  << "Pred " << pred_b.from_index << " has been visited, but not "
+                  << pred_a.from_index << ".  Using knowns from " << pred_b.from_index << std::endl;
+        return adjust_priors(it_b->second, pred_b.var_remap);
+      } else if (it_b == known_after_block.end()) {
+        std::cout << "\t\t"
+                  << "Pred " << pred_a.from_index << " has been visited, but not "
+                  << pred_b.from_index << ".  Using knowns from " << pred_a.from_index << std::endl;
+        return adjust_priors(it_a->second, pred_a.var_remap);
+      }
+
+      // ICHECK(!(pred_a.predicate && pred_b.predicate))
+      //     << "Predicated predecessor is attempted to be proven a special case of the other, "
+      //     << "which is treated as the general case.  "
+      //     << "Should not have a predicate specified for both predecessors.";
+
+      std::cout << "\t\t"
+                << "Predecessor #" << pred_a.from_index << " provides " << it_a->second.size()
+                << " knowns" << std::endl;
+      for (const auto& prior : it_a->second) {
+        std::cout << "\t\t\t"
+                  << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                  << prior.predicate << std::endl;
+      }
+
+      std::cout << "\t\t"
+                << "Predecessor #" << pred_b.from_index << " provides " << it_b->second.size()
+                << " knowns" << std::endl;
+      for (const auto& prior : it_b->second) {
+        std::cout << "\t\t\t"
+                  << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                  << prior.predicate << std::endl;
+      }
+
+      auto priors_a = adjust_priors(it_a->second, pred_a.var_remap);
+      auto priors_b = adjust_priors(it_b->second, pred_b.var_remap);
+
+      std::cout << "\t\t"
+                << "After remapping with " << pred_a.var_remap << ", predecessor #"
+                << pred_a.from_index << " provides " << priors_a.size() << " knowns" << std::endl;
+      for (const auto& prior : priors_a) {
+        std::cout << "\t\t\t"
+                  << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                  << prior.predicate << std::endl;
+      }
+
+      std::cout << "\t\t"
+                << "After remapping with " << pred_b.var_remap << ", predecessor #"
+                << pred_b.from_index << " provides " << priors_b.size() << " knowns" << std::endl;
+      for (const auto& prior : priors_b) {
+        std::cout << "\t\t\t"
+                  << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                  << prior.predicate << std::endl;
+      }
+
+      std::vector<BufferTouchPattern::BufferConstraint> output;
+      if (pred_a.predicate && pred_b.predicate) {
+        std::cout << "\t\t"
+                  << "Merging disjoint predecessors " << pred_a.from_index << " ("
+                  << pred_a.predicate << ") and " << pred_b.from_index << " (" << pred_b.predicate
+                  << ")" << std::endl;
+        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostcondition(
+            priors_a, priors_b, pred_a.predicate.value(), pred_b.predicate.value());
+      } else if (pred_a.predicate) {
+        std::cout << "\t\t"
+                  << "Merging with predecessor " << pred_a.from_index << " as a special case of "
+                  << pred_b.from_index << " with predicate " << pred_a.predicate << std::endl;
+        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
+            priors_a, priors_b, pred_a.predicate);
+      } else if (pred_b.predicate) {
+        std::cout << "\t\t"
+                  << "Merging with predecessor " << pred_b.from_index << " as a special case of "
+                  << pred_a.from_index << " with predicate " << pred_b.predicate << std::endl;
+        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
+            priors_b, priors_a, pred_b.predicate);
+      } else {
+        std::cout << "\t\t"
+                  << "Merging with predecessors " << pred_a.from_index << " and "
+                  << pred_b.from_index << " as two distinct predecessors, no known post-conditions"
+                  << std::endl;
+        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
+            priors_a, priors_b, NullOpt);
+      }
+
+      std::cout << "\t\t"
+                << "After merging predecessors, have " << output.size() << " known statements"
+                << std::endl;
+      for (const auto& prior : output) {
+        std::cout << "\t\t\t"
+                  << "Block " << visiting << ", Buffer " << prior.buffer->name << " is "
+                  << prior.known_value << " where " << prior.predicate << std::endl;
+      }
+
+      return output;
+    }();
+
+    // std::vector<BufferTouchPattern::BufferConstraint> prior_knowns;
+    // bool found_first_predecessor = false;
+    // for (const auto& predecessor : block.predecessors) {
+    //   if (visited_once.count(predecessor.from_index)) {
+    //     auto it = known_after_block.find(predecessor.from_index);
+    //     if (it != known_after_block.end()) {
+    //       // TODO: Update predecessor with remap.
+    //       std::vector<BufferTouchPattern::BufferConstraint> priors = it->second;
+
+    //       std::cout << "\t\t"
+    //                 << "Before remap, predecessor block #" << predecessor.from_index
+    //                 << " provides " << priors.size() << " knowns" << std::endl;
+    //       for (const auto& prior : priors) {
+    //         std::cout << "\t\t\t"
+    //                   << "Buffer " << prior.buffer->name << " is " << prior.known_value
+    //                   << " where " << prior.predicate << std::endl;
+    //         ;
+    //       }
+
+    //       // The first time through, we assume that the values of
+    //       // the only known predecessor are true for all cases.  The
+    //       // second time through, with a predecessor that may derive
+    //       // from the initial known, we verify that the same known
+    //       // value is determined from both the initial and
+    //       // subsequent usage.
+    //       if (all_predecessors_visited) {
+    //         for (auto& prior : priors) {
+    //           if (prior.predicate.expression_) {
+    //             prior.predicate.Remap(predecessor.var_remap);
+    //             // prior.predicate.expression_ =
+    //             //     prior.predicate.expression_.value() && predecessor.predicate;
+    //             prior.predicate.Simplify(&analyzer);
+    //           }
+    //         }
+    //       }
+
+    //       std::cout << "\t\t"
+    //                 << "After remap, predecessor block #" << predecessor.from_index
+    //                 << " provides " << priors.size() << " knowns" << std::endl;
+    //       for (const auto& prior : priors) {
+    //         std::cout << "\t\t\t"
+    //                   << "Buffer " << prior.buffer->name << " is " << prior.known_value
+    //                   << " where " << prior.predicate << std::endl;
+    //         ;
+    //       }
+
+    //       if (found_first_predecessor) {
+    //         prior_knowns = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
+    //             prior_knowns, priors);
+    //       } else {
+    //         prior_knowns = std::move(priors);
+    //         found_first_predecessor = true;
+    //       }
+    //     }
+    //   }
+    // }
 
     std::cout << "\t"
               << "Visiting control block " << visiting << " starts with " << prior_knowns.size()
@@ -1917,15 +2321,15 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       for (const auto& region : regions) {
         std::cout << "\t\t"
                   << "Within region " << region.region_predicate << std::endl;
-        Optional<PrimExpr> updated_predicate = BufferConstraintApplication::Apply(
+        Optional<PrimExpr> updated_predicate = BufferRegionValueReplacer::Apply(
             region.known_values, region.region_predicate && predicate, &analyzer);
         std::cout << "\t\t\t"
                   << "Buffer predicate simplifies from " << predicate << " to " << updated_predicate
                   << std::endl;
         Optional<PrimExpr> updated_value = NullOpt;
         if (known_value) {
-          updated_value = BufferConstraintApplication::Apply(region.known_values,
-                                                             known_value.value(), &analyzer);
+          updated_value =
+              BufferRegionValueReplacer::Apply(region.known_values, known_value.value(), &analyzer);
         }
         std::cout << "\t\t\t"
                   << "Known value simplifies from " << known_value << " to " << updated_value
@@ -2018,8 +2422,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         }
       }
 
-      // std::cout << "\t\t"
-      //           << "Found same resulting constraints as last time" << std::endl;
+      std::cout << "\t\t"
+                << "Found same resulting constraints as last time" << std::endl;
       return false;
     }();
 
@@ -2028,8 +2432,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     if (has_updated_post) {
       known_after_block[visiting] = post_knowns;
       for (size_t successor : block.successors) {
-        // std::cout << "\t"
-        //           << "Queuing " << successor << " to be visited" << std::endl;
+        std::cout << "\t"
+                  << "Queuing " << successor << " to be visited" << std::endl;
         to_visit.insert(successor);
       }
     }
@@ -2092,7 +2496,7 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(
 
 PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
                                                Analyzer* analyzer) const {
-  // TODO: Use forward-propagated constraints rather than backtracking each step.
+  std::cout << "Attempting to simplify " << expr << std::endl;
 
   size_t context_index = [&]() {
     // auto it = context_lookup_.find(context.get());
@@ -2105,26 +2509,60 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
     return it->second;
   }();
 
+  std::cout << "\t"
+            << "Context index for this statement is " << context_index << std::endl;
+
   PrimExpr constraint = Bool(true);
   for (const auto& known : non_buffer_assumptions_) {
     constraint = constraint && known;
   }
   With<ConstraintContext> constraint_context(analyzer, constraint);
 
-  auto it = constraint_lookup_.find(context_index);
-  if (it != constraint_lookup_.end()) {
-    // TODO: Should the Bool(true) instead be the predicate necessary
-    // to reach this statement?  Might need to track that in the
-    // ControlFlowBlock.
-    auto regions =
-        BufferRegionCollector::Collect(it->second, {expr}, GetAllFreeParameters(), analyzer);
-    if (regions.size() == 1 && analyzer->CanProve(regions[0].region_predicate)) {
-      if (auto opt_expr =
-              BufferConstraintApplication::Apply(regions[0].known_values, expr, analyzer)) {
-        return opt_expr.value();
-      }
-    }
+  auto constraints = constraint_lookup_.at(context_index);
+  std::cout << "\t"
+            << "There are " << constraints.size() << " known constraints at this location"
+            << std::endl;
+  for (const auto& constraint : constraints) {
+    std::cout << "\t\t"
+              << "Buffer " << constraint.buffer->name << " is " << constraint.known_value
+              << " for predicate " << constraint.predicate << std::endl;
   }
+
+  BufferConstraintApply mutator(*this, context_index, analyzer);
+  expr = mutator(expr);
+
+  // auto it = constraint_lookup_.find(context_index);
+  // if (it != constraint_lookup_.end()) {
+  //   // TODO: Should the Bool(true) instead be the predicate necessary
+  //   // to reach this statement?  Might need to track that in the
+  //   // ControlFlowBlock.
+  //   auto regions =
+  //       BufferRegionCollector::Collect(it->second, {expr}, GetAllFreeParameters(), analyzer);
+
+  //   std::cout << "\t"
+  //             << "Regions of interest are [";
+  //   for (size_t i = 0; i < regions.size(); i++) {
+  //     if (i) {
+  //       std::cout << ", ";
+  //     }
+  //     std::cout << regions[i].region_predicate;
+  //   }
+  //   std::cout << "]" << std::endl;
+
+  //   if (regions.size() == 1) {
+  //     std::cout << "\t"
+  //               << "Only one region exists, " << regions[0].region_predicate << std::endl;
+  //     if (analyzer->CanProve(regions[0].region_predicate)) {
+  //       if (auto opt_expr =
+  //               BufferRegionValueReplacer::Apply(regions[0].known_values, expr, analyzer)) {
+  //         return opt_expr.value();
+  //       }
+  //     } else {
+  //       std::cout << "\t"
+  //                 << "Cannot prove predicate of the region of known values" << std::endl;
+  //     }
+  //   }
+  // }
 
   // std::cout << "Attempting to simplify " << expr << " in the context it appears" << std::endl;
 

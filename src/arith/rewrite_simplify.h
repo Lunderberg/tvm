@@ -98,11 +98,36 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   // internal variable map
   std::unordered_map<Var, PrimExpr, ObjectPtrHash, ObjectPtrEqual> var_map_;
 
-  struct Constraint {
-    PrimExpr expr;
-    CallEffectKind side_effects;
+  struct ComparisonConstraint {
+    ComparisonConstraint() {}
+    explicit ComparisonConstraint(PrimExpr expr);
+
+    ComparisonConstraint Reversed() const;
+
+    bool Uses(const PrimExpr& expr) const;
+
+    CompareResult Apply(const PrimExpr& lhs, const PrimExpr& rhs) const;
+
+    /* \brief Merge two comparisons to remove an intermediate
+     *
+     * For example, (x < y) and (y < z) can be merged to produce (x < z).
+     */
+    ComparisonConstraint MergeTransitive(const ComparisonConstraint& other) const;
+
+    bool IsValid() const { return lhs.defined() && rhs.defined(); }
+
+    PrimExpr lhs;
+    PrimExpr rhs;
+    CompareResult result{kInconsistent};
   };
-  std::vector<PrimExpr> scoped_constraints_;
+
+  struct Constraint {
+    explicit Constraint(PrimExpr expr);
+    PrimExpr expr;
+    PrimExpr negation;
+    ComparisonConstraint comparison;
+  };
+  std::vector<Constraint> scoped_constraints_;
 
   // Whether the scoped constraints may be used
   bool use_scoped_constraints_{true};
@@ -151,6 +176,7 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
  private:
   CompareResult TryCompareUsingKnownInequalities(const PrimExpr& x, const PrimExpr& y);
   CompareResult TryCompareUsingConstIntBounds(const PrimExpr& x, const PrimExpr y);
+  CompareResult TryCompareUsingVariableIntBounds(const PrimExpr& x, const PrimExpr y);
 
   // Whether x >= val
   bool CanProveGreaterEqual(const PrimExpr& x, int64_t val) {

@@ -87,6 +87,9 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
     output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
   }
 
+  // if (is_finished()) return output;
+  // output = CompareResult(output & TryCompareUsingVariableIntBounds(x, y));
+
   return output;
 }
 
@@ -137,6 +140,49 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, int64_t val
   return CompareResult::kUnknown;
 }
 
+CompareResult RewriteSimplifier::Impl::TryCompareUsingVariableIntBounds(const PrimExpr& x,
+                                                                        const PrimExpr y) {
+  IntSet x_bounds = analyzer_->int_set(x);
+  IntSet y_bounds = analyzer_->int_set(y);
+
+  PrimExpr x_min = x_bounds.min();
+  PrimExpr x_max = x_bounds.max();
+  PrimExpr y_min = y_bounds.min();
+  PrimExpr y_max = y_bounds.max();
+
+  std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
+            << " with bounds " << y_bounds << std::endl;
+
+  if (x_min.same_as(x) && x_max.same_as(x) && y_min.same_as(y) && y_max.same_as(y)) {
+    return kUnknown;
+  }
+
+  CompareResult output = kUnknown;
+
+  if (x_bounds.HasUpperBound() && y_bounds.HasLowerBound()) {
+    if (analyzer_->CanProve(x_max <= y_min)) {
+      output = CompareResult(output & kLE);
+    } else if (analyzer_->CanProve(x_max < y_min)) {
+      output = CompareResult(output & kLT);
+    }
+  }
+
+  if (x_bounds.HasLowerBound() && y_bounds.HasUpperBound()) {
+    if (analyzer_->CanProve(x_min >= y_max)) {
+      output = CompareResult(output & kLE);
+    } else if (analyzer_->CanProve(x_min > y_max)) {
+      output = CompareResult(output & kLT);
+    }
+  }
+
+  if (output != kUnknown) {
+    std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
+              << " with bounds " << y_bounds << std::endl;
+  }
+
+  return output;
+}
+
 void RewriteSimplifier::Impl::Update(const Var& var, const PrimExpr& info, bool can_override) {
   if (!can_override) {
     auto it = var_map_.find(var);
@@ -183,6 +229,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
     TVM_TRY_REWRITE(min(x - z, y) + z, min(x, y + z));
     TVM_TRY_REWRITE(max(x, y - z) + z, max(x + z, y));
     TVM_TRY_REWRITE(max(x - z, y) + z, max(x, y + z));
+
+    TVM_TRY_REWRITE_IF(x + c1, x - (-c1.Eval()->value), c1.Eval()->value < 0);
 
     TVM_TRY_REWRITE_IF(min(x, y + z * c1) + z * c2, min(x + z * c2, y),
                        c1.Eval()->value == -c2.Eval()->value);
@@ -252,6 +300,137 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
   return ret;
 }
 
+RewriteSimplifier::Impl::ComparisonConstraint::ComparisonConstraint(PrimExpr expr) {
+  PVar<PrimExpr> x, y;
+  if ((x <= y).Match(expr) || (y >= x).Match(expr)) {
+    lhs = x.Eval();
+    rhs = y.Eval();
+    result = kLE;
+  } else if ((x < y).Match(expr) || (y < x).Match(expr)) {
+    lhs = x.Eval();
+    rhs = y.Eval();
+    result = kLT;
+  } else if ((x == y).Match(expr)) {
+    lhs = x.Eval();
+    rhs = y.Eval();
+    result = kEQ;
+  } else if ((x != y).Match(expr)) {
+    lhs = x.Eval();
+    rhs = y.Eval();
+    result = kNE;
+  }
+
+  if (lhs.as<IntImmNode>() && rhs.as<IntImmNode>()) {
+    lhs = PrimExpr();
+    rhs = PrimExpr();
+  }
+}
+
+RewriteSimplifier::Impl::ComparisonConstraint
+RewriteSimplifier::Impl::ComparisonConstraint::Reversed() const {
+  ComparisonConstraint output;
+  output.lhs = rhs;
+  output.rhs = lhs;
+  output.result = Reverse(result);
+  return output;
+}
+
+bool RewriteSimplifier::Impl::ComparisonConstraint::Uses(const PrimExpr& expr) const {
+  if (!IsValid()) {
+    return false;
+  }
+  ExprDeepEqual expr_equal;
+  return expr_equal(lhs, expr) || expr_equal(rhs, expr);
+}
+
+CompareResult RewriteSimplifier::Impl::ComparisonConstraint::Apply(const PrimExpr& lhs,
+                                                                   const PrimExpr& rhs) const {
+  std::cout << "Attempting to use known comparison between " << this->lhs << " and " << this->rhs
+            << " to compare " << lhs << " and " << rhs << std::endl;
+
+  if (!IsValid()) {
+    return kUnknown;
+  }
+  ExprDeepEqual expr_equal;
+  if (expr_equal(lhs, this->lhs) && expr_equal(rhs, this->rhs)) {
+    return result;
+  }
+
+  if (expr_equal(rhs, this->lhs) && expr_equal(lhs, this->rhs)) {
+    return Reverse(result);
+  }
+
+  return kUnknown;
+}
+
+RewriteSimplifier::Impl::ComparisonConstraint
+RewriteSimplifier::Impl::ComparisonConstraint::MergeTransitive(
+    const ComparisonConstraint& other) const {
+  if (!IsValid() || !other.IsValid()) {
+    return ComparisonConstraint();
+  }
+
+  ExprDeepEqual expr_equal;
+
+  bool lhs_lhs = expr_equal(lhs, other.lhs);
+  bool rhs_lhs = expr_equal(rhs, other.lhs);
+  bool lhs_rhs = expr_equal(lhs, other.rhs);
+  bool rhs_rhs = expr_equal(rhs, other.rhs);
+
+  if ((lhs_lhs && rhs_rhs) || (lhs_rhs && rhs_lhs)) {
+    return ComparisonConstraint();
+  } else if (lhs_rhs) {
+    // this = (y OP x)
+    // other = (z OP y)
+    // out = (z OP x)
+    auto out = ComparisonConstraint();
+    out.lhs = other.lhs;
+    out.rhs = rhs;
+    out.result = Transitive(other.result, result);
+    return out;
+  } else if (lhs_lhs) {
+    // this = (y OP x)
+    // other = (y OP z)
+    // out = (x OP z)
+    auto out = ComparisonConstraint();
+    out.lhs = rhs;
+    out.rhs = other.rhs;
+    out.result = Transitive(Reverse(result), other.result);
+    return out;
+  } else if (rhs_lhs) {
+    // this = (x OP y)
+    // other = (y OP z)
+    // out = (x OP z)
+    auto out = ComparisonConstraint();
+    out.lhs = lhs;
+    out.rhs = other.rhs;
+    out.result = Transitive(result, other.result);
+    return out;
+  } else if (rhs_rhs) {
+    // this = (x OP y)
+    // other = (z OP y)
+    // out = (x OP z)
+    auto out = ComparisonConstraint();
+    out.lhs = lhs;
+    out.rhs = other.rhs;
+    out.result = Transitive(result, Reverse(other.result));
+    return out;
+  } else {
+    return ComparisonConstraint();
+  }
+}
+
+RewriteSimplifier::Impl::Constraint::Constraint(PrimExpr expr) : expr(expr), comparison(expr) {
+  if (expr.defined()) {
+    if (expr.dtype().is_bool()) {
+      negation = Not(expr);
+    } else {
+      negation = expr == make_zero(expr.dtype());
+    }
+    negation = RewriteBooleanOperators(negation);
+  }
+}
+
 std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& constraint) {
   size_t old_literal_size = scoped_constraints_.size();
 
@@ -259,25 +438,13 @@ std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& c
   // to simplify it again.
   for (const PrimExpr& subconstraint : ExtractConstraints(constraint)) {
     if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
-      scoped_constraints_.push_back(subconstraint);
-      // We could apply this during TryMatchLiteralConstraint, but
-      // that would require performing a rewrite of each expression
-      // being checked.  This way, we only apply a rewrite for each
-      // constraint being applied.
-      PrimExpr negation;
-      if (subconstraint.dtype().is_bool()) {
-        negation = Not(subconstraint);
-      } else {
-        negation = subconstraint == make_zero(subconstraint.dtype());
-      }
-      negation = RewriteBooleanOperators(negation);
-      scoped_constraints_.push_back(Not(negation));
+      scoped_constraints_.push_back(Constraint(subconstraint));
     }
   }
   size_t new_literal_size = scoped_constraints_.size();
   auto frecover = [old_literal_size, new_literal_size, this]() {
     ICHECK_EQ(scoped_constraints_.size(), new_literal_size);
-    scoped_constraints_.resize(old_literal_size);
+    scoped_constraints_.resize(old_literal_size, Constraint(PrimExpr()));
   };
   return frecover;
 }
@@ -350,6 +517,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
     // constant cancelation
     TVM_TRY_REWRITE((x + c1) - c2, x + (c1 - c2));
     TVM_TRY_REWRITE((c1 - x) - (c2 - y), (y - x) + (c1 - c2));
+
+    TVM_TRY_REWRITE_IF(x - c1, x + (-c1.Eval()->value), c1.Eval()->value < 0);
 
     // cancelization rule involving 4 operands
     TVM_TRY_REWRITE((x + y) - (x + z), y - z);
@@ -1351,10 +1520,10 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryMatchLiteralConstraint(const Prim
 
   ExprDeepEqual expr_equal;
   for (const auto& constraint : scoped_constraints_) {
-    if (expr_equal(constraint, expr)) {
+    if (expr_equal(constraint.expr, expr)) {
       return make_const(expr->dtype, true);
     }
-    if (expr_equal(constraint, negation)) {
+    if (expr_equal(constraint.negation, negation)) {
       return make_const(expr->dtype, false);
     }
   }
@@ -1386,6 +1555,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const EQNode* op) {
                result == CompareResult::kLT) {
       return make_const(op->dtype, false);
     }
+
+    TVM_TRY_REWRITE(c1 == x, x == c1);
     TVM_TRY_REWRITE(x - c1 == 0, x == c1);
     TVM_TRY_REWRITE(c1 - x == 0, x == c1);
     TVM_TRY_REWRITE(x + c1 == 0, x == 0 - c1);
@@ -1451,6 +1622,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LTNode* op) {
     TVM_TRY_REWRITE(x < x - z, z < 0);
     TVM_TRY_REWRITE(c1 < x + c2, c1 - c2 < x);
     TVM_TRY_REWRITE(c1 < c2 - x, x < c2 - c1);
+
+    TVM_TRY_REWRITE(x - 1 < y, x <= y);
+    TVM_TRY_REWRITE(x < y + 1, x <= y);
+    TVM_TRY_REWRITE(x + (0 - 1) < y, x <= y);
+    TVM_TRY_REWRITE(x < y + (0 - 1), x <= y);
 
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, x < y, c1.Eval()->value > 0);
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, y < x, c1.Eval()->value < 0);
@@ -1552,6 +1728,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
+  // std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
   std::vector<PrimExpr> subexprs = ExtractConstraints(GetRef<PrimExpr>(op), false);
   ICHECK_GE(subexprs.size(), 2);
 
@@ -1560,25 +1737,32 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   // Simplify each of the subexpressions under the assumption that all
   // other subexpressions are true.
   for (size_t i = 0; i < subexprs.size(); i++) {
-    std::vector<With<ConstraintContext>> context;
-    context.reserve(subexprs.size() - 1);
+    // std::vector<With<ConstraintContext>> context;
+    // context.reserve(subexprs.size() - 1);
+
+    PrimExpr full_constraint = Bool(true);
 
     PrimExpr remainder = Bool(true);
     for (size_t j = 0; j < subexprs.size(); j++) {
       if (i != j) {
-        context.emplace_back(analyzer_, subexprs[j]);
+        full_constraint = full_constraint && subexprs[j];
+        // context.emplace_back(analyzer_, subexprs[j]);
       }
     }
 
+    With<ConstraintContext> context(analyzer_, full_constraint);
     PrimExpr simplified = VisitExpr(subexprs[i]);
     if (!simplified.same_as(subexprs[i])) {
       modified = true;
     }
+    // std::cout << "\t"
+    //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
+    //           << " under constraint that " << full_constraint << std::endl;
     subexprs[i] = simplified;
 
-    while (context.size()) {
-      context.pop_back();
-    }
+    // while (context.size()) {
+    //   context.pop_back();
+    // }
   }
 
   // Rules to simplify a pair of conditions.  Returns NullOpt if no
@@ -1606,9 +1790,42 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
     TVM_TRY_REWRITE(x == y && x != y, cfalse);
     TVM_TRY_REWRITE(x != y && x == y, cfalse);
     TVM_TRY_REWRITE(x && !x, cfalse);
+
     TVM_TRY_REWRITE(x <= y && y < x, cfalse);
     TVM_TRY_REWRITE(y < x && x <= y, cfalse);
+    TVM_TRY_REWRITE(x <= y && x < y, x < y);
+    TVM_TRY_REWRITE(x < y && x <= y, x < y);
+
+    TVM_TRY_REWRITE(x < y && x == y, cfalse);
+    TVM_TRY_REWRITE(x < y && y == x, cfalse);
+    TVM_TRY_REWRITE(x == y && x < y, cfalse);
+    TVM_TRY_REWRITE(y == x && x < y, cfalse);
+
     TVM_TRY_REWRITE(x <= y && y <= x, x == y);
+
+    TVM_TRY_REWRITE(x <= y && x == y, x == y);
+    TVM_TRY_REWRITE(x <= y && y == x, x == y);
+    TVM_TRY_REWRITE(x == y && x <= y, x == y);
+    TVM_TRY_REWRITE(y == x && x <= y, x == y);
+
+    TVM_TRY_REWRITE(x <= y && x != y, x < y);
+    TVM_TRY_REWRITE(x <= y && y != x, x < y);
+    TVM_TRY_REWRITE(x != y && x <= y, x < y);
+    TVM_TRY_REWRITE(y != x && x <= y, x < y);
+
+    TVM_TRY_REWRITE(x < y && x != y, x < y);
+    TVM_TRY_REWRITE(x < y && y != x, x < y);
+    TVM_TRY_REWRITE(x != y && x < y, x < y);
+    TVM_TRY_REWRITE(y != x && x < y, x < y);
+
+    TVM_TRY_REWRITE_IF(x < y && x - c1 != y, x < y, c1.Eval()->value >= 0);
+    TVM_TRY_REWRITE_IF(x < y && x != y + c1, x < y, c1.Eval()->value >= 0);
+    TVM_TRY_REWRITE_IF(x - c1 != y && x < y, x < y, c1.Eval()->value >= 0);
+    TVM_TRY_REWRITE_IF(x != y + c1 && x < y, x < y, c1.Eval()->value >= 0);
+    TVM_TRY_REWRITE_IF(x <= y && x - c1 != y, x <= y, c1.Eval()->value > 0);
+    TVM_TRY_REWRITE_IF(x <= y && x != y + c1, x <= y, c1.Eval()->value > 0);
+    TVM_TRY_REWRITE_IF(x - c1 != y && x <= y, x <= y, c1.Eval()->value > 0);
+    TVM_TRY_REWRITE_IF(x != y + c1 && x <= y, x <= y, c1.Eval()->value > 0);
 
     TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
     TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
@@ -1657,34 +1874,53 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
+  // std::cout << "Simplifying OrNode " << GetRef<PrimExpr>(op) << std::endl;
   std::vector<PrimExpr> subexprs = ExtractComponents(GetRef<PrimExpr>(op));
   ICHECK_GE(subexprs.size(), 2);
+
+  // std::cout << "Subexprs = [";
+  // for (size_t i = 0; i < subexprs.size(); i++) {
+  //   if (i) {
+  //     std::cout << ", ";
+  //   }
+  //   std::cout << subexprs[i];
+  // }
+  // std::cout << "]" << std::endl;
 
   bool modified = false;
 
   // Simplify each of the subexpressions under the assumption that all
   // other subexpressions are false.
   for (size_t i = 0; i < subexprs.size(); i++) {
-    std::vector<With<ConstraintContext>> context;
-    context.reserve(subexprs.size() - 1);
+    // std::vector<With<ConstraintContext>> context;
+    // context.reserve(subexprs.size() - 1);
+
+    PrimExpr full_constraint = Bool(true);
 
     PrimExpr remainder = Bool(true);
     for (size_t j = 0; j < subexprs.size(); j++) {
       if (i != j) {
-        context.emplace_back(analyzer_, RewriteBooleanOperators(Not(subexprs[j])));
+        PrimExpr sub = RewriteBooleanOperators(Not(subexprs[j]));
+        full_constraint = full_constraint && sub;
+        // context.emplace_back(analyzer_, sub);
       }
     }
 
+    With<ConstraintContext> context(analyzer_, full_constraint);
     PrimExpr simplified = VisitExpr(subexprs[i]);
     if (!simplified.same_as(subexprs[i])) {
       modified = true;
     }
 
+    // std::cout << "\t"
+    //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
+    //           << " under constraint that " << full_constraint << std::endl;
+
     subexprs[i] = simplified;
 
-    while (context.size()) {
-      context.pop_back();
-    }
+    // while (context.size()) {
+    //   context.pop_back();
+    // }
   }
 
   // Rules to simplify a pair of conditions.  Returns NullOpt if no
@@ -1714,10 +1950,16 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
     TVM_TRY_REWRITE(x <= y || y < x, ctrue);
     TVM_TRY_REWRITE(y < x || x <= y, ctrue);
     TVM_TRY_REWRITE(x <= y || y <= x, ctrue);
+
     TVM_TRY_REWRITE(x <= y || x == y, x <= y);
+    TVM_TRY_REWRITE(x <= y || y == x, x <= y);
     TVM_TRY_REWRITE(x == y || x <= y, x <= y);
+    TVM_TRY_REWRITE(y == x || x <= y, x <= y);
+
     TVM_TRY_REWRITE(x < y || x == y, x <= y);
-    TVM_TRY_REWRITE(x == y || x <= y, x <= y);
+    TVM_TRY_REWRITE(x < y || y == x, x <= y);
+    TVM_TRY_REWRITE(x == y || x < y, x <= y);
+    TVM_TRY_REWRITE(y == x || x < y, x <= y);
 
     TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
     TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);

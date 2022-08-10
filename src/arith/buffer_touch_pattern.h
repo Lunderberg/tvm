@@ -99,6 +99,20 @@ class Predicate : public ParametrizedExpression {
    */
   Predicate Intersection(const Predicate& other) const;
 
+  /* \brief Remap variables within the predicate
+   *
+   * Remaps variables in the predicate according to the supplied map.
+   *
+   * \param var_remap A map of variables to the expression that
+   * replaces them.
+   *
+   * \param analyzer The analyzer to use while simplifying.
+   */
+  void Remap(const Map<Var, PrimExpr>& var_remap);
+
+  /* \brief Simplify the predicate using the supplied analyzer */
+  void Simplify(Analyzer* analyzer);
+
   friend std::ostream& operator<<(std::ostream& os, const Predicate& expr);
 
   /* \brief Checks if this Predicate can be statically proven
@@ -326,9 +340,58 @@ class BufferTouchPattern {
      * If a constraint applies to the same indices in the same buffer,
      * but cannot be shown to be the same value, it will be tracked as
      * a NullOpt, with no additional information tracked.
+     *
+     * \param a_condition Condition that is known to be true when
      */
     static std::vector<BufferConstraint> MergePredecessorConstraints(
-        const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b);
+        const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
+        Optional<PrimExpr> a_condition);
+
+    /* \brief Merge constraints that jointly apply
+     *
+     * If a constraint applies to the same indices in the same buffer,
+     * but cannot be shown to be the same value, it will be tracked as
+     * a NullOpt, with no additional information tracked.
+     *
+     * \param a_condition Condition that is known to be true when
+     * block A was the predecessor.
+     *
+     * \param b_condition Condition that is known to be true when
+     * block B was the predecessor.
+     */
+    static std::vector<BufferConstraint> MergePredecessorConstraintsWithPostcondition(
+        const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
+        PrimExpr a_condition, PrimExpr b_condition);
+  };
+
+  struct ControlFlowPredecessor {
+    /* \brief The source block of the control flow edge
+     *
+     * Lookup index into `control_flow_`
+     */
+    size_t from_index;
+
+    /*! \brief Variable remaps
+     *
+     * e.g. Replacing loop iterator `i` with `i-delta` when following an
+     * edge from the end of a loop to the beginning of the loop.
+     */
+    Map<Var, PrimExpr> var_remap;
+
+    /*! Range of variables introduced by var_remap
+     *
+     * For example, when replacing `i` with `i-delta`, the new
+     * variable `delta` has bounds `[1, i-1]`.
+     */
+    Map<Var, Range> remap_var_ranges;
+
+    /*! \brief Predicate that must to true when following this edge
+     *
+     * This is applied after variable remapping.  For example, `i >
+     * loop_min` when following the an edge from the end of a loop to
+     * the beginning of the loop.
+     */
+    Optional<PrimExpr> predicate;
   };
 
   struct ControlFlowBlock {
@@ -343,13 +406,10 @@ class BufferTouchPattern {
      *
      * Lookup index into `control_flow_`
      */
-    std::vector<int> successors;
+    std::vector<size_t> successors;
 
-    /* \brief The blocks that occur before this block
-     *
-     * Lookup index into `control_flow_`
-     */
-    std::vector<int> predecessors;
+    /* \brief The blocks that occur before this block */
+    std::vector<ControlFlowPredecessor> predecessors;
 
     // TODO: Remove index after done debugging.
     int index;
@@ -385,6 +445,8 @@ class BufferTouchPattern {
    * statement.
    */
   std::unordered_map<const tir::StmtNode*, size_t> control_flow_lookup_;
+
+  Map<Var, Range> iterator_ranges_;
 
   /*! \brief All free parameters across all constraint predicates */
   Map<Var, Range> GetAllFreeParameters() const;
