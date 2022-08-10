@@ -2450,6 +2450,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   //   }
   // }
 
+  // Fill in any unvisited blocks with empty constraint sets
+  for (size_t i = 0; i < control_flow_.size(); i++) {
+    auto it = known_after_block.find(i);
+    if (it == known_after_block.end()) {
+      known_after_block[i];
+    }
+  }
+
   constraint_lookup_ = known_after_block;
 }
 
