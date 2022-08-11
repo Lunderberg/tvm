@@ -1081,15 +1081,10 @@ class TestRemoveTransitivelyProvableCondition(BaseBeforeAfter):
 
 class TestTemp(BaseBeforeAfter):
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = (j <= 15 and 0 <= j and i == 0) or (j <= 15 and i <= j and 0 < j and 0 < i)
+        A[0] = j <= 15 and i <= j and 0 <= i and (j <= 0 or i == 0 or i - 1 <= j)
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = (j <= 15 and 0 <= j and i == 0) or (i <= j and j <= 15 and 0 < i)
-        # A[0] = (j <= 15 and i <= j and i == 0) or (j <= 15 and i <= j and 0 < j and 0 < i)
-        # A[0] = (j <= 15 and i <= j and i == 0) or (j <= 15 and i <= j and 0 < i)
-        # A[0] = j <= 15 and i <= j and 0 <= i
-        # A[0] = j <= 15 and 0 <= i and i <= j
-        # A[0] = j <= 15 and 0 <= j and i <= j
+        A[0] = j <= 15 and i <= j and 0 <= i
 
 
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):

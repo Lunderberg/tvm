@@ -33,6 +33,7 @@
 #include "const_fold.h"
 #include "ir_mutator_with_analyzer.h"
 #include "pattern_match.h"
+#include "propagate_constraints.h"
 
 namespace tvm {
 namespace arith {
@@ -98,34 +99,10 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   // internal variable map
   std::unordered_map<Var, PrimExpr, ObjectPtrHash, ObjectPtrEqual> var_map_;
 
-  struct ComparisonConstraint {
-    ComparisonConstraint() {}
-    explicit ComparisonConstraint(PrimExpr expr);
-
-    ComparisonConstraint Reversed() const;
-
-    bool Uses(const PrimExpr& expr) const;
-
-    CompareResult Apply(const PrimExpr& lhs, const PrimExpr& rhs) const;
-
-    /* \brief Merge two comparisons to remove an intermediate
-     *
-     * For example, (x < y) and (y < z) can be merged to produce (x < z).
-     */
-    ComparisonConstraint MergeTransitive(const ComparisonConstraint& other) const;
-
-    bool IsValid() const { return lhs.defined() && rhs.defined(); }
-
-    PrimExpr lhs;
-    PrimExpr rhs;
-    CompareResult result{kInconsistent};
-  };
-
   struct Constraint {
     explicit Constraint(PrimExpr expr);
     PrimExpr expr;
     PrimExpr negation;
-    ComparisonConstraint comparison;
   };
   std::vector<Constraint> scoped_constraints_;
 

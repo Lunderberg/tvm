@@ -60,8 +60,8 @@ IntervalSet MakeIntervalSet(PrimExpr min_value, PrimExpr max_value) {
 TVM_REGISTER_GLOBAL("arith.IntervalSet").set_body_typed(MakeIntervalSet);
 
 IntervalSet Intersect(Analyzer* analyzer, IntervalSet a, IntervalSet b) {
-  PrimExpr max_value = min(a->max_value, b->max_value);
-  PrimExpr min_value = max(a->min_value, b->min_value);
+  PrimExpr max_value = analyzer->Simplify(min(a->max_value, b->max_value));
+  PrimExpr min_value = analyzer->Simplify(max(a->min_value, b->min_value));
   if ((max_value.dtype().is_int() || max_value.dtype().is_uint()) &&
       (min_value.dtype().is_int() || min_value.dtype().is_uint()) &&
       analyzer->CanProve(max_value < min_value)) {

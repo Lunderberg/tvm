@@ -40,10 +40,15 @@ namespace arith {
 
 using namespace tir;
 
+static bool line_num = false;
+
 // macro for doing simple rewrite
-#define TVM_TRY_REWRITE(SrcExpr, ResExpr) \
-  if ((SrcExpr).Match(ret)) {             \
-    return (ResExpr).Eval();              \
+#define TVM_TRY_REWRITE(SrcExpr, ResExpr)                                    \
+  if ((SrcExpr).Match(ret)) {                                                \
+    if (line_num) {                                                          \
+      std::cout << "Rewriting using rule on line " << __LINE__ << std::endl; \
+    }                                                                        \
+    return (ResExpr).Eval();                                                 \
   }
 
 // macro for rewrite + recursively rewrite ResExpr
@@ -53,9 +58,12 @@ using namespace tir;
   }
 
 // macro rewrite only if CondExor is true after match.
-#define TVM_TRY_REWRITE_IF(SrcExpr, ResExpr, CondExpr) \
-  if ((SrcExpr).Match(ret) && (CondExpr)) {            \
-    return (ResExpr).Eval();                           \
+#define TVM_TRY_REWRITE_IF(SrcExpr, ResExpr, CondExpr)                       \
+  if ((SrcExpr).Match(ret) && (CondExpr)) {                                  \
+    if (line_num) {                                                          \
+      std::cout << "Rewriting using rule on line " << __LINE__ << std::endl; \
+    }                                                                        \
+    return (ResExpr).Eval();                                                 \
   }
 
 // macro rewrite + recursive_rewrite only if CondExor is true after match.
@@ -87,8 +95,8 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
     output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
   }
 
-  // if (is_finished()) return output;
-  // output = CompareResult(output & TryCompareUsingVariableIntBounds(x, y));
+  if (is_finished()) return output;
+  output = CompareResult(output & TryCompareUsingVariableIntBounds(x, y));
 
   return output;
 }
@@ -150,8 +158,8 @@ CompareResult RewriteSimplifier::Impl::TryCompareUsingVariableIntBounds(const Pr
   PrimExpr y_min = y_bounds.min();
   PrimExpr y_max = y_bounds.max();
 
-  std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
-            << " with bounds " << y_bounds << std::endl;
+  // std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
+  //           << " with bounds " << y_bounds << std::endl;
 
   if (x_min.same_as(x) && x_max.same_as(x) && y_min.same_as(y) && y_max.same_as(y)) {
     return kUnknown;
@@ -160,24 +168,22 @@ CompareResult RewriteSimplifier::Impl::TryCompareUsingVariableIntBounds(const Pr
   CompareResult output = kUnknown;
 
   if (x_bounds.HasUpperBound() && y_bounds.HasLowerBound()) {
-    if (analyzer_->CanProve(x_max <= y_min)) {
-      output = CompareResult(output & kLE);
-    } else if (analyzer_->CanProve(x_max < y_min)) {
-      output = CompareResult(output & kLT);
+    CompareResult lt_bound = TryCompare(x_max - y_min, 0);
+    if (lt_bound == kLE || lt_bound == kLT) {
+      output = CompareResult(output & lt_bound);
     }
   }
 
   if (x_bounds.HasLowerBound() && y_bounds.HasUpperBound()) {
-    if (analyzer_->CanProve(x_min >= y_max)) {
-      output = CompareResult(output & kLE);
-    } else if (analyzer_->CanProve(x_min > y_max)) {
-      output = CompareResult(output & kLT);
+    CompareResult gt_bound = TryCompare(x_min - y_max, 0);
+    if (gt_bound == kGT || gt_bound == kGE) {
+      output = CompareResult(output & gt_bound);
     }
   }
 
   if (output != kUnknown) {
-    std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
-              << " with bounds " << y_bounds << std::endl;
+    // std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
+    //           << " with bounds " << y_bounds << " results in " << output << std::endl;
   }
 
   return output;
@@ -300,127 +306,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
   return ret;
 }
 
-RewriteSimplifier::Impl::ComparisonConstraint::ComparisonConstraint(PrimExpr expr) {
-  PVar<PrimExpr> x, y;
-  if ((x <= y).Match(expr) || (y >= x).Match(expr)) {
-    lhs = x.Eval();
-    rhs = y.Eval();
-    result = kLE;
-  } else if ((x < y).Match(expr) || (y < x).Match(expr)) {
-    lhs = x.Eval();
-    rhs = y.Eval();
-    result = kLT;
-  } else if ((x == y).Match(expr)) {
-    lhs = x.Eval();
-    rhs = y.Eval();
-    result = kEQ;
-  } else if ((x != y).Match(expr)) {
-    lhs = x.Eval();
-    rhs = y.Eval();
-    result = kNE;
-  }
-
-  if (lhs.as<IntImmNode>() && rhs.as<IntImmNode>()) {
-    lhs = PrimExpr();
-    rhs = PrimExpr();
-  }
-}
-
-RewriteSimplifier::Impl::ComparisonConstraint
-RewriteSimplifier::Impl::ComparisonConstraint::Reversed() const {
-  ComparisonConstraint output;
-  output.lhs = rhs;
-  output.rhs = lhs;
-  output.result = Reverse(result);
-  return output;
-}
-
-bool RewriteSimplifier::Impl::ComparisonConstraint::Uses(const PrimExpr& expr) const {
-  if (!IsValid()) {
-    return false;
-  }
-  ExprDeepEqual expr_equal;
-  return expr_equal(lhs, expr) || expr_equal(rhs, expr);
-}
-
-CompareResult RewriteSimplifier::Impl::ComparisonConstraint::Apply(const PrimExpr& lhs,
-                                                                   const PrimExpr& rhs) const {
-  std::cout << "Attempting to use known comparison between " << this->lhs << " and " << this->rhs
-            << " to compare " << lhs << " and " << rhs << std::endl;
-
-  if (!IsValid()) {
-    return kUnknown;
-  }
-  ExprDeepEqual expr_equal;
-  if (expr_equal(lhs, this->lhs) && expr_equal(rhs, this->rhs)) {
-    return result;
-  }
-
-  if (expr_equal(rhs, this->lhs) && expr_equal(lhs, this->rhs)) {
-    return Reverse(result);
-  }
-
-  return kUnknown;
-}
-
-RewriteSimplifier::Impl::ComparisonConstraint
-RewriteSimplifier::Impl::ComparisonConstraint::MergeTransitive(
-    const ComparisonConstraint& other) const {
-  if (!IsValid() || !other.IsValid()) {
-    return ComparisonConstraint();
-  }
-
-  ExprDeepEqual expr_equal;
-
-  bool lhs_lhs = expr_equal(lhs, other.lhs);
-  bool rhs_lhs = expr_equal(rhs, other.lhs);
-  bool lhs_rhs = expr_equal(lhs, other.rhs);
-  bool rhs_rhs = expr_equal(rhs, other.rhs);
-
-  if ((lhs_lhs && rhs_rhs) || (lhs_rhs && rhs_lhs)) {
-    return ComparisonConstraint();
-  } else if (lhs_rhs) {
-    // this = (y OP x)
-    // other = (z OP y)
-    // out = (z OP x)
-    auto out = ComparisonConstraint();
-    out.lhs = other.lhs;
-    out.rhs = rhs;
-    out.result = Transitive(other.result, result);
-    return out;
-  } else if (lhs_lhs) {
-    // this = (y OP x)
-    // other = (y OP z)
-    // out = (x OP z)
-    auto out = ComparisonConstraint();
-    out.lhs = rhs;
-    out.rhs = other.rhs;
-    out.result = Transitive(Reverse(result), other.result);
-    return out;
-  } else if (rhs_lhs) {
-    // this = (x OP y)
-    // other = (y OP z)
-    // out = (x OP z)
-    auto out = ComparisonConstraint();
-    out.lhs = lhs;
-    out.rhs = other.rhs;
-    out.result = Transitive(result, other.result);
-    return out;
-  } else if (rhs_rhs) {
-    // this = (x OP y)
-    // other = (z OP y)
-    // out = (x OP z)
-    auto out = ComparisonConstraint();
-    out.lhs = lhs;
-    out.rhs = other.rhs;
-    out.result = Transitive(result, Reverse(other.result));
-    return out;
-  } else {
-    return ComparisonConstraint();
-  }
-}
-
-RewriteSimplifier::Impl::Constraint::Constraint(PrimExpr expr) : expr(expr), comparison(expr) {
+RewriteSimplifier::Impl::Constraint::Constraint(PrimExpr expr) : expr(expr) {
   if (expr.defined()) {
     if (expr.dtype().is_bool()) {
       negation = Not(expr);
@@ -436,7 +322,7 @@ std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& c
 
   // The parent scope has already simplified the constraint, no need
   // to simplify it again.
-  for (const PrimExpr& subconstraint : ExtractConstraints(constraint)) {
+  for (const PrimExpr& subconstraint : ExtractConstraints(constraint, false)) {
     if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
       scoped_constraints_.push_back(Constraint(subconstraint));
     }
@@ -1628,6 +1514,10 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LTNode* op) {
     TVM_TRY_REWRITE(x + (-1) < y, x <= y);
     TVM_TRY_REWRITE(x < y - (-1), x <= y);
 
+    TVM_TRY_REWRITE(x <= y - 1 , x < y);
+    TVM_TRY_REWRITE(x + 1 <= y, x < y);
+    TVM_TRY_REWRITE(x <= y + (- 1) , x < y);
+    TVM_TRY_REWRITE(x - (- 1) <= y , x < y);
 
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, x < y, c1.Eval()->value > 0);
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, y < x, c1.Eval()->value < 0);
@@ -1729,11 +1619,21 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
-  // std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
+  std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
   std::vector<PrimExpr> subexprs = ExtractConstraints(GetRef<PrimExpr>(op), false);
   ICHECK_GE(subexprs.size(), 2);
 
   bool modified = false;
+
+  std::cout << "\t"
+            << "AndNode subexprs = [";
+  for (size_t i = 0; i < subexprs.size(); i++) {
+    if (i) {
+      std::cout << ", ";
+    }
+    std::cout << subexprs[i];
+  }
+  std::cout << "]" << std::endl;
 
   // Simplify each of the subexpressions under the assumption that all
   // other subexpressions are true.
@@ -1756,9 +1656,9 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
     if (!simplified.same_as(subexprs[i])) {
       modified = true;
     }
-    // std::cout << "\t"
-    //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
-    //           << " under constraint that " << full_constraint << std::endl;
+    std::cout << "\t"
+              << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
+              << " under constraint that " << full_constraint << std::endl;
     subexprs[i] = simplified;
 
     // while (context.size()) {
@@ -1819,14 +1719,14 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
     TVM_TRY_REWRITE(x != y && x < y, x < y);
     TVM_TRY_REWRITE(y != x && x < y, x < y);
 
-    TVM_TRY_REWRITE_IF(x < y && x - c1 != y, x < y, c1.Eval()->value >= 0);
-    TVM_TRY_REWRITE_IF(x < y && x != y + c1, x < y, c1.Eval()->value >= 0);
-    TVM_TRY_REWRITE_IF(x - c1 != y && x < y, x < y, c1.Eval()->value >= 0);
-    TVM_TRY_REWRITE_IF(x != y + c1 && x < y, x < y, c1.Eval()->value >= 0);
-    TVM_TRY_REWRITE_IF(x <= y && x - c1 != y, x <= y, c1.Eval()->value > 0);
-    TVM_TRY_REWRITE_IF(x <= y && x != y + c1, x <= y, c1.Eval()->value > 0);
-    TVM_TRY_REWRITE_IF(x - c1 != y && x <= y, x <= y, c1.Eval()->value > 0);
-    TVM_TRY_REWRITE_IF(x != y + c1 && x <= y, x <= y, c1.Eval()->value > 0);
+    // TVM_TRY_REWRITE_IF(x < y && x - c1 != y, x < y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x < y && x != y + c1, x < y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x - c1 != y && x < y, x < y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x != y + c1 && x < y, x < y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x <= y && x - c1 != y, x <= y, c1.Eval()->value > 0);
+    // TVM_TRY_REWRITE_IF(x <= y && x != y + c1, x <= y, c1.Eval()->value > 0);
+    // TVM_TRY_REWRITE_IF(x - c1 != y && x <= y, x <= y, c1.Eval()->value > 0);
+    // TVM_TRY_REWRITE_IF(x != y + c1 && x <= y, x <= y, c1.Eval()->value > 0);
 
     TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
     TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
@@ -1851,11 +1751,15 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
       PrimExpr& a = subexprs[i];
       PrimExpr& b = subexprs[j];
       if (a.defined() && b.defined()) {
+        // line_num = true;
         if (Optional<PrimExpr> pairwise = pairwise_simplify(a, b)) {
+          // std::cout << "Found pairwise simplification of (" << a << " && " << b << ") into "
+          //           << pairwise << std::endl;
           a = PrimExpr();
           b = pairwise.value();
           modified = true;
         }
+        // line_num = false;
       }
     }
   }
@@ -1863,6 +1767,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   if (!modified) {
     return GetRef<PrimExpr>(op);
   }
+
+  // Sort the subexpressions to help in equality comparisons.
+  std::sort(subexprs.begin(), subexprs.end(), [](const PrimExpr& a, const PrimExpr& b) {
+    return StructuralHash()(a) < StructuralHash()(b);
+  });
 
   // Merge all remaining subexpressions
   PrimExpr ret = Bool(true);
@@ -1879,14 +1788,25 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   std::vector<PrimExpr> subexprs = ExtractComponents(GetRef<PrimExpr>(op));
   ICHECK_GE(subexprs.size(), 2);
 
-  // std::cout << "Subexprs = [";
-  // for (size_t i = 0; i < subexprs.size(); i++) {
-  //   if (i) {
-  //     std::cout << ", ";
-  //   }
-  //   std::cout << subexprs[i];
-  // }
-  // std::cout << "]" << std::endl;
+  auto subexpr_as_str = [&]() {
+    std::stringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < subexprs.size(); i++) {
+      if (i) {
+        ss << ", ";
+      }
+      if (subexprs[i].defined()) {
+        ss << subexprs[i];
+      } else {
+        ss << "(null)";
+      }
+    }
+    ss << "]";
+    return ss.str();
+  };
+
+  // std::cout << "\t"
+  //           << "Subexprs = " << subexpr_as_str() << std::endl;
 
   bool modified = false;
 
@@ -1924,14 +1844,29 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
     // }
   }
 
+  // std::cout << "Simplified subexprs = " << subexpr_as_str() << std::endl;
+
   // Rules to simplify a pair of conditions.  Returns NullOpt if no
   // simplification is possible.
   auto pairwise_simplify = [this](const PrimExpr& a, const PrimExpr& b) -> Optional<PrimExpr> {
-    if (auto const_res = TryConstFold<Or>(a, b)) return const_res.value();
+    auto const_res = TryConstFold<Or>(a, b);
+    if (const_res.defined()) {
+      // std::cout << "\t\t"
+      //           << "Found result " << const_res << " by constant folding" << std::endl;
+      return const_res.value();
+    }
 
     PrimExpr ret = a || b;
 
-    if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+    // std::cout << "\t\t"
+    //           << "Comparing against unmodified return value " << ret << std::endl;
+
+    if (auto match = TryMatchLiteralConstraint(ret)) {
+      // std::cout << "\t\t"
+      //           << "Found result " << match.value() << " by comparing to known literal"
+      //           << std::endl;
+      return match.value();
+    }
 
     // Pattern var to match any expression
     PVar<PrimExpr> x, y;
@@ -1945,12 +1880,17 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
 
     auto ctrue = PConst<PrimExpr>(make_const(ret->dtype, true));
 
+    // std::cout << "\t\t"
+    //           << "Trying rewrite rules..." << std::endl;
+
     TVM_TRY_REWRITE(x == y || x != y, ctrue);
     TVM_TRY_REWRITE(x != y || x == y, ctrue);
     TVM_TRY_REWRITE(x || !x, ctrue);
     TVM_TRY_REWRITE(x <= y || y < x, ctrue);
     TVM_TRY_REWRITE(y < x || x <= y, ctrue);
     TVM_TRY_REWRITE(x <= y || y <= x, ctrue);
+
+    TVM_TRY_REWRITE(x < y || y < x, x != y);
 
     TVM_TRY_REWRITE(x <= y || x == y, x <= y);
     TVM_TRY_REWRITE(x <= y || y == x, x <= y);
@@ -1961,6 +1901,34 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
     TVM_TRY_REWRITE(x < y || y == x, x <= y);
     TVM_TRY_REWRITE(x == y || x < y, x <= y);
     TVM_TRY_REWRITE(y == x || x < y, x <= y);
+
+    // TVM_TRY_REWRITE_IF(x < y || x + c1 == y, x<y, c1.Eval()->value> 0);
+    // TVM_TRY_REWRITE_IF(x < y || x == y - c1, x<y, c1.Eval()->value> 0);
+    // TVM_TRY_REWRITE_IF(x + c1 == y || x < y, x<y, c1.Eval()->value> 0);
+    // TVM_TRY_REWRITE_IF(x == y - c1 || x < y, x<y, c1.Eval()->value> 0);
+    // TVM_TRY_REWRITE_IF(x <= y || x + c1 == y, x <= y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x <= y || x == y - c1, x <= y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x + c1 == y || x <= y, x <= y, c1.Eval()->value >= 0);
+    // TVM_TRY_REWRITE_IF(x == y - c1 || x <= y, x <= y, c1.Eval()->value >= 0);
+
+    // std::cout << "\t\t"
+    //           << "Trying some more rewrite rules..." << std::endl;
+
+    TVM_TRY_REWRITE(x == y - 1 || x <= y, x <= y);
+    TVM_TRY_REWRITE(x <= y || x == y - 1, x <= y);
+    TVM_TRY_REWRITE(x == y + (-1) || x <= y, x <= y);
+    TVM_TRY_REWRITE(x <= y || x == y + (-1), x <= y);
+    TVM_TRY_REWRITE(x + 1 == y || x <= y, x <= y);
+    TVM_TRY_REWRITE(x <= y || x + 1 == y, x <= y);
+    TVM_TRY_REWRITE(y - 1 == x || x <= y, x <= y);
+    TVM_TRY_REWRITE(x <= y || y - 1 == x, x <= y);
+    TVM_TRY_REWRITE(y + (-1) == x || x <= y, x <= y);
+    TVM_TRY_REWRITE(x <= y || y + (-1) == x, x <= y);
+    TVM_TRY_REWRITE(y == x + 1 || x <= y, x <= y);
+    TVM_TRY_REWRITE(x <= y || y == x + 1, x <= y);
+
+    // std::cout << "\t\t"
+    //           << "Trying even more rewrite rules..." << std::endl;
 
     TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
     TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);
@@ -1975,6 +1943,10 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
 
     TVM_TRY_REWRITE(x != c1 || x == c2, x != c1 || c1 == c2);
     TVM_TRY_REWRITE(x == c2 || x != c1, x != c1 || c1 == c2);
+
+    // std::cout << "\t\t"
+    //           << "Failed to do any rewrites..." << std::endl;
+
     return NullOpt;
   };
 
@@ -1983,19 +1955,43 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
     for (size_t j = i + 1; j < subexprs.size(); j++) {
       PrimExpr& a = subexprs[i];
       PrimExpr& b = subexprs[j];
+      // std::cout << "\t"
+      //           << "Attempting to compare subexprs[" << i << "] = " << a << " and subexprs[" << j
+      //           << "] = " << b << std::endl;
       if (a.defined() && b.defined()) {
+        // line_num = true;
         if (Optional<PrimExpr> pairwise = pairwise_simplify(a, b)) {
+          // std::cout << "\t\t"
+          //           << "Found pairwise simplification of (" << a << " || " << b << ") into "
+          //           << pairwise << std::endl;
           a = PrimExpr();
           b = pairwise.value();
           modified = true;
+
+          // std::cout << "\t"
+          //           << "Updated subexprs to " << subexpr_as_str() << std::endl;
         }
+        // line_num = false;
       }
     }
   }
 
   if (!modified) {
+    // std::cout << "No simplifications possible, returning original " << GetRef<PrimExpr>(op)
+    //           << std::endl;
     return GetRef<PrimExpr>(op);
   }
+
+  // std::cout << "\t"
+  //           << "Simplified = " << subexpr_as_str() << std::endl;
+
+  // Sort the subexpressions to help in equality comparisons.
+  std::sort(subexprs.begin(), subexprs.end(), [](const PrimExpr& a, const PrimExpr& b) {
+    return StructuralHash()(a) < StructuralHash()(b);
+  });
+
+  // std::cout << "\t"
+  //           << "Sorted = " << subexpr_as_str() << std::endl;
 
   // Merge all remaining subexpressions
   PrimExpr ret = Bool(false);
@@ -2004,6 +2000,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
       ret = ret || subexpr;
     }
   }
+
+  // std::cout << "\t"
+  //           << "Returning " << ret << " as simplified form of " << GetRef<PrimExpr>(op)
+  // << std::endl;
+
   return ret;
 }
 

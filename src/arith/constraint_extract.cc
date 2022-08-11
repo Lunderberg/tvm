@@ -69,10 +69,14 @@ void CollectConstraints2(const PrimExpr& expr, std::function<void(const PrimExpr
       CollectConstraints2(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part || y_part); });
       CollectConstraints2(z.Eval(), [&](const PrimExpr& z_part) { callback(x_part || z_part); });
     });
-  } else if ((!(x || y)).Match(expr)) {
-    CollectConstraints2(RewriteBooleanOperators(tir::Not(x.Eval())), callback);
-    CollectConstraints2(RewriteBooleanOperators(tir::Not(y.Eval())), callback);
-  } else if ((y >= x).Match(expr) || (x <= y).Match(expr)) {
+  } else if ((x - 1 == y).Match(expr) || (y == x - 1).Match(expr)) {
+    callback(x.Eval() - 1 == y.Eval());
+    callback(x.Eval() - 1 <= y.Eval());
+    callback(x.Eval() > y.Eval());
+  } else if ((x + 1 == y).Match(expr) || (y == x + 1).Match(expr)) {
+    callback(x.Eval() - 1 >= y.Eval());
+    callback(x.Eval() < y.Eval());
+  } else if ((x <= y).Match(expr)) {
     callback(x.Eval() == y.Eval() || x.Eval() < y.Eval());
   } else if ((y != x).Match(expr)) {
     callback(x.Eval() < y.Eval() || y.Eval() < x.Eval());
@@ -83,7 +87,8 @@ void CollectConstraints2(const PrimExpr& expr, std::function<void(const PrimExpr
 
 std::vector<PrimExpr> ExtractConstraints2(const PrimExpr& expr) {
   std::vector<PrimExpr> out;
-  CollectConstraints2(expr, [&](const PrimExpr& part) { out.push_back(part); });
+  PrimExpr normalized = RewriteBooleanOperators(expr);
+  CollectConstraints2(normalized, [&](const PrimExpr& part) { out.push_back(part); });
   return out;
 }
 
