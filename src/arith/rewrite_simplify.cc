@@ -1623,10 +1623,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LTNode* op) {
     TVM_TRY_REWRITE(c1 < x + c2, c1 - c2 < x);
     TVM_TRY_REWRITE(c1 < c2 - x, x < c2 - c1);
 
-    TVM_TRY_REWRITE(x - 1 < y, x <= y);
+    TVM_TRY_REWRITE(x- 1 < y , x <= y);
     TVM_TRY_REWRITE(x < y + 1, x <= y);
-    TVM_TRY_REWRITE(x + (0 - 1) < y, x <= y);
-    TVM_TRY_REWRITE(x < y + (0 - 1), x <= y);
+    TVM_TRY_REWRITE(x + (-1) < y, x <= y);
+    TVM_TRY_REWRITE(x < y - (-1), x <= y);
+
 
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, x < y, c1.Eval()->value > 0);
     TVM_TRY_REWRITE_IF(x * c1 < y * c1, y < x, c1.Eval()->value < 0);
