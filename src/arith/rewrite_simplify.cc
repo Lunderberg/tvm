@@ -1619,21 +1619,21 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
-  std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
+  // std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
   std::vector<PrimExpr> subexprs = ExtractConstraints(GetRef<PrimExpr>(op), false);
   ICHECK_GE(subexprs.size(), 2);
 
   bool modified = false;
 
-  std::cout << "\t"
-            << "AndNode subexprs = [";
-  for (size_t i = 0; i < subexprs.size(); i++) {
-    if (i) {
-      std::cout << ", ";
-    }
-    std::cout << subexprs[i];
-  }
-  std::cout << "]" << std::endl;
+  // std::cout << "\t"
+  //           << "AndNode subexprs = [";
+  // for (size_t i = 0; i < subexprs.size(); i++) {
+  //   if (i) {
+  //     std::cout << ", ";
+  //   }
+  //   std::cout << subexprs[i];
+  // }
+  // std::cout << "]" << std::endl;
 
   // Simplify each of the subexpressions under the assumption that all
   // other subexpressions are true.
@@ -1656,9 +1656,9 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
     if (!simplified.same_as(subexprs[i])) {
       modified = true;
     }
-    std::cout << "\t"
-              << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
-              << " under constraint that " << full_constraint << std::endl;
+    // std::cout << "\t"
+    //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
+    //           << " under constraint that " << full_constraint << std::endl;
     subexprs[i] = simplified;
 
     // while (context.size()) {
