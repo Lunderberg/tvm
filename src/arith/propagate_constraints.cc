@@ -121,7 +121,7 @@ Comparison::CompareResult Transitive(Comparison::CompareResult a, Comparison::Co
 }  // namespace
 
 Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
-  std::cout << "Parsing expression " << expr << std::endl;
+  // std::cout << "Parsing expression " << expr << std::endl;
   PVar<PrimExpr> x, y;
   if ((x <= y).Match(expr) || (y >= x).Match(expr)) {
     lhs_ = x.Eval();
@@ -141,9 +141,9 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
     result_ = kNE;
   }
 
-  std::cout << "\t"
-            << "Parsed as lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", comparison = " << result_
-            << std::endl;
+  // std::cout << "\t"
+  //           << "Parsed as lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", comparison = " << result_
+  //           << std::endl;
 
   if (lhs_.as<IntImmNode>() && rhs_.as<IntImmNode>()) {
     lhs_ = PrimExpr();
@@ -153,9 +153,9 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
 
   Normalize();
 
-  std::cout << "\t"
-            << "Normalized to lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", offset = " << offset_
-            << ", comparison = " << result_ << std::endl;
+  // std::cout << "\t"
+  //           << "Normalized to lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", offset = " << offset_
+  //           << ", comparison = " << result_ << std::endl;
 }
 
 Comparison::Comparison(const PrimExpr& lhs, const PrimExpr& rhs, CompareResult result)
@@ -285,7 +285,7 @@ Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other
 
 Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns,
                                                  const PrimExpr& lhs, const PrimExpr& rhs) {
-  std::cout << "Comparing between lhs = " << lhs << " and rhs = " << rhs << std::endl;
+  // std::cout << "Comparing between lhs = " << lhs << " and rhs = " << rhs << std::endl;
   // Currently only supports integer checks
   if (!lhs.dtype().is_int() || !rhs.dtype().is_int()) {
     return Comparison::kUnknown;
@@ -307,7 +307,7 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
 
   // Have the integer value on the right, if present.
   if (x_int) {
-    std::cout << "Reversing inequality and running again" << std::endl;
+    // std::cout << "Reversing inequality and running again" << std::endl;
     return Reverse(TryCompare(knowns, rhs, lhs));
   }
 
@@ -324,10 +324,10 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
     return ss.str();
   };
 
-  std::cout << "Attempting to compare between " << lhs << " and " << rhs
-            << " using transitive knowns" << std::endl;
-  std::cout << "\t"
-            << "Knowns = " << print_vec_compare(knowns) << std::endl;
+  // std::cout << "Attempting to compare between " << lhs << " and " << rhs
+  //           << " using transitive knowns" << std::endl;
+  // std::cout << "\t"
+  //           << "Knowns = " << print_vec_compare(knowns) << std::endl;
 
   Comparison output(lhs, rhs, kUnknown);
 
@@ -375,8 +375,8 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
     }
   }
 
-  std::cout << "\t"
-            << "After first pass, knowns = " << x_known_str() << std::endl;
+  // std::cout << "\t"
+  //           << "After first pass, knowns = " << x_known_str() << std::endl;
 
   while (to_visit.size()) {
     PrimExpr middle_expr = *to_visit.begin();
@@ -387,8 +387,8 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
 
     std::vector<Comparison> new_knowns_using_lhs;
 
-    std::cout << "\t"
-              << "Checking for transitive comparisons involving " << middle_expr << std::endl;
+    // std::cout << "\t"
+    //           << "Checking for transitive comparisons involving " << middle_expr << std::endl;
 
     for (const auto& known : knowns) {
       Comparison cmp = known.NormalizedTo(middle_expr);
@@ -401,8 +401,8 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
         continue;
       }
 
-      std::cout << "\t\t"
-                << "Found comparison " << cmp.debug_as_primexpr() << std::endl;
+      // std::cout << "\t\t"
+      //           << "Found comparison " << cmp.debug_as_primexpr() << std::endl;
 
       for (const auto& prev : prev_knowns_using_middle) {
         CompareResult new_result = kUnknown;
@@ -420,19 +420,19 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
 
         if (new_result != kUnknown) {
           Comparison new_known(output.lhs_, right_expr, new_offset, new_result);
-          std::cout << "\t\t\t"
-                    << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
-                    << ", found " << new_known.debug_as_primexpr() << std::endl;
+          // std::cout << "\t\t\t"
+          //           << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
+          //           << ", found " << new_known.debug_as_primexpr() << std::endl;
           new_knowns_using_lhs.push_back(new_known);
-        } else {
-          std::cout << "\t\t\t"
-                    << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
-                    << ", couldn't find any additional comparisons" << std::endl;
-        }
+        }  // else {
+        //   std::cout << "\t\t\t"
+        //             << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
+        //             << ", couldn't find any additional comparisons" << std::endl;
+        // }
       }
     }
-    std::cout << "\t"
-              << "Found new knowns " << print_vec_compare(new_knowns_using_lhs) << std::endl;
+    // std::cout << "\t"
+    //           << "Found new knowns " << print_vec_compare(new_knowns_using_lhs) << std::endl;
 
     for (const auto& new_known : new_knowns_using_lhs) {
       auto& prev_knowns = compared_to_x[new_known.rhs_];
@@ -451,33 +451,29 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
       }
     }
 
-    std::cout << "\t\t"
-              << "After applying new knowns, all known comparisons are " << x_known_str()
-              << std::endl;
+    // std::cout << "\t\t"
+    //           << "After applying new knowns, all known comparisons are " << x_known_str()
+    //           << std::endl;
   }
 
-  std::cout << "\t"
-            << "After propagation, all known comparisons are " << x_known_str() << std::endl;
-
-  // auto it = compared_to_x.find(rhs);
-  // if (it != compared_to_x.end()) {
-  //   output = it->second;
-  // }
+  // std::cout << "\t"
+  //           << "After propagation, all known comparisons are " << x_known_str() << std::endl;
 
   auto it = compared_to_x.find(output.rhs_);
   if (it == compared_to_x.end()) {
-    std::cout << "\t"
-              << "No paths from " << output.lhs_ << " to " << output.rhs_ << " using known values"
-              << std::endl;
+    // std::cout << "\t"
+    //           << "No paths from " << output.lhs_ << " to " << output.rhs_ << " using known
+    //           values"
+    //           << std::endl;
     return kUnknown;
   }
 
   const std::vector<Comparison>& known_between_lhs_and_rhs = it->second;
 
-  std::cout << "\t"
-            << "After propagation, found " << known_between_lhs_and_rhs.size()
-            << " comparisons between desired expressions, "
-            << print_vec_compare(known_between_lhs_and_rhs) << std::endl;
+  // std::cout << "\t"
+  //           << "After propagation, found " << known_between_lhs_and_rhs.size()
+  //           << " comparisons between desired expressions, "
+  //           << print_vec_compare(known_between_lhs_and_rhs) << std::endl;
 
   CompareResult result = kUnknown;
   for (const auto& known : known_between_lhs_and_rhs) {
@@ -496,39 +492,39 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
 
       case Comparison::kLE:
         if (known.offset_ < output.offset_) {
-          std::cout << "Known value of " << known.debug_as_primexpr()
-                    << " reduced possibilities from " << result;
+          // std::cout << "Known value of " << known.debug_as_primexpr()
+          //           << " reduced possibilities from " << result;
           result = CompareResult(result & kLT);
-          std::cout << " to " << result << std::endl;
+          // std::cout << " to " << result << std::endl;
         } else if (known.offset_ <= output.offset_) {
-          std::cout << "Known value of " << known.debug_as_primexpr()
-                    << " reduced possibilities from " << result;
+          // std::cout << "Known value of " << known.debug_as_primexpr()
+          //           << " reduced possibilities from " << result;
           result = CompareResult(result & kLE);
-          std::cout << " to " << result << std::endl;
+          // std::cout << " to " << result << std::endl;
           ;
-        } else {
-          std::cout << "Known value of " << known.debug_as_primexpr()
-                    << " couldn't be applied to comparison of " << output.lhs_ << " and "
-                    << output.rhs_ + IntImm(output.rhs_.dtype(), output.offset_) << std::endl;
-        }
+        }  // else {
+        //   std::cout << "Known value of " << known.debug_as_primexpr()
+        //             << " couldn't be applied to comparison of " << output.lhs_ << " and "
+        //             << output.rhs_ + IntImm(output.rhs_.dtype(), output.offset_) << std::endl;
+        // }
         break;
 
       case Comparison::kGE:
         if (known.offset_ > output.offset_) {
-          std::cout << "Known value of " << known.debug_as_primexpr()
-                    << " reduced possibilities from " << result;
+          // std::cout << "Known value of " << known.debug_as_primexpr()
+          //           << " reduced possibilities from " << result;
           result = CompareResult(result & kGT);
-          std::cout << " to " << result << std::endl;
+          // std::cout << " to " << result << std::endl;
         } else if (known.offset_ >= output.offset_) {
-          std::cout << "Known value of " << known.debug_as_primexpr()
-                    << " reduced possibilities from " << result;
+          // std::cout << "Known value of " << known.debug_as_primexpr()
+          //           << " reduced possibilities from " << result;
           result = CompareResult(result & kGE);
-          std::cout << " to " << result << std::endl;
-        } else {
-          std::cout << "Known value of " << known.debug_as_primexpr()
-                    << " couldn't be applied to comparison of " << output.lhs_ << " and "
-                    << output.rhs_ + IntImm(output.rhs_.dtype(), output.offset_) << std::endl;
-        }
+          // std::cout << " to " << result << std::endl;
+        }  //  else {
+        //   std::cout << "Known value of " << known.debug_as_primexpr()
+        //             << " couldn't be applied to comparison of " << output.lhs_ << " and "
+        //             << output.rhs_ + IntImm(output.rhs_.dtype(), output.offset_) << std::endl;
+        // }
         break;
 
       case Comparison::kNE:
@@ -551,8 +547,8 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
     }
   }
 
-  std::cout << "\t"
-            << "Final result: " << result << std::endl;
+  // std::cout << "\t"
+  //           << "Final result: " << result << std::endl;
 
   return result;
 }
