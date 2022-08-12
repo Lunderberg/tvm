@@ -1312,7 +1312,7 @@ class TestSimplifyRampIndexRampValue(BaseBeforeAfter):
         A[1] = 60
 
 
-class TestSimplifyUsingPartiallyProvenBufferValue(BaseBeforeAfter):
+class TestSimplifyUsingPartiallyProvenBufferValueGather(BaseBeforeAfter):
     """Propagate known buffer values in part
 
     Even if a constraint can't be solved for all values in an
@@ -1355,50 +1355,50 @@ class TestSimplifyUsingPartiallyProvenBufferValue(BaseBeforeAfter):
                 B[i] = 0
 
 
-# class TestSimplifyUsingPartiallyProvenBufferValue(BaseBeforeAfter):
-#     """Propagate known buffer values in part
+class TestSimplifyUsingPartiallyProvenBufferValueScatter(BaseBeforeAfter):
+    """Propagate known buffer values in part
 
-#     Even if a constraint can't be solved for all values in an
-#     assignment, it may be provable in part of a buffer.  Here,
+    Even if a constraint can't be solved for all values in an
+    assignment, it may be provable in part of a buffer.  Here,
 
-#     """
+    """
 
-#     def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
-#         # A has non-zero values only in the range 3 <= i < 17
-#         for i in T.serial(24):
-#             T.assume(((3 <= i) and (i < 17)) or A[i] == 0)
+    def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
+        # A has non-zero values only in the range 3 <= i < 17
+        for i in T.serial(24):
+            T.assume(((3 <= i) and (i < 17)) or A[i] == 0)
 
-#         for i in T.serial(24):
-#             B[i] = 0
+        for i in T.serial(24):
+            B[i] = 0
 
-#         # After convoluting with F, B has non-zero values only in the
-#         # range 3 <= i < 19.
-#         for i in T.serial(24):
-#             for f in T.serial(3):
-#                 if i + f < 24:
-#                     B[i + f] = B[i + f] + A[i] * F[f]
+        # After convoluting with F, B has non-zero values only in the
+        # range 3 <= i < 19.
+        for i in T.serial(24):
+            for f in T.serial(3):
+                if i + f >= 0 and i + f < 24:
+                    B[i + f] = B[i + f] + A[i] * F[f]
 
-#         # Which means that this loop is unnecessary.  It actually gets
-#         # removed in tir.transform.RemoveNoOp, but here we want to
-#         # test that the simplification works as intended.
-#         for i in T.serial(24):
-#             if i < 3 or 19 <= i:
-#                 if B[i] != 0:
-#                     B[i] = 0
+        # Which means that this loop is unnecessary.  It actually gets
+        # removed in tir.transform.RemoveNoOp, but here we want to
+        # test that the simplification works as intended.
+        for i in T.serial(24):
+            if i < 3 or 19 <= i:
+                if B[i] != 0:
+                    B[i] = 0
 
-#     def expected(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
-#         for i in T.serial(24):
-#             T.assume(((3 <= i) and (i < 17)) or A[i] == 0)
+    def expected(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
+        for i in T.serial(24):
+            T.assume(((3 <= i) and (i < 17)) or A[i] == 0)
 
-#         for i in T.serial(24):
-#             B[0] = 0
-#             for f in T.serial(3):
-#                 if i + f < 24:
-#                     B[i + f] = B[i + f] + A[i] * F[f]
+        for i in T.serial(24):
+            B[0] = 0
+            for f in T.serial(3):
+                if i + f < 24:
+                    B[i + f] = B[i + f] + A[i] * F[f]
 
-#         for i in T.serial(24):
-#             if i < 3 or 19 <= i:
-#                 T.evaluate(0)
+        for i in T.serial(24):
+            if i < 3 or 19 <= i:
+                T.evaluate(0)
 
 
 if __name__ == "__main__":
