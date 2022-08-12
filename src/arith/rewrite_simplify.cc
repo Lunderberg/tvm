@@ -1769,6 +1769,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   }
 
   // Sort the subexpressions to help in equality comparisons.
+  //
+  // TODO: Deterministic hash with
   std::sort(subexprs.begin(), subexprs.end(), [](const PrimExpr& a, const PrimExpr& b) {
     return StructuralHash()(a) < StructuralHash()(b);
   });
