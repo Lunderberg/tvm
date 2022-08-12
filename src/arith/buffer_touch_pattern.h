@@ -134,6 +134,12 @@ class Predicate : public ParametrizedExpression {
   /* \brief Checks if this Predicate is always false */
   bool IsAlwaysFalse() const;
 
+  /* \brief Generate a predicate without free parameters
+   *
+   * The returned predicate will be true for a subset of this predicate.
+   */
+  Predicate WithoutFreeParameters() const;
+
   /* \brief Boolean expression defining ranges of free parameters */
   PrimExpr FreeParameterConstraints() const;
 

@@ -275,6 +275,15 @@ bool Predicate::IsAlwaysFalse() const {
   return expression_ && analyzer.CanProve(!expression_.value());
 }
 
+Predicate Predicate::WithoutFreeParameters() const {
+  if (!expression_) {
+    return *this;
+  }
+
+  PrimExpr expr = NarrowExpressionToTrue(expression_.value(), free_parameters_);
+  return Predicate(parameter_vars_, expr, {});
+}
+
 PrimExpr Predicate::FreeParameterConstraints() const {
   PrimExpr constraint = Bool(true);
   for (const auto& pair : free_parameters_) {
@@ -782,7 +791,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto loop_start = AppendControlBlock("start of loop over " + op->loop_var->name_hint);
     MarkControlFlow(before_loop, loop_start, {}, {}, op->loop_var == op->min);
 
-    BindActiveLoopVar binding(this, op->loop_var, op->min);
+    BindActiveLoopVar binding(this, op->loop_var, op->min, op->min + op->extent);
     Parent::VisitStmt_(op);
 
     auto loop_end = CurrentControlBlock();
@@ -916,6 +925,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto index_variables = MakeIndexVariables(node->indices);
 
     Optional<Var> lane_var = NullOpt;
+    IntImm num_lanes;
 
     Array<PrimExpr> index_expressions = node->indices;
     index_expressions.MutateByApply([&](const auto& index) {
@@ -924,6 +934,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       } else {
         ICHECK(!lane_var) << "Multiple indices found with non-scalar values";
         lane_var = Var("lane", index.dtype().element_of());
+        num_lanes = IntImm(index.dtype().element_of(), index.dtype().lanes());
         return UnwrapVectorExpr(index, lane_var.value());
       }
     });
@@ -933,7 +944,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // out.
     IntConstraintsTransform transform;
     if (lane_var) {
-      BindActiveLoopVar binding(this, lane_var.value(), 0);
+      BindActiveLoopVar binding(this, lane_var.value(), 0, num_lanes);
       transform = SolveForBufferIndices(index_variables, index_expressions);
     } else {
       transform = SolveForBufferIndices(index_variables, index_expressions);
@@ -1016,7 +1027,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     predicate_expr = normalize_expr(predicate_expr);
     known_value_expr = normalize_expr(known_value_expr);
 
-    // std::cout << "Initial predicate is " << predicate_expr << std::endl;
+    std::cout << "Initial predicate is " << predicate_expr << std::endl;
 
     PrimExpr loop_predicate = Bool(true);
     for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
@@ -1027,8 +1038,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       loop_predicate = (it->loop_var >= it->loop_min && it->loop_var >= loop_expr) ||
                        ((it->loop_var == loop_expr) && loop_predicate);
     }
-    // std::cout << "\t"
-    //           << "Loop-based predicate is " << loop_predicate << std::endl;
+    std::cout << "\t"
+              << "Loop-based predicate is " << loop_predicate << std::endl;
 
     {
       Analyzer local_analyzer;
@@ -1036,8 +1047,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
     // predicate_expr = predicate_expr.value() && loop_predicate;
     // predicate_expr = analyzer_.Simplify(predicate_expr.value() && loop_predicate);
-    // std::cout << "\t"
-    //           << "Updated predicate with loops is " << predicate_expr << std::endl;
+    std::cout << "\t"
+              << "Updated predicate with loops is " << predicate_expr << std::endl;
 
     // Optional<PrimExpr> has_known_value_expr = Bool(false);
     // Optional<PrimExpr> known_untouched_expr = Bool(false);
@@ -1192,9 +1203,9 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   struct BindActiveLoopVar {
     BindActiveLoopVar() : self{nullptr} {}
-    BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min)
+    BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min, PrimExpr loop_max)
         : self(self), var(var) {
-      self->active_loop_iterators_.push_back({var, loop_min});
+      self->active_loop_iterators_.push_back({var, loop_min, loop_max});
       self->loop_dependent_vars_.insert(var.get());
     }
 
@@ -1247,6 +1258,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   struct LoopEntry {
     Var loop_var;
     PrimExpr loop_min;
+    PrimExpr loop_max;
   };
 
   // Track in order to know which Vars to write in terms of the buffer
@@ -2077,28 +2089,34 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     //   }
     // }
 
+    auto normalize_simplify = [&](std::vector<BufferTouchPattern::BufferConstraint> priors) {
+      for (auto& prior : priors) {
+        prior.predicate.Simplify(&analyzer);
+        // std::cout << "\t\t\t\t"
+        //           << "After first simplify " << prior.predicate.expression_ << std::endl;
+        prior.predicate.expression_ = ConvertToAndOfOrs(prior.predicate.expression_.value());
+        // std::cout << "\t\t\t\t"
+        //           << "After conversion " << prior.predicate.expression_ << std::endl;
+        prior.predicate.Simplify(&analyzer);
+        // std::cout << "\t\t\t\t"
+        //           << "After second simplify " << prior.predicate.expression_ << std::endl;
+      }
+      return priors;
+    };
+
     auto prior_knowns = [&]() -> std::vector<BufferTouchPattern::BufferConstraint> {
       ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
 
       auto adjust_priors = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
                                Map<Var, PrimExpr> var_remap) {
         for (auto& prior : priors) {
-          std::cout << "\t\t\t"
-                    << "Remapping predicate " << prior.predicate.expression_ << std::endl;
+          // std::cout << "\t\t\t"
+          //           << "Remapping predicate " << prior.predicate.expression_ << std::endl;
           prior.predicate.Remap(var_remap);
-          std::cout << "\t\t\t\t"
-                    << "After remap " << prior.predicate.expression_ << std::endl;
-          prior.predicate.Simplify(&analyzer);
-          std::cout << "\t\t\t\t"
-                    << "After first simplify " << prior.predicate.expression_ << std::endl;
-          prior.predicate.expression_ = ConvertToAndOfOrs(prior.predicate.expression_.value());
-          std::cout << "\t\t\t\t"
-                    << "After conversion " << prior.predicate.expression_ << std::endl;
-          prior.predicate.Simplify(&analyzer);
-          std::cout << "\t\t\t\t"
-                    << "After second simplify " << prior.predicate.expression_ << std::endl;
+          // std::cout << "\t\t\t\t"
+          //           << "After remap " << prior.predicate.expression_ << std::endl;
         }
-        return priors;
+        return normalize_simplify(priors);
       };
 
       auto add_condition = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
@@ -2436,7 +2454,20 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
     std::cout << "\t"
               << "Visiting control block " << visiting << " resulted in " << new_knowns.size()
-              << " new post-block statements at the end" << std::endl;
+              << " new post-block statements" << std::endl;
+    for (const auto& known : new_knowns) {
+      std::cout << "\t\t"
+                << "Buffer " << known.buffer->name << " where " << known.predicate
+                << " is equal to " << known.known_value << std::endl;
+    }
+
+    for (auto& known : new_knowns) {
+      known.predicate = known.predicate.WithoutFreeParameters();
+    }
+
+    std::cout << "\t"
+              << "Visiting control block " << visiting << " resulted in " << new_knowns.size()
+              << " new parameter-free post-block statements" << std::endl;
     for (const auto& known : new_knowns) {
       std::cout << "\t\t"
                 << "Buffer " << known.buffer->name << " where " << known.predicate
@@ -2464,6 +2495,17 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     std::cout << "\t"
               << "Visiting control block " << visiting << " resulted in " << post_knowns.size()
               << " total post-block statements at the end" << std::endl;
+    for (const auto& known : post_knowns) {
+      std::cout << "\t\t"
+                << "Buffer " << known.buffer->name << " where " << known.predicate
+                << " is equal to " << known.known_value << std::endl;
+    }
+
+    post_knowns = normalize_simplify(post_knowns);
+
+    std::cout << "\t"
+              << "Visiting control block " << visiting << " resulted in " << post_knowns.size()
+              << " total simplified post-block statements at the end" << std::endl;
     for (const auto& known : post_knowns) {
       std::cout << "\t\t"
                 << "Buffer " << known.buffer->name << " where " << known.predicate

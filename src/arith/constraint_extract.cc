@@ -80,6 +80,8 @@ void CollectConstraints2(const PrimExpr& expr, std::function<void(const PrimExpr
     callback(x.Eval() == y.Eval() || x.Eval() < y.Eval());
   } else if ((y != x).Match(expr)) {
     callback(x.Eval() < y.Eval() || y.Eval() < x.Eval());
+    callback(x.Eval() <= y.Eval());
+    callback(y.Eval() <= x.Eval());
   } else {
     callback(expr);
   }
