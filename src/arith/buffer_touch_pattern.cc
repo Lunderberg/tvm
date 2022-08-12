@@ -782,7 +782,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto loop_start = AppendControlBlock("start of loop over " + op->loop_var->name_hint);
     MarkControlFlow(before_loop, loop_start, {}, {}, op->loop_var == op->min);
 
-    BindActiveLoopVar binding(this, op->loop_var);
+    BindActiveLoopVar binding(this, op->loop_var, op->min);
     Parent::VisitStmt_(op);
 
     auto loop_end = CurrentControlBlock();
@@ -933,7 +933,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // out.
     IntConstraintsTransform transform;
     if (lane_var) {
-      BindActiveLoopVar binding(this, lane_var.value());
+      BindActiveLoopVar binding(this, lane_var.value(), 0);
       transform = SolveForBufferIndices(index_variables, index_expressions);
     } else {
       transform = SolveForBufferIndices(index_variables, index_expressions);
@@ -1020,14 +1020,12 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     PrimExpr loop_predicate = Bool(true);
     for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
-      Var loop_var = *it;
-
-      auto expr_it = loop_var_to_axis_var.find(loop_var);
+      auto expr_it = loop_var_to_axis_var.find(it->loop_var);
       ICHECK(expr_it != loop_var_to_axis_var.end());
       PrimExpr loop_expr = (*expr_it).second;
 
-      loop_predicate =
-          (loop_var >= 0 && loop_var >= loop_expr) || ((loop_var == loop_expr) && loop_predicate);
+      loop_predicate = (it->loop_var >= it->loop_min && it->loop_var >= loop_expr) ||
+                       ((it->loop_var == loop_expr) && loop_predicate);
     }
     // std::cout << "\t"
     //           << "Loop-based predicate is " << loop_predicate << std::endl;
@@ -1119,12 +1117,12 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Array<Var> loop_vars;
 
     Map<Var, Range> ranges;
-    for (const auto& loop_var : active_loop_iterators_) {
-      loop_vars.push_back(loop_var);
-      IntSet loop_set = analyzer_.int_set(loop_var);
+    for (const auto& loop_entry : active_loop_iterators_) {
+      loop_vars.push_back(loop_entry.loop_var);
+      IntSet loop_set = analyzer_.int_set(loop_entry.loop_var);
       auto max = loop_set.HasUpperBound() ? loop_set.max() + 1 : loop_set.max();
       Range loop_range = Range(loop_set.min(), max);
-      ranges.Set(loop_var, loop_range);
+      ranges.Set(loop_entry.loop_var, loop_range);
     }
 
     IntConstraints system(loop_vars, ranges, relations);
@@ -1194,8 +1192,9 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   struct BindActiveLoopVar {
     BindActiveLoopVar() : self{nullptr} {}
-    BindActiveLoopVar(BufferTouchExtractor* self, Var var) : self(self), var(var) {
-      self->active_loop_iterators_.push_back(var);
+    BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min)
+        : self(self), var(var) {
+      self->active_loop_iterators_.push_back({var, loop_min});
       self->loop_dependent_vars_.insert(var.get());
     }
 
@@ -1245,9 +1244,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Var var;
   };
 
+  struct LoopEntry {
+    Var loop_var;
+    PrimExpr loop_min;
+  };
+
   // Track in order to know which Vars to write in terms of the buffer
   // indices and substitute out of the predicate.
-  std::vector<Var> active_loop_iterators_;
+  std::vector<LoopEntry> active_loop_iterators_;
 
   // Track all loop iterators, along with values derived from loop iterators.
   std::unordered_set<const VarNode*> loop_dependent_vars_;
