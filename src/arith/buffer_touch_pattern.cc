@@ -1026,7 +1026,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       ICHECK(expr_it != loop_var_to_axis_var.end());
       PrimExpr loop_expr = (*expr_it).second;
 
-      loop_predicate = (loop_var >= loop_expr) || ((loop_var == loop_expr) && loop_predicate);
+      loop_predicate =
+          (loop_var >= 0 && loop_var >= loop_expr) || ((loop_var == loop_expr) && loop_predicate);
     }
     // std::cout << "\t"
     //           << "Loop-based predicate is " << loop_predicate << std::endl;
@@ -2036,7 +2037,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   Analyzer analyzer;
 
   Map<Var, Range> all_free_parameters = GetAllFreeParameters();
-  analyzer.Bind(iterator_ranges_);
+  // analyzer.Bind(iterator_ranges_);
   analyzer.Bind(all_free_parameters);
 
   while (to_visit.size()) {
@@ -2096,6 +2097,15 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         return priors;
       };
 
+      auto add_condition = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
+                               PrimExpr condition) {
+        for (auto& prior : priors) {
+          prior.predicate.expression_ = prior.predicate.expression_.value() && condition;
+          prior.predicate.Simplify(&analyzer);
+        }
+        return priors;
+      };
+
       if (block.predecessors.size() == 0) {
         // Block has no predecessors, nothing is known initially
         std::cout << "\t\t"
@@ -2128,12 +2138,42 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         std::cout << "\t\t"
                   << "Pred " << pred_b.from_index << " has been visited, but not "
                   << pred_a.from_index << ".  Using knowns from " << pred_b.from_index << std::endl;
-        return adjust_priors(it_b->second, pred_b.var_remap);
+        auto out = it_b->second;
+        out = adjust_priors(out, pred_b.var_remap);
+        if (pred_a.predicate && pred_b.predicate) {
+          out = add_condition(out, pred_a.predicate.value() || pred_b.predicate.value());
+        }
+
+        std::cout << "\t\t"
+                  << "After adjusting, predecessor #" << pred_a.from_index << " provides "
+                  << out.size() << " knowns" << std::endl;
+        for (const auto& prior : out) {
+          std::cout << "\t\t\t"
+                    << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                    << prior.predicate << std::endl;
+        }
+
+        return out;
       } else if (it_b == known_after_block.end()) {
         std::cout << "\t\t"
                   << "Pred " << pred_a.from_index << " has been visited, but not "
                   << pred_b.from_index << ".  Using knowns from " << pred_a.from_index << std::endl;
-        return adjust_priors(it_a->second, pred_a.var_remap);
+        auto out = it_a->second;
+        out = adjust_priors(out, pred_a.var_remap);
+        if (pred_a.predicate && pred_b.predicate) {
+          out = add_condition(out, pred_a.predicate.value() || pred_b.predicate.value());
+        }
+
+        std::cout << "\t\t"
+                  << "After adjusting, predecessor #" << pred_b.from_index << " provides "
+                  << out.size() << " knowns" << std::endl;
+        for (const auto& prior : out) {
+          std::cout << "\t\t\t"
+                    << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                    << prior.predicate << std::endl;
+        }
+
+        return out;
       }
 
       // ICHECK(!(pred_a.predicate && pred_b.predicate))
