@@ -1079,12 +1079,36 @@ class TestRemoveTransitivelyProvableCondition(BaseBeforeAfter):
         A[0] = i <= j and j <= 15 and 0 < i
 
 
-class TestTemp(BaseBeforeAfter):
+class TestInequalities1(BaseBeforeAfter):
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = j <= 15 and i <= j and 0 <= i and (j <= 0 or i == 0 or i - 1 <= j)
+        A[0] = i <= j and i - 1 <= j
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = j <= 15 and i <= j and 0 <= i
+        A[0] = i <= j
+
+
+class TestInequalities2(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i <= j and i <= j + 1
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i <= j
+
+
+class TestInequalities3(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i <= j and i + 1 <= j
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i < j
+
+
+class TestInequalities4(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i <= j and i <= j - 1
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i < j
 
 
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):

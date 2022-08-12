@@ -73,6 +73,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
 
     // std::cout << "Starting collection of touch pattern" << std::endl;
     BufferTouchPattern touch_pattern(stmt);
+    // BufferTouchPattern touch_pattern(Evaluate(0));
     // std::cout << "Finished collecting touch pattern" << std::endl;
     // std::cout << "========================================================== " << std::endl;
     // std::cout << "Touch pattern: \n" << touch_pattern << std::endl;
