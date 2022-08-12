@@ -2357,8 +2357,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << "Buffer predicate && region predicate simplifies from "
                   << (region.region_predicate && predicate) << " to " << updated_predicate
                   << std::endl;
-        PrimExpr overwritten_region =
-            analyzer.Simplify(!NarrowExpressionToTrue(!updated_predicate, {}));
+        PrimExpr overwritten_region = analyzer.Simplify(
+            !NarrowExpressionToTrue(!updated_predicate, touch.predicate.free_parameters_));
         std::cout << "\t\t\t"
                   << "This region may overwrite values in " << overwritten_region << std::endl;
         PrimExpr updated_value =
@@ -2370,8 +2370,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
         if (!is_const_false(updated_predicate)) {
           BufferTouchPattern::BufferConstraint overwrite{
-              touch.buffer,
-              Predicate(axis_vars, overwritten_region, touch.predicate.free_parameters_),
+              touch.buffer, Predicate(axis_vars, overwritten_region, {}),
               ParametrizedExpression(axis_vars, NullOpt)};
           new_knowns.push_back(overwrite);
           if (!HasBufferLoad(updated_value)) {
