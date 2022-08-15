@@ -1620,7 +1620,10 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   // std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
-  std::vector<PrimExpr> subexprs = ExtractConstraints(GetRef<PrimExpr>(op), false);
+  std::vector<Optional<PrimExpr>> subexprs;
+  for (const auto& subexpr : ExtractConstraints(GetRef<PrimExpr>(op), false)) {
+    subexprs.push_back(subexpr);
+  }
   ICHECK_GE(subexprs.size(), 2);
 
   bool modified = false;
@@ -1645,21 +1648,30 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
 
     PrimExpr remainder = Bool(true);
     for (size_t j = 0; j < subexprs.size(); j++) {
-      if (i != j) {
-        full_constraint = full_constraint && subexprs[j];
+      if (i != j && subexprs[j]) {
+        full_constraint = full_constraint && subexprs[j].value();
         // context.emplace_back(analyzer_, subexprs[j]);
       }
     }
 
     With<ConstraintContext> context(analyzer_, full_constraint);
-    PrimExpr simplified = VisitExpr(subexprs[i]);
+    PrimExpr simplified = VisitExpr(subexprs[i].value());
     if (!simplified.same_as(subexprs[i])) {
       modified = true;
     }
     // std::cout << "\t"
     //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
     //           << " under constraint that " << full_constraint << std::endl;
-    subexprs[i] = simplified;
+
+    if (auto* as_int = simplified.as<IntImmNode>()) {
+      if (as_int->value) {
+        subexprs[i] = NullOpt;
+      } else {
+        return Bool(false);
+      }
+    } else {
+      subexprs[i] = simplified;
+    }
 
     // while (context.size()) {
     //   context.pop_back();
@@ -1748,14 +1760,14 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   // Check each pairwise set of subexpressions for simplifications
   for (size_t i = 0; i < subexprs.size(); i++) {
     for (size_t j = i + 1; j < subexprs.size(); j++) {
-      PrimExpr& a = subexprs[i];
-      PrimExpr& b = subexprs[j];
-      if (a.defined() && b.defined()) {
+      Optional<PrimExpr>& a = subexprs[i];
+      Optional<PrimExpr>& b = subexprs[j];
+      if (a && b) {
         // line_num = true;
-        if (Optional<PrimExpr> pairwise = pairwise_simplify(a, b)) {
+        if (Optional<PrimExpr> pairwise = pairwise_simplify(a.value(), b.value())) {
           // std::cout << "Found pairwise simplification of (" << a << " && " << b << ") into "
           //           << pairwise << std::endl;
-          a = PrimExpr();
+          a = NullOpt;
           b = pairwise.value();
           modified = true;
         }
@@ -1778,8 +1790,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
   // Merge all remaining subexpressions
   PrimExpr ret = Bool(true);
   for (const auto& subexpr : subexprs) {
-    if (subexpr.defined()) {
-      ret = ret && subexpr;
+    if (subexpr) {
+      ret = ret && subexpr.value();
     }
   }
   return ret;
@@ -1787,25 +1799,29 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   // std::cout << "Simplifying OrNode " << GetRef<PrimExpr>(op) << std::endl;
-  std::vector<PrimExpr> subexprs = ExtractComponents(GetRef<PrimExpr>(op));
+  std::vector<Optional<PrimExpr>> subexprs;
+  for (const auto& subexpr : ExtractComponents(GetRef<PrimExpr>(op))) {
+    subexprs.push_back(subexpr);
+  }
+
   ICHECK_GE(subexprs.size(), 2);
 
-  auto subexpr_as_str = [&]() {
-    std::stringstream ss;
-    ss << "[";
-    for (size_t i = 0; i < subexprs.size(); i++) {
-      if (i) {
-        ss << ", ";
-      }
-      if (subexprs[i].defined()) {
-        ss << subexprs[i];
-      } else {
-        ss << "(null)";
-      }
-    }
-    ss << "]";
-    return ss.str();
-  };
+  // auto subexpr_as_str = [&]() {
+  //   std::stringstream ss;
+  //   ss << "[";
+  //   for (size_t i = 0; i < subexprs.size(); i++) {
+  //     if (i) {
+  //       ss << ", ";
+  //     }
+  //     if (subexprs[i].defined()) {
+  //       ss << subexprs[i];
+  //     } else {
+  //       ss << "(null)";
+  //     }
+  //   }
+  //   ss << "]";
+  //   return ss.str();
+  // };
 
   // std::cout << "\t"
   //           << "Subexprs = " << subexpr_as_str() << std::endl;
@@ -1822,15 +1838,15 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
 
     PrimExpr remainder = Bool(true);
     for (size_t j = 0; j < subexprs.size(); j++) {
-      if (i != j) {
-        PrimExpr sub = RewriteBooleanOperators(Not(subexprs[j]));
+      if (i != j && subexprs[j]) {
+        PrimExpr sub = RewriteBooleanOperators(Not(subexprs[j].value()));
         full_constraint = full_constraint && sub;
         // context.emplace_back(analyzer_, sub);
       }
     }
 
     With<ConstraintContext> context(analyzer_, full_constraint);
-    PrimExpr simplified = VisitExpr(subexprs[i]);
+    PrimExpr simplified = VisitExpr(subexprs[i].value());
     if (!simplified.same_as(subexprs[i])) {
       modified = true;
     }
@@ -1839,14 +1855,23 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
     //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
     //           << " under constraint that " << full_constraint << std::endl;
 
-    subexprs[i] = simplified;
+    if (auto* as_int = simplified.as<IntImmNode>()) {
+      if (as_int->value) {
+        return Bool(true);
+      } else {
+        subexprs[i] = NullOpt;
+      }
+    } else {
+      subexprs[i] = simplified;
+    }
 
     // while (context.size()) {
     //   context.pop_back();
     // }
   }
 
-  // std::cout << "Simplified subexprs = " << subexpr_as_str() << std::endl;
+  // std::cout << "\t"
+  //           << "Simplified subexprs = " << subexpr_as_str() << std::endl;
 
   // Rules to simplify a pair of conditions.  Returns NullOpt if no
   // simplification is possible.
@@ -1955,18 +1980,18 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   // Check each pairwise set of subexpressions for simplifications
   for (size_t i = 0; i < subexprs.size(); i++) {
     for (size_t j = i + 1; j < subexprs.size(); j++) {
-      PrimExpr& a = subexprs[i];
-      PrimExpr& b = subexprs[j];
+      Optional<PrimExpr>& a = subexprs[i];
+      Optional<PrimExpr>& b = subexprs[j];
       // std::cout << "\t"
       //           << "Attempting to compare subexprs[" << i << "] = " << a << " and subexprs[" << j
       //           << "] = " << b << std::endl;
-      if (a.defined() && b.defined()) {
+      if (a && b) {
         // line_num = true;
-        if (Optional<PrimExpr> pairwise = pairwise_simplify(a, b)) {
+        if (Optional<PrimExpr> pairwise = pairwise_simplify(a.value(), b.value())) {
           // std::cout << "\t\t"
           //           << "Found pairwise simplification of (" << a << " || " << b << ") into "
           //           << pairwise << std::endl;
-          a = PrimExpr();
+          a = NullOpt;
           b = pairwise.value();
           modified = true;
 
@@ -1998,14 +2023,14 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   // Merge all remaining subexpressions
   PrimExpr ret = Bool(false);
   for (const auto& subexpr : subexprs) {
-    if (subexpr.defined()) {
-      ret = ret || subexpr;
+    if (subexpr) {
+      ret = ret || subexpr.value();
     }
   }
 
   // std::cout << "\t"
   //           << "Returning " << ret << " as simplified form of " << GetRef<PrimExpr>(op)
-  // << std::endl;
+  //           << std::endl;
 
   return ret;
 }
