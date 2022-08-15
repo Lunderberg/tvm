@@ -1329,7 +1329,7 @@ class TestSimplifyUsingPartiallyProvenBufferValueGather(BaseBeforeAfter):
         for i in T.serial(24):
             B[i] = 0
             for f in T.serial(3):
-                if 0 <= i - f and i - f < 24:
+                if 0 <= i - f:
                     B[i] = B[i] + A[i - f] * F[f]
 
         # Which means that this loop is unnecessary.  It would be
@@ -1347,12 +1347,12 @@ class TestSimplifyUsingPartiallyProvenBufferValueGather(BaseBeforeAfter):
         for i in T.serial(24):
             B[i] = 0
             for f in T.serial(3):
-                if 0 <= i - f and i - f < 24:
+                if 0 <= i - f:
                     B[i] = B[i] + A[i - f] * F[f]
 
         for i in T.serial(24):
             if i < 3 or 19 <= i:
-                B[i] = 0
+                T.evaluate(0)
 
 
 class TestSimplifyUsingPartiallyProvenBufferValueScatter(BaseBeforeAfter):
