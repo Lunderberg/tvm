@@ -791,13 +791,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto loop_start = AppendControlBlock("start of loop over " + op->loop_var->name_hint);
     MarkControlFlow(before_loop, loop_start, {}, {}, op->loop_var == op->min);
 
-    BindActiveLoopVar binding(this, op->loop_var, op->min, op->min + op->extent);
+    BindActiveLoopVar binding(this, op->loop_var, op->min, op->extent);
     Parent::VisitStmt_(op);
 
     auto loop_end = CurrentControlBlock();
     auto after_loop = AppendControlBlock("after loop over " + op->loop_var->name_hint);
     MarkControlFlow(loop_end, after_loop,
-                    {{op->loop_var, analyzer_.Simplify(op->min + op->extent)}});
+                    {{op->loop_var, analyzer_.Simplify(op->min + op->extent - 1)}});
 
     std::vector<size_t> to_visit = {loop_start};
     std::unordered_set<size_t> marked = {loop_start};
@@ -848,7 +848,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       Var delta(d_name.str(), op->loop_var.dtype());
       // PrimExpr predicate = op->loop_var > op->min;
       MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}}, {},
-                      op->loop_var > op->min);
+                      op->loop_var > op->min && op->loop_var < op->min + op->extent);
+
       // MarkControlFlow(loop_end, loop_start, {}, {}, op->loop_var > op->min);
     }
   }
@@ -2175,6 +2176,17 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                     << prior.predicate << std::endl;
         }
 
+        out = normalize_simplify(out);
+
+        std::cout << "\t\t"
+                  << "After adjusting and normalizing, predecessor #" << pred_a.from_index
+                  << " provides " << out.size() << " knowns" << std::endl;
+        for (const auto& prior : out) {
+          std::cout << "\t\t\t"
+                    << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                    << prior.predicate << std::endl;
+        }
+
         return out;
       } else if (it_b == known_after_block.end()) {
         std::cout << "\t\t"
@@ -2189,6 +2201,17 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         std::cout << "\t\t"
                   << "After adjusting, predecessor #" << pred_b.from_index << " provides "
                   << out.size() << " knowns" << std::endl;
+        for (const auto& prior : out) {
+          std::cout << "\t\t\t"
+                    << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
+                    << prior.predicate << std::endl;
+        }
+
+        out = normalize_simplify(out);
+
+        std::cout << "\t\t"
+                  << "After adjusting and normalizing, predecessor #" << pred_b.from_index
+                  << " provides " << out.size() << " knowns" << std::endl;
         for (const auto& prior : out) {
           std::cout << "\t\t\t"
                     << "Buffer " << prior.buffer->name << " is " << prior.known_value << " where "
@@ -2419,6 +2442,12 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << "Buffer predicate && region predicate simplifies from "
                   << (region.region_predicate && predicate) << " to " << updated_predicate
                   << std::endl;
+
+        updated_predicate = ConvertToAndOfOrs(updated_predicate);
+        updated_predicate = analyzer.Simplify(updated_predicate);
+        std::cout << "\t\t\t"
+                  << "Buffer predicate && region predicate is normalized and further simplified to "
+                  << updated_predicate << std::endl;
         PrimExpr overwritten_region = analyzer.Simplify(
             !NarrowExpressionToTrue(!updated_predicate, touch.predicate.free_parameters_));
         std::cout << "\t\t\t"

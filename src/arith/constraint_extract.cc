@@ -64,10 +64,9 @@ void CollectConstraints2(const PrimExpr& expr, std::function<void(const PrimExpr
   if ((x && y).Match(expr)) {
     CollectConstraints2(x.Eval(), callback);
     CollectConstraints2(y.Eval(), callback);
-  } else if ((x || (y && z)).Match(expr) || ((y && z) || x).Match(expr)) {
+  } else if ((x || y).Match(expr)) {
     CollectConstraints2(x.Eval(), [&](const PrimExpr& x_part) {
       CollectConstraints2(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part || y_part); });
-      CollectConstraints2(z.Eval(), [&](const PrimExpr& z_part) { callback(x_part || z_part); });
     });
   } else if ((x - 1 == y).Match(expr) || (y == x - 1).Match(expr)) {
     callback(x.Eval() - 1 == y.Eval());
