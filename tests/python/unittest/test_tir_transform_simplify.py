@@ -1076,7 +1076,7 @@ class TestRemoveTransitivelyProvableCondition(BaseBeforeAfter):
         A[0] = j <= 15 and i <= j and 0 < j and 0 < i
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = i <= j and j <= 15 and 0 < i
+        A[0] = j <= 15 and i <= j and 0 < i
 
 
 class TestInequalities1(BaseBeforeAfter):
