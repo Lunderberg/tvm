@@ -1496,11 +1496,14 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
         for (const auto& pair : b.predicate.free_parameters_) {
           free_parameters.Set(pair.first, pair.second);
         }
-
-        With<ConstraintContext> context(&analyzer, union_predicate);
         analyzer.Bind(free_parameters);
 
-        if (analyzer.CanProveEqual(value_a, value_b)) {
+        bool provably_equal_value = [&]() {
+          With<ConstraintContext> context(&analyzer, union_predicate);
+          return analyzer.CanProveEqual(value_a, value_b);
+        }();
+
+        if (provably_equal_value) {
           std::cout << "Merging conditions for known value " << value_a << std::endl;
           std::cout << "\t"
                     << "Unioned predicate is " << union_predicate << std::endl;
