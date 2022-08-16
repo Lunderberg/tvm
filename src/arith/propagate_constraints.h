@@ -33,24 +33,28 @@
 namespace tvm {
 namespace arith {
 
+/*! \brief internal structure for comparison.
+ *
+ * Values are assigned to allow these flags to be used in bitwise
+ * operations.
+ */
+enum class CompareResult : int {
+  kInconsistent = 0,
+  kEQ = 1,
+  kLT = 2,
+  kLE = 3,
+  kGT = 4,
+  kGE = 5,
+  kNE = 6,
+  kUnknown = 7
+};
+CompareResult operator&(CompareResult lhs, CompareResult rhs);
+CompareResult operator|(CompareResult lhs, CompareResult rhs);
+CompareResult operator~(CompareResult cmp);
+std::ostream& operator<<(std::ostream& os, CompareResult cmp);
+
 class Comparison {
  public:
-  /*! \brief internal structure for comparison.
-   *
-   * Values are assigned to allow these flags to be used in bitwise
-   * operations.
-   */
-  enum CompareResult {
-    kInconsistent = 0,
-    kEQ = 1,
-    kLT = 2,
-    kLE = 3,
-    kGT = 4,
-    kGE = 5,
-    kNE = 6,
-    kUnknown = 7
-  };
-
   static CompareResult TryCompare(const std::vector<Comparison>& knowns, const PrimExpr& lhs,
                                   const PrimExpr& rhs);
 
@@ -81,7 +85,17 @@ class Comparison {
 
   // Additive offset on rhs
   int64_t offset_{0};
-  CompareResult result_{kInconsistent};
+  CompareResult result_{CompareResult::kInconsistent};
+};
+
+class ComparisonSet {
+ public:
+  ComparisonSet(const std::vector<PrimExpr>& knowns);
+
+  CompareResult TryCompare(const PrimExpr& lhs, const PrimExpr& rhs) const;
+
+ private:
+  std::vector<Comparison> knowns_;
 };
 
 }  // namespace arith

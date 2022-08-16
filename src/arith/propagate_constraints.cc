@@ -33,91 +33,124 @@ namespace arith {
 
 using namespace tir;
 
+CompareResult operator&(CompareResult lhs, CompareResult rhs) {
+  return CompareResult(static_cast<int>(lhs) & static_cast<int>(rhs));
+}
+CompareResult operator|(CompareResult lhs, CompareResult rhs) {
+  return CompareResult(static_cast<int>(lhs) | static_cast<int>(rhs));
+}
+CompareResult operator~(CompareResult cmp) {
+  return CompareResult(~static_cast<int>(cmp) & static_cast<int>(CompareResult::kUnknown));
+}
+std::ostream& operator<<(std::ostream& os, CompareResult cmp) {
+  switch (cmp) {
+    case CompareResult::kInconsistent:
+      return os << "Inconsistent";
+    case CompareResult::kEQ:
+      return os << "Equal";
+    case CompareResult::kLT:
+      return os << "LessThan";
+    case CompareResult::kLE:
+      return os << "LessThanOrEqual";
+    case CompareResult::kGT:
+      return os << "GreaterThan";
+    case CompareResult::kGE:
+      return os << "GreaterThanOrEqual";
+    case CompareResult::kNE:
+      return os << "NotEqual";
+    case CompareResult::kUnknown:
+      return os << "Unknown";
+    default:
+      LOG(FATAL) << "Invalid CompareResult: " << static_cast<int>(cmp);
+      return os;
+  }
+}
+
 namespace {
 
-Comparison::CompareResult Reverse(Comparison::CompareResult res) {
+CompareResult Reverse(CompareResult res) {
   switch (res) {
-    case Comparison::kInconsistent:
-      return Comparison::kInconsistent;
-    case Comparison::kEQ:
-      return Comparison::kEQ;
-    case Comparison::kLT:
-      return Comparison::kGT;
-    case Comparison::kLE:
-      return Comparison::kGE;
-    case Comparison::kGT:
-      return Comparison::kLT;
-    case Comparison::kGE:
-      return Comparison::kLE;
-    case Comparison::kNE:
-      return Comparison::kNE;
-    case Comparison::kUnknown:
-      return Comparison::kUnknown;
+    case CompareResult::kInconsistent:
+      return CompareResult::kInconsistent;
+    case CompareResult::kEQ:
+      return CompareResult::kEQ;
+    case CompareResult::kLT:
+      return CompareResult::kGT;
+    case CompareResult::kLE:
+      return CompareResult::kGE;
+    case CompareResult::kGT:
+      return CompareResult::kLT;
+    case CompareResult::kGE:
+      return CompareResult::kLE;
+    case CompareResult::kNE:
+      return CompareResult::kNE;
+    case CompareResult::kUnknown:
+      return CompareResult::kUnknown;
     default:
       LOG(FATAL) << "Invalid CompareResult: " << res;
-      return Comparison::kInconsistent;
+      return CompareResult::kInconsistent;
   }
 }
 
-Comparison::CompareResult Negate(Comparison::CompareResult res) {
-  switch (res) {
-    case Comparison::kInconsistent:
-      return Comparison::kInconsistent;
-    case Comparison::kEQ:
-      return Comparison::kNE;
-    case Comparison::kLT:
-      return Comparison::kGE;
-    case Comparison::kLE:
-      return Comparison::kGT;
-    case Comparison::kGT:
-      return Comparison::kLE;
-    case Comparison::kGE:
-      return Comparison::kLT;
-    case Comparison::kNE:
-      return Comparison::kEQ;
-    case Comparison::kUnknown:
-      return Comparison::kUnknown;
-    default:
-      LOG(FATAL) << "Invalid CompareResult: " << res;
-      return Comparison::kInconsistent;
-  }
-}
+// CompareResult Negate(CompareResult res) {
+//   switch (res) {
+//     case CompareResult::kInconsistent:
+//       return CompareResult::kInconsistent;
+//     case CompareResult::kEQ:
+//       return CompareResult::kNE;
+//     case CompareResult::kLT:
+//       return CompareResult::kGE;
+//     case CompareResult::kLE:
+//       return CompareResult::kGT;
+//     case CompareResult::kGT:
+//       return CompareResult::kLE;
+//     case CompareResult::kGE:
+//       return CompareResult::kLT;
+//     case CompareResult::kNE:
+//       return CompareResult::kEQ;
+//     case CompareResult::kUnknown:
+//       return CompareResult::kUnknown;
+//     default:
+//       LOG(FATAL) << "Invalid CompareResult: " << res;
+//       return CompareResult::kInconsistent;
+//   }
+// }
 
-// Result of comparing (x RES_A y) and (y RES_B z) into (x OUT z)
-Comparison::CompareResult Transitive(Comparison::CompareResult a, Comparison::CompareResult b) {
-  if (a == Comparison::kInconsistent || b == Comparison::kInconsistent) {
-    return Comparison::kInconsistent;
-  }
+// // Result of comparing (x RES_A y) and (y RES_B z) into (x OUT z)
+// CompareResult Transitive(CompareResult a, CompareResult b) {
+//   if (a == CompareResult::kInconsistent || b == CompareResult::kInconsistent) {
+//     return CompareResult::kInconsistent;
+//   }
 
-  if (a == Comparison::kEQ) {
-    return b;
-  }
-  if (b == Comparison::kEQ) {
-    return a;
-  }
+//   if (a == CompareResult::kEQ) {
+//     return b;
+//   }
+//   if (b == CompareResult::kEQ) {
+//     return a;
+//   }
 
-  if (a == Comparison::kLE && b == Comparison::kLE) {
-    return Comparison::kLE;
-  } else if (a == Comparison::kLE && b == Comparison::kLT) {
-    return Comparison::kLT;
-  } else if (a == Comparison::kLT && b == Comparison::kLE) {
-    return Comparison::kLT;
-  } else if (a == Comparison::kLT && b == Comparison::kLT) {
-    return Comparison::kLT;
-  }
+//   if (a == CompareResult::kLE && b == CompareResult::kLE) {
+//     return CompareResult::kLE;
+//   } else if (a == CompareResult::kLE && b == CompareResult::kLT) {
+//     return CompareResult::kLT;
+//   } else if (a == CompareResult::kLT && b == CompareResult::kLE) {
+//     return CompareResult::kLT;
+//   } else if (a == CompareResult::kLT && b == CompareResult::kLT) {
+//     return CompareResult::kLT;
+//   }
 
-  if (a == Comparison::kGE && b == Comparison::kGE) {
-    return Comparison::kGE;
-  } else if (a == Comparison::kGE && b == Comparison::kGT) {
-    return Comparison::kGT;
-  } else if (a == Comparison::kGT && b == Comparison::kGE) {
-    return Comparison::kGT;
-  } else if (a == Comparison::kGT && b == Comparison::kGT) {
-    return Comparison::kGT;
-  }
+//   if (a == CompareResult::kGE && b == CompareResult::kGE) {
+//     return CompareResult::kGE;
+//   } else if (a == CompareResult::kGE && b == CompareResult::kGT) {
+//     return CompareResult::kGT;
+//   } else if (a == CompareResult::kGT && b == CompareResult::kGE) {
+//     return CompareResult::kGT;
+//   } else if (a == CompareResult::kGT && b == CompareResult::kGT) {
+//     return CompareResult::kGT;
+//   }
 
-  return Comparison::kUnknown;
-}
+//   return CompareResult::kUnknown;
+// }
 }  // namespace
 
 Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
@@ -126,19 +159,19 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
   if ((x <= y).Match(expr) || (y >= x).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
-    result_ = kLE;
+    result_ = CompareResult::kLE;
   } else if ((x < y).Match(expr) || (y < x).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
-    result_ = kLT;
+    result_ = CompareResult::kLT;
   } else if ((x == y).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
-    result_ = kEQ;
+    result_ = CompareResult::kEQ;
   } else if ((x != y).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
-    result_ = kNE;
+    result_ = CompareResult::kNE;
   }
 
   // std::cout << "\t"
@@ -185,7 +218,7 @@ std::pair<PrimExpr, int64_t> Comparison::RemoveOffset(const PrimExpr& expr) {
 
 bool Comparison::IsValid() const {
   // These < and > should be removed during normalization.
-  if (result_ == kLT || result_ == kGT) {
+  if (result_ == CompareResult::kLT || result_ == CompareResult::kGT) {
     return false;
   }
   return lhs_.defined() && rhs_.defined();
@@ -209,12 +242,12 @@ void Comparison::Normalize() {
   rhs_ = rhs_split.first;
   offset_ += (rhs_split.second - lhs_split.second);
 
-  if (result_ == kLT) {
-    result_ = kLE;
+  if (result_ == CompareResult::kLT) {
+    result_ = CompareResult::kLE;
     offset_ -= 1;
   }
-  if (result_ == kGT) {
-    result_ = kGE;
+  if (result_ == CompareResult::kGT) {
+    result_ = CompareResult::kGE;
     offset_ += 1;
   }
 }
@@ -242,21 +275,21 @@ Optional<PrimExpr> Comparison::debug_as_primexpr() const {
 
   IntImm offset(rhs_.dtype(), offset_);
   switch (result_) {
-    case Comparison::kInconsistent:
+    case CompareResult::kInconsistent:
       return NullOpt;
-    case Comparison::kEQ:
+    case CompareResult::kEQ:
       return lhs_ == rhs_ + offset;
-    case Comparison::kLT:
+    case CompareResult::kLT:
       return lhs_ < rhs_ + offset;
-    case Comparison::kLE:
+    case CompareResult::kLE:
       return lhs_ <= rhs_ + offset;
-    case Comparison::kGT:
+    case CompareResult::kGT:
       return lhs_ > rhs_ + offset;
-    case Comparison::kGE:
+    case CompareResult::kGE:
       return lhs_ >= rhs_ + offset;
-    case Comparison::kNE:
+    case CompareResult::kNE:
       return lhs_ != rhs_ + offset;
-    case Comparison::kUnknown:
+    case CompareResult::kUnknown:
       return NullOpt;
     default:
       LOG(FATAL) << "Invalid CompareResult: " << result_;
@@ -267,15 +300,15 @@ Optional<PrimExpr> Comparison::debug_as_primexpr() const {
 Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other) const {
   Comparison output = *this;
 
-  if (result_ == kEQ && other.result_ == kEQ) {
-    output.result_ = (other.offset_ == offset_) ? kEQ : kInconsistent;
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kEQ) {
+    output.result_ = (other.offset_ == offset_) ? CompareResult::kEQ : CompareResult::kInconsistent;
     return output;
   }
-  if (result_ == kLT && other.result_ == kLT) {
+  if (result_ == CompareResult::kLT && other.result_ == CompareResult::kLT) {
     output.offset_ = std::min(other.offset_, offset_);
     return output;
   }
-  if (result_ == kGE && other.result_ == kGE) {
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kGE) {
     output.offset_ = std::max(other.offset_, offset_);
     return output;
   }
@@ -283,12 +316,12 @@ Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other
   return Comparison();
 }
 
-Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns,
-                                                 const PrimExpr& lhs, const PrimExpr& rhs) {
+CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, const PrimExpr& lhs,
+                                     const PrimExpr& rhs) {
   // std::cout << "Comparing between lhs = " << lhs << " and rhs = " << rhs << std::endl;
   // Currently only supports integer checks
   if (!lhs.dtype().is_int() || !rhs.dtype().is_int()) {
-    return Comparison::kUnknown;
+    return CompareResult::kUnknown;
   }
 
   // Bail out early if possible.  This int check should have been
@@ -297,11 +330,11 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
   auto* y_int = rhs.as<IntImmNode>();
   if (x_int && y_int) {
     if (x_int->value < y_int->value) {
-      return Comparison::kLT;
+      return CompareResult::kLT;
     } else if (x_int->value > y_int->value) {
-      return Comparison::kGT;
+      return CompareResult::kGT;
     } else {
-      return Comparison::kEQ;
+      return CompareResult::kEQ;
     }
   }
 
@@ -329,7 +362,7 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
   // std::cout << "\t"
   //           << "Knowns = " << print_vec_compare(knowns) << std::endl;
 
-  Comparison output(lhs, rhs, kUnknown);
+  Comparison output(lhs, rhs, CompareResult::kUnknown);
 
   ExprDeepEqual expr_equal;
 
@@ -405,20 +438,20 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
       //           << "Found comparison " << cmp.debug_as_primexpr() << std::endl;
 
       for (const auto& prev : prev_knowns_using_middle) {
-        CompareResult new_result = kUnknown;
+        CompareResult new_result = CompareResult::kUnknown;
         int64_t new_offset = prev.offset_ + cmp.offset_;
 
-        if (prev.result_ == kEQ) {
+        if (prev.result_ == CompareResult::kEQ) {
           new_result = cmp.result_;
-        } else if (cmp.result_ == kEQ) {
+        } else if (cmp.result_ == CompareResult::kEQ) {
           new_result = prev.result_;
-        } else if (prev.result_ == kLE && cmp.result_ == kLE) {
-          new_result = kLE;
-        } else if (prev.result_ == kGE && cmp.result_ == kGE) {
-          new_result = kGE;
+        } else if (prev.result_ == CompareResult::kLE && cmp.result_ == CompareResult::kLE) {
+          new_result = CompareResult::kLE;
+        } else if (prev.result_ == CompareResult::kGE && cmp.result_ == CompareResult::kGE) {
+          new_result = CompareResult::kGE;
         }
 
-        if (new_result != kUnknown) {
+        if (new_result != CompareResult::kUnknown) {
           Comparison new_known(output.lhs_, right_expr, new_offset, new_result);
           // std::cout << "\t\t\t"
           //           << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
@@ -465,7 +498,7 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
     //           << "No paths from " << output.lhs_ << " to " << output.rhs_ << " using known
     //           values"
     //           << std::endl;
-    return kUnknown;
+    return CompareResult::kUnknown;
   }
 
   const std::vector<Comparison>& known_between_lhs_and_rhs = it->second;
@@ -475,31 +508,31 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
   //           << " comparisons between desired expressions, "
   //           << print_vec_compare(known_between_lhs_and_rhs) << std::endl;
 
-  CompareResult result = kUnknown;
+  CompareResult result = CompareResult::kUnknown;
   for (const auto& known : known_between_lhs_and_rhs) {
     switch (known.result_) {
-      case Comparison::kInconsistent:
-        result = kInconsistent;
+      case CompareResult::kInconsistent:
+        result = CompareResult::kInconsistent;
         break;
 
-      case Comparison::kEQ:
+      case CompareResult::kEQ:
         if (output.offset_ == known.offset_) {
-          result = CompareResult(result & kEQ);
+          result = CompareResult(result & CompareResult::kEQ);
         } else {
-          result = CompareResult(result & kNE);
+          result = CompareResult(result & CompareResult::kNE);
         }
         break;
 
-      case Comparison::kLE:
+      case CompareResult::kLE:
         if (known.offset_ < output.offset_) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & kLT);
+          result = CompareResult(result & CompareResult::kLT);
           // std::cout << " to " << result << std::endl;
         } else if (known.offset_ <= output.offset_) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & kLE);
+          result = CompareResult(result & CompareResult::kLE);
           // std::cout << " to " << result << std::endl;
           ;
         }  // else {
@@ -509,16 +542,16 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
         // }
         break;
 
-      case Comparison::kGE:
+      case CompareResult::kGE:
         if (known.offset_ > output.offset_) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & kGT);
+          result = CompareResult(result & CompareResult::kGT);
           // std::cout << " to " << result << std::endl;
         } else if (known.offset_ >= output.offset_) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & kGE);
+          result = CompareResult(result & CompareResult::kGE);
           // std::cout << " to " << result << std::endl;
         }  //  else {
         //   std::cout << "Known value of " << known.debug_as_primexpr()
@@ -527,23 +560,23 @@ Comparison::CompareResult Comparison::TryCompare(const std::vector<Comparison>& 
         // }
         break;
 
-      case Comparison::kNE:
+      case CompareResult::kNE:
         if (output.offset_ == known.offset_) {
-          result = CompareResult(result & kNE);
+          result = CompareResult(result & CompareResult::kNE);
         }
         break;
 
-      case Comparison::kUnknown:
+      case CompareResult::kUnknown:
         break;
 
-      case Comparison::kGT:
-      case Comparison::kLT:
+      case CompareResult::kGT:
+      case CompareResult::kLT:
         LOG(FATAL) << "Internal error, normalized comparisons should only include <= and <";
-        return kInconsistent;
+        return CompareResult::kInconsistent;
 
       default:
         LOG(FATAL) << "Invalid CompareResult: " << known.result_;
-        return kInconsistent;
+        return CompareResult::kInconsistent;
     }
   }
 

@@ -162,26 +162,26 @@ CompareResult RewriteSimplifier::Impl::TryCompareUsingVariableIntBounds(const Pr
   //           << " with bounds " << y_bounds << std::endl;
 
   if (x_min.same_as(x) && x_max.same_as(x) && y_min.same_as(y) && y_max.same_as(y)) {
-    return kUnknown;
+    return CompareResult::kUnknown;
   }
 
-  CompareResult output = kUnknown;
+  CompareResult output = CompareResult::kUnknown;
 
   if (x_bounds.HasUpperBound() && y_bounds.HasLowerBound()) {
     CompareResult lt_bound = TryCompare(x_max - y_min, 0);
-    if (lt_bound == kLE || lt_bound == kLT) {
+    if (lt_bound == CompareResult::kLE || lt_bound == CompareResult::kLT) {
       output = CompareResult(output & lt_bound);
     }
   }
 
   if (x_bounds.HasLowerBound() && y_bounds.HasUpperBound()) {
     CompareResult gt_bound = TryCompare(x_min - y_max, 0);
-    if (gt_bound == kGT || gt_bound == kGE) {
+    if (gt_bound == CompareResult::kGT || gt_bound == CompareResult::kGE) {
       output = CompareResult(output & gt_bound);
     }
   }
 
-  if (output != kUnknown) {
+  if (output != CompareResult::kUnknown) {
     // std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
     //           << " with bounds " << y_bounds << " results in " << output << std::endl;
   }
