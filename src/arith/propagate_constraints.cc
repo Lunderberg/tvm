@@ -302,15 +302,71 @@ Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other
   Comparison output = *this;
 
   if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kEQ) {
+    // x == y + c1 && x == y + c2, x == y + c2 && c1 == c2
     output.result_ = (other.offset_ == offset_) ? CompareResult::kEQ : CompareResult::kInconsistent;
     return output;
   }
-  if (result_ == CompareResult::kLT && other.result_ == CompareResult::kLT) {
+  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kLE) {
+    // x <= y + c1 && x <= y + c2, x <= y + min(c1, c2)
     output.offset_ = std::min(other.offset_, offset_);
     return output;
   }
   if (result_ == CompareResult::kGE && other.result_ == CompareResult::kGE) {
+    // x >= y + c1 && x >= y + c2, x >= y + max(c1, c2)
     output.offset_ = std::max(other.offset_, offset_);
+    return output;
+  }
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kLE &&
+      offset_ > other.offset_) {
+    // x == y + c1 && x <= y + c2, x == y + c1 && c1 <= c2
+    output.result_ = CompareResult::kInconsistent;
+    return output;
+  }
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kGE &&
+      offset_ < other.offset_) {
+    // x == y + c1 && x >= y + c2, x == y + c1 && c1 >= c2
+    output.result_ = CompareResult::kInconsistent;
+    return output;
+  }
+  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kEQ &&
+      offset_ < other.offset_) {
+    // x <= y + c1 && x == y + c2, x == y + c2 && c1 >= c2
+    output.offset_ = other.offset_;
+    output.result_ = CompareResult::kInconsistent;
+    return output;
+  }
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kEQ &&
+      offset_ > other.offset_) {
+    // x >= y + c1 && x == y + c2, x == y + c2 && c1 >= c2
+    output.offset_ = other.offset_;
+    output.result_ = CompareResult::kInconsistent;
+    return output;
+  }
+  if (result_ == CompareResult::kNE && other.result_ == CompareResult::kLE &&
+      offset_ == other.offset_) {
+    // x != y + c1 && x <= y + c1, x <= y + (c1 - 1)
+    output.offset_ = offset_ - 1;
+    output.result_ = CompareResult::kGE;
+    return output;
+  }
+  if (result_ == CompareResult::kNE && other.result_ == CompareResult::kGE &&
+      offset_ == other.offset_) {
+    // x != y + c1 && x >= y + c1, x >= y + (c1 + 1)
+    output.offset_ = offset_ + 1;
+    output.result_ = CompareResult::kGE;
+    return output;
+  }
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kNE &&
+      offset_ == other.offset_) {
+    // x <= y + c1 && x != y + c1, x <= y + (c1 - 1)
+    output.offset_ = offset_ - 1;
+    return output;
+  }
+  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kNE &&
+      offset_ == other.offset_) {
+    // x >= y + c1 && x != y + c1, x >= y + (c1 + 1)
+    output.offset_ = offset_ + 1;
+    output.result_ = CompareResult::kGE;
     return output;
   }
 
@@ -466,12 +522,16 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
         int64_t new_offset = prev.offset_ + cmp.offset_;
 
         if (prev.result_ == CompareResult::kEQ) {
+          // x == y + c1 && y OP z + c2, x OP z + (c1 + c2)
           new_result = cmp.result_;
         } else if (cmp.result_ == CompareResult::kEQ) {
+          // x OP y + c1 && y == z + c2, x OP z + (c1 + c2)
           new_result = prev.result_;
         } else if (prev.result_ == CompareResult::kLE && cmp.result_ == CompareResult::kLE) {
+          // x <= y + c1 && y <= z + c2, x <= z + (c1 + c2)
           new_result = CompareResult::kLE;
         } else if (prev.result_ == CompareResult::kGE && cmp.result_ == CompareResult::kGE) {
+          // x >= y + c1 && y >= z + c2, x >= z + (c1 + c2)
           new_result = CompareResult::kGE;
         }
 

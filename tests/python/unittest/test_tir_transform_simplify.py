@@ -1111,6 +1111,33 @@ class TestInequalities4(BaseBeforeAfter):
         A[0] = i < j
 
 
+class TestInequalities5(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i < j and i != j - 1
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i < j - 1
+
+
+class TestInequalities6(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = 14 <= j and i - 1 == j and i < 16
+
+    expected = before
+
+
+class TestInequalities7(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i + 1 < j + 5 and i + 1 != j + 6
+        # A[0] = i < j + 2 and i + 1 != j + 2
+        # A[0] = i < j + 2 and i != j + 1
+        # A[0] = i <= j + 1 and i != j + 1
+        # A[0] = i < j + 1
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = i < j + 4
+
+
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     """A known value may be used until it is overwritten
 

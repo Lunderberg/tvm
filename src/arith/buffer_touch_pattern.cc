@@ -231,7 +231,7 @@ void Predicate::Simplify(Analyzer* analyzer) {
 
   With<ConstraintContext> context(analyzer, FreeParameterConstraints());
 
-  PrimExpr expr = analyzer->Simplify(expression_.value());
+  PrimExpr expr = analyzer->Simplify(expression_.value(), 5);
 
   // Remove any free parameters that are no longer needed.  Using
   // Map::erase instead of constructing a new Map, to allow
