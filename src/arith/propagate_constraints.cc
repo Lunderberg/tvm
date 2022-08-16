@@ -26,6 +26,7 @@
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/expr.h>
 
+#include "constraint_extract.h"
 #include "pattern_match.h"
 
 namespace tvm {
@@ -316,18 +317,32 @@ Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other
   return Comparison();
 }
 
-CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, const PrimExpr& lhs,
-                                     const PrimExpr& rhs) {
-  // std::cout << "Comparing between lhs = " << lhs << " and rhs = " << rhs << std::endl;
-  // Currently only supports integer checks
-  if (!lhs.dtype().is_int() || !rhs.dtype().is_int()) {
+ComparisonSet::ComparisonSet(const std::vector<PrimExpr>& knowns) {
+  for (const auto& expr : knowns) {
+    AddKnown(expr);
+  }
+}
+void ComparisonSet::AddKnown(const PrimExpr& expr) {
+  for (const auto& subexpr : ExtractConstraints(expr)) {
+    Comparison cmp(subexpr);
+    if (cmp.IsValid()) {
+      knowns_.push_back(cmp);
+    }
+  }
+}
+
+CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
+                                        const PrimExpr& rhs_input) const {
+  // std::cout << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input <<
+  // std::endl; Currently only supports integer checks
+  if (!lhs_input.dtype().is_int() || !rhs_input.dtype().is_int()) {
     return CompareResult::kUnknown;
   }
 
   // Bail out early if possible.  This int check should have been
   // constant-folded earlier, so this check shouldn't occur.
-  auto* x_int = lhs.as<IntImmNode>();
-  auto* y_int = rhs.as<IntImmNode>();
+  auto* x_int = lhs_input.as<IntImmNode>();
+  auto* y_int = rhs_input.as<IntImmNode>();
   if (x_int && y_int) {
     if (x_int->value < y_int->value) {
       return CompareResult::kLT;
@@ -341,7 +356,7 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
   // Have the integer value on the right, if present.
   if (x_int) {
     // std::cout << "Reversing inequality and running again" << std::endl;
-    return Reverse(TryCompare(knowns, rhs, lhs));
+    return Reverse(TryCompare(rhs_input, lhs_input));
   }
 
   auto print_vec_compare = [](const std::vector<Comparison>& vec) {
@@ -362,7 +377,16 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
   // std::cout << "\t"
   //           << "Knowns = " << print_vec_compare(knowns) << std::endl;
 
-  Comparison output(lhs, rhs, CompareResult::kUnknown);
+  PrimExpr lhs = lhs_input;
+  PrimExpr rhs = rhs_input;
+  int64_t offset;
+
+  {
+    Comparison output(lhs, rhs, CompareResult::kUnknown);
+    lhs = output.lhs_;
+    rhs = output.rhs_;
+    offset = output.offset_;
+  }
 
   ExprDeepEqual expr_equal;
 
@@ -400,8 +424,8 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
     return ss.str();
   };
 
-  for (const auto& known : knowns) {
-    Comparison normalized = known.NormalizedTo(output.lhs_);
+  for (const auto& known : knowns_) {
+    Comparison normalized = known.NormalizedTo(lhs);
     if (normalized.IsValid()) {
       compared_to_x[normalized.rhs_].push_back(normalized);
       to_visit.insert(normalized.rhs_);
@@ -423,14 +447,14 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
     // std::cout << "\t"
     //           << "Checking for transitive comparisons involving " << middle_expr << std::endl;
 
-    for (const auto& known : knowns) {
+    for (const auto& known : knowns_) {
       Comparison cmp = known.NormalizedTo(middle_expr);
       if (!cmp.IsValid()) {
         continue;
       }
 
       const PrimExpr& right_expr = cmp.rhs_;
-      if (expr_equal(right_expr, output.lhs_)) {
+      if (expr_equal(right_expr, lhs)) {
         continue;
       }
 
@@ -452,7 +476,7 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
         }
 
         if (new_result != CompareResult::kUnknown) {
-          Comparison new_known(output.lhs_, right_expr, new_offset, new_result);
+          Comparison new_known(lhs, right_expr, new_offset, new_result);
           // std::cout << "\t\t\t"
           //           << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
           //           << ", found " << new_known.debug_as_primexpr() << std::endl;
@@ -492,10 +516,10 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
   // std::cout << "\t"
   //           << "After propagation, all known comparisons are " << x_known_str() << std::endl;
 
-  auto it = compared_to_x.find(output.rhs_);
+  auto it = compared_to_x.find(rhs);
   if (it == compared_to_x.end()) {
     // std::cout << "\t"
-    //           << "No paths from " << output.lhs_ << " to " << output.rhs_ << " using known
+    //           << "No paths from " << lhs << " to " << rhs << " using known
     //           values"
     //           << std::endl;
     return CompareResult::kUnknown;
@@ -516,53 +540,53 @@ CompareResult Comparison::TryCompare(const std::vector<Comparison>& knowns, cons
         break;
 
       case CompareResult::kEQ:
-        if (output.offset_ == known.offset_) {
-          result = CompareResult(result & CompareResult::kEQ);
+        if (offset == known.offset_) {
+          result = result & CompareResult::kEQ;
         } else {
-          result = CompareResult(result & CompareResult::kNE);
+          result = result & CompareResult::kNE;
         }
         break;
 
       case CompareResult::kLE:
-        if (known.offset_ < output.offset_) {
+        if (known.offset_ < offset) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & CompareResult::kLT);
+          result = result & CompareResult::kLT;
           // std::cout << " to " << result << std::endl;
-        } else if (known.offset_ <= output.offset_) {
+        } else if (known.offset_ <= offset) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & CompareResult::kLE);
+          result = result & CompareResult::kLE;
           // std::cout << " to " << result << std::endl;
           ;
         }  // else {
         //   std::cout << "Known value of " << known.debug_as_primexpr()
-        //             << " couldn't be applied to comparison of " << output.lhs_ << " and "
-        //             << output.rhs_ + IntImm(output.rhs_.dtype(), output.offset_) << std::endl;
+        //             << " couldn't be applied to comparison of " << lhs << " and "
+        //             << rhs + IntImm(rhs.dtype(), offset) << std::endl;
         // }
         break;
 
       case CompareResult::kGE:
-        if (known.offset_ > output.offset_) {
+        if (known.offset_ > offset) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & CompareResult::kGT);
+          result = result & CompareResult::kGT;
           // std::cout << " to " << result << std::endl;
-        } else if (known.offset_ >= output.offset_) {
+        } else if (known.offset_ >= offset) {
           // std::cout << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
-          result = CompareResult(result & CompareResult::kGE);
+          result = result & CompareResult::kGE;
           // std::cout << " to " << result << std::endl;
         }  //  else {
         //   std::cout << "Known value of " << known.debug_as_primexpr()
-        //             << " couldn't be applied to comparison of " << output.lhs_ << " and "
-        //             << output.rhs_ + IntImm(output.rhs_.dtype(), output.offset_) << std::endl;
+        //             << " couldn't be applied to comparison of " << lhs << " and "
+        //             << rhs + IntImm(rhs.dtype(), offset) << std::endl;
         // }
         break;
 
       case CompareResult::kNE:
-        if (output.offset_ == known.offset_) {
-          result = CompareResult(result & CompareResult::kNE);
+        if (offset == known.offset_) {
+          result = result & CompareResult::kNE;
         }
         break;
 

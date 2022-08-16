@@ -55,9 +55,6 @@ std::ostream& operator<<(std::ostream& os, CompareResult cmp);
 
 class Comparison {
  public:
-  static CompareResult TryCompare(const std::vector<Comparison>& knowns, const PrimExpr& lhs,
-                                  const PrimExpr& rhs);
-
   explicit Comparison(const PrimExpr& expr);
 
   bool IsValid() const;
@@ -65,6 +62,8 @@ class Comparison {
   Comparison Reversed() const;
 
  private:
+  friend class ComparisonSet;
+
   Comparison() {}
   Comparison(const PrimExpr& lhs, const PrimExpr& rhs, CompareResult result);
   Comparison(const PrimExpr& lhs, const PrimExpr& rhs, int64_t offset, CompareResult result);
@@ -90,9 +89,11 @@ class Comparison {
 
 class ComparisonSet {
  public:
-  ComparisonSet(const std::vector<PrimExpr>& knowns);
+  explicit ComparisonSet(const std::vector<PrimExpr>& knowns);
 
   CompareResult TryCompare(const PrimExpr& lhs, const PrimExpr& rhs) const;
+
+  void AddKnown(const PrimExpr& expr);
 
  private:
   std::vector<Comparison> knowns_;
