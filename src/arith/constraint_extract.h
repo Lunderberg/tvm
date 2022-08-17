@@ -65,6 +65,9 @@ std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr,
 std::vector<std::vector<PrimExpr>> ExtractAndOfOrs(const PrimExpr& expr);
 PrimExpr ConvertToAndOfOrs(const PrimExpr& expr);
 
+class Analyzer;
+PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer);
+
 /* \brief Returns components, at least one of which must be true if the expression is true.
  *
  * Utility to break up a boolean expression into independent

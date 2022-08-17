@@ -1138,6 +1138,35 @@ class TestInequalities7(BaseBeforeAfter):
         A[0] = i < j + 4
 
 
+@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
+class TestInequalities8(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, f: T.int32):
+        A[0] = (
+            (0 <= j)
+            and (j < 24)
+            and (0 <= i)
+            and (i < 24)
+            and (0 <= f)
+            and ((f == 0) or (f == 1) or (j != 2) or (j <= i))
+            and ((f == 0) or (1 < f) or (j != 2) or (j <= i))
+            and ((f == 0) or (f == 1) or (j < 19) or (i < (j - 2)) or (j <= i))
+            and ((f == 0) or (1 < f) or (j < 19) or (i < (j - 2)) or (j <= i))
+            and (f < 3)
+        )
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, f: T.int32):
+        A[0] = (
+            (0 <= j)
+            and (j < 24)
+            and (0 <= i)
+            and (i < 24)
+            and (0 <= f)
+            and ((f == 0) or (j != 2) or (j <= i))
+            and ((f == 0) or (j < 19) or (i < (j - 2)) or (j <= i))
+            and (f < 3)
+        )
+
+
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     """A known value may be used until it is overwritten
 
