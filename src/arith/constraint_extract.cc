@@ -235,11 +235,11 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
     std::cout << ")" << std::endl;
   };
 
-  print_current();
+  // print_current();
 
   // Simplification within each individual expression
-  std::cout << "Starting Step 1: "
-            << "Local simplifications" << std::endl;
+  // std::cout << "Starting Step 1: "
+  //           << "Local simplifications" << std::endl;
   while (true) {
     bool modified_and = false;
     for (size_t i_and = 0; i_and < vec_and.size(); i_and++) {
@@ -253,9 +253,9 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
           With<ConstraintContext> context(analyzer, known_from_or(i_and, i_or));
           PrimExpr simplified = analyzer->Simplify(vec_or[i_or]);
           if (!expr_equal(simplified, vec_or[i_or])) {
-            std::cout << "\t"
-                      << "Simplified vec_and[" << i_and << "][" << i_or
-                      << "] = " << vec_and[i_and][i_or] << " to " << simplified << std::endl;
+            // std::cout << "\t"
+            //           << "Simplified vec_and[" << i_and << "][" << i_or
+            //           << "] = " << vec_and[i_and][i_or] << " to " << simplified << std::endl;
             vec_or[i_or] = simplified;
             modified_or = true;
             modified_and = true;
@@ -276,13 +276,13 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
       break;
     }
   }
-  std::cout << "Finished Step 1: "
-            << "Local simplifications" << std::endl;
+  // std::cout << "Finished Step 1: "
+  //           << "Local simplifications" << std::endl;
 
-  print_current();
+  // print_current();
 
-  std::cout << "Starting Step 2: "
-            << "Simplifications within OR" << std::endl;
+  // std::cout << "Starting Step 2: "
+  //           << "Simplifications within OR" << std::endl;
 
   // Simplification within pairs of OR statements
   {
@@ -316,13 +316,13 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
     }
   }
 
-  std::cout << "Finished Step 2: "
-            << "Simplifications within OR" << std::endl;
+  // std::cout << "Finished Step 2: "
+  //           << "Simplifications within OR" << std::endl;
 
-  print_current();
+  // print_current();
 
-  std::cout << "Starting Step 3: "
-            << "Simplifications across OR" << std::endl;
+  // std::cout << "Starting Step 3: "
+  //           << "Simplifications across OR" << std::endl;
 
   // Simplifications across AND pairs in related OR sets
   //
@@ -365,11 +365,12 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
           std::swap(i_vec_or, j_vec_or);
           modified_and = true;
 
-          std::cout << "\t"
-                    << "Removing vec_and[" << j_and << "], which is a subset of vec_and[" << i_and
-                    << "], then swapping vec_and[" << i_and << "] into location of vec_and["
-                    << j_and << "]" << std::endl;
-          print_current(2);
+          // std::cout << "\t"
+          //           << "Removing vec_and[" << j_and << "], which is a subset of vec_and[" <<
+          //           i_and
+          //           << "], then swapping vec_and[" << i_and << "] into location of vec_and["
+          //           << j_and << "]" << std::endl;
+          // print_current(2);
           continue;
         }
 
@@ -391,10 +392,11 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
           j_vec_or = {Bool(true)};
           modified_and = true;
 
-          std::cout << "\t"
-                    << "Removing vec_and[" << i_and << "], which is a subset of vec_and[" << j_and
-                    << "]" << std::endl;
-          print_current(2);
+          // std::cout << "\t"
+          //           << "Removing vec_and[" << i_and << "], which is a subset of vec_and[" <<
+          //           j_and
+          //           << "]" << std::endl;
+          // print_current(2);
 
           continue;
         }
@@ -407,10 +409,11 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
             }
           }
 
-          std::cout << "\t"
-                    << "vec_and[" << i_and << "] and vec_and[" << j_and << "] are the same length "
-                    << i_vec_or.size() << " and have " << num_shared_exprs
-                    << " expresssions in common" << std::endl;
+          // std::cout << "\t"
+          //           << "vec_and[" << i_and << "] and vec_and[" << j_and << "] are the same length
+          //           "
+          //           << i_vec_or.size() << " and have " << num_shared_exprs
+          //           << " expresssions in common" << std::endl;
 
           if (num_shared_exprs + 1 == i_vec_or.size()) {
             // All but one of the expressions are shared.  If the AND
@@ -421,20 +424,22 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
             auto& expr_i = i_vec_or[i_distinct_expr.value()];
             auto& expr_j = j_vec_or[j_distinct_expr.value()];
             bool made_update = false;
-            std::cout << "\t"
-                      << "vec_and[" << i_and << "] and vec_and[" << j_and << "] differ only by "
-                      << expr_i << " in vec_and[" << i_and << "] and " << expr_j << " in vec_and["
-                      << j_and << "]" << std::endl;
+            // std::cout << "\t"
+            //           << "vec_and[" << i_and << "] and vec_and[" << j_and << "] differ only by "
+            //           << expr_i << " in vec_and[" << i_and << "] and " << expr_j << " in
+            //           vec_and["
+            //           << j_and << "]" << std::endl;
             try_merge_and(expr_i, expr_j, [&](PrimExpr new_i, PrimExpr new_j) {
-              std::cout << "\t\t"
-                        << "Can simplify (" << expr_i << " && " << expr_j << ") to "
-                        << (new_i && new_j) << ", "
-                        << "replacing " << expr_i << " => " << new_i << " and " << expr_j << " => "
-                        << new_j << std::endl;
+              // std::cout << "\t\t"
+              //           << "Can simplify (" << expr_i << " && " << expr_j << ") to "
+              //           << (new_i && new_j) << ", "
+              //           << "replacing " << expr_i << " => " << new_i << " and " << expr_j << " =>
+              //           "
+              //           << new_j << std::endl;
               expr_i = new_i;
               expr_j = new_j;
               made_update = true;
-              print_current(3);
+              // print_current(3);
             });
             if (made_update) {
               cleanup_or(i_and);
@@ -454,10 +459,10 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
     }
   }
 
-  std::cout << "Finished Step 3: "
-            << "Simplifications across OR" << std::endl;
+  // std::cout << "Finished Step 3: "
+  //           << "Simplifications across OR" << std::endl;
 
-  print_current();
+  // print_current();
 
   // Make the final expression
   PrimExpr output = Bool(true);
