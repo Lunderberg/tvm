@@ -1123,7 +1123,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
       relations.push_back(var == Substitute(index, let_bindings_using_loop_));
 
-      IntSet interval = analyzer_.int_set(index);
+      // IntSet interval = analyzer_.int_set(index);
     }
 
     Array<Var> loop_vars;
