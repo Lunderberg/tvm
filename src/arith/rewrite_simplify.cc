@@ -1710,6 +1710,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
     TVM_TRY_REWRITE(x == y && x != y, cfalse);
     TVM_TRY_REWRITE(x != y && x == y, cfalse);
     TVM_TRY_REWRITE(x && !x, cfalse);
+    TVM_TRY_REWRITE(x && x, x);
 
     TVM_TRY_REWRITE(x <= y && y < x, cfalse);
     TVM_TRY_REWRITE(y < x && x <= y, cfalse);
@@ -1933,6 +1934,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
 
     TVM_TRY_REWRITE(x == y || x != y, ctrue);
     TVM_TRY_REWRITE(x != y || x == y, ctrue);
+    TVM_TRY_REWRITE(x || x, x);
     TVM_TRY_REWRITE(x || !x, ctrue);
     TVM_TRY_REWRITE(x <= y || y < x, ctrue);
     TVM_TRY_REWRITE(y < x || x <= y, ctrue);
