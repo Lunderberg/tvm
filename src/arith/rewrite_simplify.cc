@@ -43,12 +43,14 @@ using namespace tir;
 static bool line_num = false;
 
 // macro for doing simple rewrite
-#define TVM_TRY_REWRITE(SrcExpr, ResExpr)                                    \
-  if ((SrcExpr).Match(ret)) {                                                \
-    if (line_num) {                                                          \
-      std::cout << "Rewriting using rule on line " << __LINE__ << std::endl; \
-    }                                                                        \
-    return (ResExpr).Eval();                                                 \
+#define TVM_TRY_REWRITE(SrcExpr, ResExpr)                                 \
+  if ((SrcExpr).Match(ret)) {                                             \
+    if (line_num) {                                                       \
+      std::cout << "Rewriting from " << ret << " to " << (ResExpr).Eval() \
+                << " using rule on line " << __LINE__ << std::endl;       \
+      line_num = false;                                                   \
+    }                                                                     \
+    return (ResExpr).Eval();                                              \
   }
 
 // macro for rewrite + recursively rewrite ResExpr
@@ -58,12 +60,14 @@ static bool line_num = false;
   }
 
 // macro rewrite only if CondExor is true after match.
-#define TVM_TRY_REWRITE_IF(SrcExpr, ResExpr, CondExpr)                       \
-  if ((SrcExpr).Match(ret) && (CondExpr)) {                                  \
-    if (line_num) {                                                          \
-      std::cout << "Rewriting using rule on line " << __LINE__ << std::endl; \
-    }                                                                        \
-    return (ResExpr).Eval();                                                 \
+#define TVM_TRY_REWRITE_IF(SrcExpr, ResExpr, CondExpr)                    \
+  if ((SrcExpr).Match(ret) && (CondExpr)) {                               \
+    if (line_num) {                                                       \
+      std::cout << "Rewriting from " << ret << " to " << (ResExpr).Eval() \
+                << " using rule on line " << __LINE__ << std::endl;       \
+      line_num = false;                                                   \
+    }                                                                     \
+    return (ResExpr).Eval();                                              \
   }
 
 // macro rewrite + recursive_rewrite only if CondExor is true after match.
