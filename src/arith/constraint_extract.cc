@@ -290,24 +290,38 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
     for (size_t i_and = 0; i_and < vec_and.size(); i_and++) {
       auto& vec_or = vec_and[i_and];
 
-      bool modified_or = false;
-      for (size_t i_or = 0; i_or < vec_or.size(); i_or++) {
-        for (size_t j_or = i_or + 1; j_or < vec_or.size(); j_or++) {
-          auto& expr_i = vec_or[i_or];
-          auto& expr_j = vec_or[j_or];
-          try_merge_or(expr_i, expr_j, [&](PrimExpr new_i, PrimExpr new_j) {
-            expr_i = new_i;
-            expr_j = new_j;
-            modified_or = true;
-            modified_and = true;
-          });
-        }
-      }
+      while (true) {
+        bool modified_or = false;
+        for (size_t i_or = 0; i_or < vec_or.size(); i_or++) {
+          for (size_t j_or = i_or + 1; j_or < vec_or.size(); j_or++) {
+            auto& expr_i = vec_or[i_or];
+            auto& expr_j = vec_or[j_or];
 
-      if (modified_or) {
-        cleanup_or(i_and);
-      } else {
-        break;
+            // std::cout << "\t"
+            //           << "Attempting to simplify (vec_and[" << i_and << "][" << i_or
+            //           << "] && vec_and[" << i_and << "][" << j_or << "]) == (" << expr_i << " &&
+            //           "
+            //           << expr_j << ")" << std::endl;
+
+            try_merge_or(expr_i, expr_j, [&](PrimExpr new_i, PrimExpr new_j) {
+              // std::cout << "\t\t"
+              //           << "Simplified (vec_and[" << i_and << "][" << i_or << "] && vec_and["
+              //           << i_and << "][" << j_or << "]) == (" << expr_i << " && " << expr_j
+              //           << ") == " << (new_i && new_j) << std::endl;
+              expr_i = new_i;
+              expr_j = new_j;
+              modified_or = true;
+              modified_and = true;
+              // print_current(2);
+            });
+          }
+        }
+
+        if (modified_or) {
+          cleanup_or(i_and);
+        } else {
+          break;
+        }
       }
     }
 
