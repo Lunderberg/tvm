@@ -332,14 +332,16 @@ void ConstraintTracker::Impl::KnownBufferValue(tir::Buffer buf, Array<PrimExpr> 
 void ConstraintTracker::Impl::ClearKnownValues(tir::Buffer buf, Predicate predicate) {
   std::vector<BufferConstraint> new_knowns;
 
+  Analyzer local_analyzer;
+
   for (const auto& constraint : global_buffer_constraints_) {
     if (!buf.same_as(constraint.buf)) {
       // This is a different buffer, constraint is unmodified
       new_knowns.push_back(constraint);
-    } else if (constraint.predicate.IsSubsetOf(predicate)) {
+    } else if (constraint.predicate.IsSubsetOf(predicate, &local_analyzer)) {
       // This write entirely removes the previous write, no need to
       // keep the old value at all.
-    } else if (constraint.predicate.IsDistinctFrom(predicate)) {
+    } else if (constraint.predicate.IsDistinctFrom(predicate, &local_analyzer)) {
       // The two predicates operate on different indices, so no need
       // to alter the previous predicate.
       new_knowns.push_back(constraint);
@@ -348,7 +350,8 @@ void ConstraintTracker::Impl::ClearKnownValues(tir::Buffer buf, Predicate predic
       // predicate only applies in cases where the newer predicate
       // does not apply.
       new_knowns.push_back(BufferConstraint(
-          constraint.buf, constraint.predicate.Difference(predicate), constraint.value));
+          constraint.buf, constraint.predicate.Difference(predicate, &local_analyzer),
+          constraint.value));
     }
   }
 

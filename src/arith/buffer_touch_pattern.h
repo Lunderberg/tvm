@@ -75,7 +75,7 @@ class Predicate : public ParametrizedExpression {
    * the other subset.  Returns false if it cannot be proven to be a
    * subset of ther other subset.
    */
-  bool IsSubsetOf(const Predicate& other) const;
+  bool IsSubsetOf(const Predicate& other, Analyzer* analyzer) const;
 
   /* \brief Checks if this Predicate is distinct of another predicate
    *
@@ -83,21 +83,21 @@ class Predicate : public ParametrizedExpression {
    * be simultaneously true.  Returns false if it cannot be proven
    * that the two predicates are distinct.
    */
-  bool IsDistinctFrom(const Predicate& other) const;
+  bool IsDistinctFrom(const Predicate& other, Analyzer* analyzer) const;
 
   /* \brief The difference of two predicates
    *
    * Returns a predicate that is true whenever this predicate is true
    * and the other predicate is false.
    */
-  Predicate Difference(const Predicate& other) const;
+  Predicate Difference(const Predicate& other, Analyzer* analyzer) const;
 
   /* \brief The difference of two predicates
    *
    * Returns a predicate that is true whenever this predicate is true
    * and the other predicate is false.
    */
-  Predicate Intersection(const Predicate& other) const;
+  Predicate Intersection(const Predicate& other, Analyzer* analyzer) const;
 
   /* \brief Remap variables within the predicate
    *
@@ -105,8 +105,6 @@ class Predicate : public ParametrizedExpression {
    *
    * \param var_remap A map of variables to the expression that
    * replaces them.
-   *
-   * \param analyzer The analyzer to use while simplifying.
    */
   void Remap(const Map<Var, PrimExpr>& var_remap);
 
@@ -166,7 +164,7 @@ class BufferTouch {
    * subset.  Returns false if it cannot be proven to be a subset of
    * ther other subset.
    */
-  bool IsSubsetOf(const BufferTouch& other) const;
+  bool IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const;
 
   /* \brief Checks if this BufferTouch is a subset of another predicate
    *
@@ -226,7 +224,7 @@ class BufferTouchPattern {
    * overwritten without contributing to any later statements.
    * Returns false otherwise.
    */
-  bool IsOverwrittenWithoutEffect(const tir::BufferStore& store) const;
+  bool IsOverwrittenWithoutEffect(const tir::BufferStore& store, Analyzer* analyzer) const;
 
   /* \brief Simplify the expression, assuming it occurs within the given context
    *
@@ -280,15 +278,16 @@ class BufferTouchPattern {
    * \param write_iter An iterator into `touches_`, pointing to the
    * buffer touch to be examined.
    */
-  bool IsOverwrittenWithoutEffect(std::vector<BufferTouch>::const_iterator write_iter) const;
+  bool IsOverwrittenWithoutEffect(std::vector<BufferTouch>::const_iterator write_iter,
+                                  Analyzer* analyzer) const;
 
   /* \brief Internal utility, checks if a specific access was overwritten
    *
    * \param write_iter An iterator into `touches_`, pointing to the
    * buffer touch to be examined.
    */
-  Optional<PrimExpr> KnownValue(std::vector<BufferTouch>::const_reverse_iterator access_iter,
-                                const Array<PrimExpr>& indices) const;
+  // Optional<PrimExpr> KnownValue(std::vector<BufferTouch>::const_reverse_iterator access_iter,
+  //                               const Array<PrimExpr>& indices) const;
 
   friend std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern);
 
@@ -301,11 +300,11 @@ class BufferTouchPattern {
     Predicate predicate;
     ParametrizedExpression known_value;
 
-    bool IsDistinctFrom(const BufferConstraint& other) const;
+    bool IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const;
 
-    void OverwriteBy(const BufferConstraint& other);
+    void OverwriteBy(const BufferConstraint& other, Analyzer* analyzer);
 
-    bool IsEquivalentTo(const BufferConstraint& other) const;
+    bool IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const;
 
     /* \brief Merge constraints that may overwrite each other.
      *
@@ -313,7 +312,8 @@ class BufferTouchPattern {
      * internally consistent.
      */
     static std::vector<BufferConstraint> MergeSequentialConstraints(
-        const std::vector<BufferConstraint>& before, const std::vector<BufferConstraint>& after);
+        const std::vector<BufferConstraint>& before, const std::vector<BufferConstraint>& after,
+        Analyzer* analyzer);
 
     /*! \brief Simplify and remove overwritten constraints
      *
@@ -327,7 +327,7 @@ class BufferTouchPattern {
      * \return A set of disjoint constraints
      */
     static std::vector<BufferConstraint> SimplifyOverwrittenConstraints(
-        std::vector<BufferConstraint> constraints);
+        std::vector<BufferConstraint> constraints, Analyzer* analyzer);
 
     /*! \brief Simplify disjoint
      *
@@ -339,7 +339,7 @@ class BufferTouchPattern {
      * \return A set of disjoint constraints
      */
     static std::vector<BufferConstraint> MergeDisjointConstraints(
-        std::vector<BufferConstraint> constraints);
+        std::vector<BufferConstraint> constraints, Analyzer* analyzer);
 
     /* \brief Merge constraints that jointly apply
      *
@@ -351,7 +351,7 @@ class BufferTouchPattern {
      */
     static std::vector<BufferConstraint> MergePredecessorConstraints(
         const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
-        Optional<PrimExpr> a_condition);
+        Optional<PrimExpr> a_condition, Analyzer* analyzer);
 
     /* \brief Merge constraints that jointly apply
      *
@@ -367,7 +367,7 @@ class BufferTouchPattern {
      */
     static std::vector<BufferConstraint> MergePredecessorConstraintsWithPostcondition(
         const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
-        PrimExpr a_condition, PrimExpr b_condition);
+        PrimExpr a_condition, PrimExpr b_condition, Analyzer* analyzer);
   };
 
   struct ControlFlowPredecessor {

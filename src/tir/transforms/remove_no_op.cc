@@ -198,7 +198,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
     };
 
     // A write that is later overwritten is a no-op.
-    if (touch_pattern_.IsOverwrittenWithoutEffect(store)) {
+    if (touch_pattern_.IsOverwrittenWithoutEffect(store, analyzer_)) {
       return only_side_effects();
     }
 
