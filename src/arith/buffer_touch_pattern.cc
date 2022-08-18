@@ -2394,40 +2394,6 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       Array<Var> axis_vars = touch.known_value.parameter_vars_;
       PrimExpr predicate = touch.predicate(axis_vars).value();
 
-      // If this touch is a write, any preceding known values must be
-      // removed.  In case of data-dependent predicates that cannot be
-      // proven, assume that the maximum possible overwrites occur.
-      if (touch.touch_type == BufferTouch::AccessType::Write) {
-        std::cout << "\t"
-                  << "Generating predicate to remove overwritten values" << std::endl;
-        std::cout << "\t\t"
-                  << "Initially starting with predicate " << predicate << std::endl;
-        auto regions = BufferRegionCollector::Collect(prior_knowns, {predicate},
-                                                      all_free_parameters, &analyzer);
-        std::cout << "\t\t"
-                  << "Regions of interest for predicate are [";
-        for (size_t i = 0; i < regions.size(); i++) {
-          if (i) {
-            std::cout << ", ";
-          }
-          std::cout << regions[i].region_predicate;
-        }
-        std::cout << "]" << std::endl;
-
-        // PrimExpr remainder = predicate;
-        // for (const auto& region : regions) {
-        // }
-
-        PrimExpr overwritten = analyzer.Simplify(!NarrowExpressionToTrue(!predicate, {}));
-        std::cout << "\t\t"
-                  << "After widening to include all possibly-touched locations " << overwritten
-                  << std::endl;
-        BufferTouchPattern::BufferConstraint overwrite{
-            touch.buffer, Predicate(axis_vars, overwritten, touch.predicate.free_parameters_),
-            ParametrizedExpression(axis_vars, NullOpt)};
-        // new_knowns.push_back(overwrite);
-      }
-
       PrimExpr known_value = touch.known_value(axis_vars).value();
       auto regions = BufferRegionCollector::Collect(prior_knowns, {predicate, known_value},
                                                     all_free_parameters, &analyzer);
