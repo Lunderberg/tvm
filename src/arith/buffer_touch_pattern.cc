@@ -2424,10 +2424,6 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         std::cout << "\t\t\t"
                   << "Buffer predicate && region predicate is normalized and further simplified to "
                   << updated_predicate << std::endl;
-        PrimExpr overwritten_region = analyzer.Simplify(
-            !NarrowExpressionToTrue(!updated_predicate, touch.predicate.free_parameters_));
-        std::cout << "\t\t\t"
-                  << "This region may overwrite values in " << overwritten_region << std::endl;
         PrimExpr updated_value =
             BufferRegionValueReplacer::Apply(region.known_values, known_value, &analyzer);
 
@@ -2436,18 +2432,20 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << std::endl;
 
         if (!is_const_false(updated_predicate)) {
-          BufferTouchPattern::BufferConstraint overwrite{
-              touch.buffer, Predicate(axis_vars, overwritten_region, {}),
-              ParametrizedExpression(axis_vars, NullOpt)};
-          new_knowns.push_back(overwrite);
-          if (!HasBufferLoad(updated_value)) {
-            Map<tir::Var, Range> free_parameters;
-            for (const Var& var : UndefinedVars(updated_predicate)) {
-              auto it = touch.predicate.free_parameters_.find(var);
-              if (it != touch.predicate.free_parameters_.end()) {
-                free_parameters.Set((*it).first, (*it).second);
-              }
+          Map<tir::Var, Range> free_parameters;
+          for (const Var& var : UndefinedVars(updated_predicate)) {
+            auto it = touch.predicate.free_parameters_.find(var);
+            if (it != touch.predicate.free_parameters_.end()) {
+              free_parameters.Set((*it).first, (*it).second);
             }
+          }
+
+          if (HasBufferLoad(updated_value)) {
+            BufferTouchPattern::BufferConstraint overwrite{
+                touch.buffer, Predicate(axis_vars, updated_predicate, free_parameters),
+                ParametrizedExpression(axis_vars, NullOpt)};
+            new_knowns.push_back(overwrite);
+          } else {
             BufferTouchPattern::BufferConstraint new_constraint{
                 touch.buffer, Predicate(axis_vars, updated_predicate, free_parameters),
                 ParametrizedExpression(axis_vars, updated_value)};
@@ -2460,19 +2458,6 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     std::cout << "\t"
               << "Visiting control block " << visiting << " resulted in " << new_knowns.size()
               << " new post-block statements" << std::endl;
-    for (const auto& known : new_knowns) {
-      std::cout << "\t\t"
-                << "Buffer " << known.buffer->name << " where " << known.predicate
-                << " is equal to " << known.known_value << std::endl;
-    }
-
-    for (auto& known : new_knowns) {
-      known.predicate = known.predicate.WithoutFreeParameters();
-    }
-
-    std::cout << "\t"
-              << "Visiting control block " << visiting << " resulted in " << new_knowns.size()
-              << " new parameter-free post-block statements" << std::endl;
     for (const auto& known : new_knowns) {
       std::cout << "\t\t"
                 << "Buffer " << known.buffer->name << " where " << known.predicate
@@ -2506,7 +2491,11 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                 << " is equal to " << known.known_value << std::endl;
     }
 
-    post_knowns = normalize_simplify(post_knowns);
+    for (auto& known : post_knowns) {
+      known.predicate = known.predicate.WithoutFreeParameters();
+      known.predicate.expression_ =
+          SimplifyUsingAndOfOrs(known.predicate.expression_.value(), &analyzer);
+    }
 
     std::cout << "\t"
               << "Visiting control block " << visiting << " resulted in " << post_knowns.size()
