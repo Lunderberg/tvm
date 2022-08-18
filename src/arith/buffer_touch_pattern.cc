@@ -2115,16 +2115,18 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     auto prior_knowns = [&]() -> std::vector<BufferTouchPattern::BufferConstraint> {
       ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
 
-      auto adjust_priors = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
-                               Map<Var, PrimExpr> var_remap) {
-        for (auto& prior : priors) {
-          // std::cout << "\t\t\t"
-          //           << "Remapping predicate " << prior.predicate.expression_ << std::endl;
-          prior.predicate.Remap(var_remap);
-          // std::cout << "\t\t\t\t"
-          //           << "After remap " << prior.predicate.expression_ << std::endl;
+      auto remap_priors = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
+                              Map<Var, PrimExpr> var_remap) {
+        if (var_remap.size()) {
+          for (auto& prior : priors) {
+            PrimExpr before_remap = prior.predicate.expression_.value();
+            PrimExpr after_remap = Substitute(before_remap, var_remap);
+            if (!before_remap.same_as(after_remap)) {
+              prior.predicate.expression_ = SimplifyUsingAndOfOrs(after_remap, &analyzer);
+            }
+          }
         }
-        return normalize_simplify(priors);
+        return priors;
       };
 
       auto add_condition = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
@@ -2149,7 +2151,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << "Only " << prev_index << " as predecessor, copying priors" << std::endl;
         auto it = known_after_block.find(prev_index);
         if (it != known_after_block.end()) {
-          return adjust_priors(it->second, pred.var_remap);
+          return remap_priors(it->second, pred.var_remap);
         } else {
           return {};
         }
@@ -2169,7 +2171,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << "Pred " << pred_b.from_index << " has been visited, but not "
                   << pred_a.from_index << ".  Using knowns from " << pred_b.from_index << std::endl;
         auto out = it_b->second;
-        out = adjust_priors(out, pred_b.var_remap);
+        out = remap_priors(out, pred_b.var_remap);
         if (pred_a.predicate && pred_b.predicate) {
           out = add_condition(out, pred_a.predicate.value() || pred_b.predicate.value());
         }
@@ -2200,7 +2202,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << "Pred " << pred_a.from_index << " has been visited, but not "
                   << pred_b.from_index << ".  Using knowns from " << pred_a.from_index << std::endl;
         auto out = it_a->second;
-        out = adjust_priors(out, pred_a.var_remap);
+        out = remap_priors(out, pred_a.var_remap);
         if (pred_a.predicate && pred_b.predicate) {
           out = add_condition(out, pred_a.predicate.value() || pred_b.predicate.value());
         }
@@ -2251,8 +2253,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
                   << prior.predicate << std::endl;
       }
 
-      auto priors_a = adjust_priors(it_a->second, pred_a.var_remap);
-      auto priors_b = adjust_priors(it_b->second, pred_b.var_remap);
+      auto priors_a = remap_priors(it_a->second, pred_a.var_remap);
+      auto priors_b = remap_priors(it_b->second, pred_b.var_remap);
 
       std::cout << "\t\t"
                 << "After remapping with " << pred_a.var_remap << ", predecessor #"
