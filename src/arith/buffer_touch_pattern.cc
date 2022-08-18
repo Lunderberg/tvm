@@ -1476,6 +1476,8 @@ BufferTouchPattern::BufferConstraint::SimplifyOverwrittenConstraints(
                                    }),
                     constraints.end());
 
+  constraints = MergeDisjointConstraints(constraints, analyzer);
+
   return constraints;
 }
 
