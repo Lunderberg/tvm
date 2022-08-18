@@ -1469,7 +1469,9 @@ class TestSimplifyUsingPartiallyProvenBufferValueScatter(BaseBeforeAfter):
             T.assume(((3 <= i) and (i < 17)) or A[i] == 0)
 
         for i in T.serial(24):
-            B[0] = 0
+            B[i] = 0
+
+        for i in T.serial(24):
             for f in T.serial(3):
                 if i + f < 24:
                     B[i + f] = B[i + f] + A[i] * F[f]
