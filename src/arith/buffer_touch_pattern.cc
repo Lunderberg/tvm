@@ -226,6 +226,7 @@ void Predicate::Simplify(Analyzer* analyzer) {
 
   With<ConstraintContext> context(analyzer, FreeParameterConstraints());
 
+  // TODO: Are the extra simplification rounds necessary?
   PrimExpr expr = analyzer->Simplify(expression_.value(), 5);
 
   // Remove any free parameters that are no longer needed.  Using
@@ -1818,8 +1819,11 @@ class BufferRegionCollector : public ExprVisitor {
       std::vector<Region> updated_regions;
       for (const auto& prev_region : regions_) {
         for (const auto& new_region : new_regions) {
-          PrimExpr intersection =
-              local_analyzer.Simplify(prev_region.region_predicate && new_region.predicate);
+          // PrimExpr intersection =
+          //     local_analyzer.Simplify(prev_region.region_predicate && new_region.predicate);
+
+          PrimExpr intersection = SimplifyUsingAndOfOrs(
+              prev_region.region_predicate && new_region.predicate, &local_analyzer);
           if (!is_const_false(intersection)) {
             Region merged{intersection, prev_region.known_values};
             merged.known_values[op] = new_region.value;
@@ -2100,12 +2104,6 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
     auto normalize_simplify = [&](std::vector<BufferTouchPattern::BufferConstraint> priors) {
       for (auto& prior : priors) {
-        // std::cout << "\t\t\t\t"
-        //           << "After first simplify " << prior.predicate.expression_ << std::endl;
-        // std::cout << "\t\t\t\t"
-        //           << "After conversion " << prior.predicate.expression_ << std::endl;
-        // std::cout << "\t\t\t\t"
-        //           << "After second simplify " << prior.predicate.expression_ << std::endl;
         prior.predicate.expression_ =
             SimplifyUsingAndOfOrs(prior.predicate.expression_.value(), &analyzer);
       }
@@ -2551,9 +2549,19 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     if (has_updated_post) {
       known_after_block[visiting] = post_knowns;
       for (size_t successor : block.successors) {
-        std::cout << "\t"
-                  << "Queuing " << successor << " to be visited" << std::endl;
         to_visit.insert(successor);
+        std::cout << "\t"
+                  << "Queuing " << successor << " to be visited, to_visit = [";
+        bool first = true;
+        for (const auto& index : to_visit) {
+          if (first) {
+            first = false;
+          } else {
+            std::cout << ", ";
+          }
+          std::cout << index;
+        }
+        std::cout << "]" << std::endl;
       }
     }
 

@@ -99,6 +99,14 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   // internal variable map
   std::unordered_map<Var, PrimExpr, ObjectPtrHash, ObjectPtrEqual> var_map_;
 
+  /* \brief Internal helper function for EQ and NE
+   *
+   * The same simplification rules are used in general.  However, a NE
+   * node may have additional simplifications performed, such as
+   * simplifying `x != y` into `x > y` if it is known that `x >= y`.
+   */
+  PrimExpr VisitExpr_(EQ node, bool negated);
+
   struct Constraint {
     explicit Constraint(PrimExpr expr);
     PrimExpr expr;

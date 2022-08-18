@@ -16,13 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 /*!
  * \file tvm/arith/propagate_constraints.cc
  */
 
 #include "propagate_constraints.h"
 
+#include <tvm/arith/analyzer.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/expr.h>
 
@@ -93,29 +93,29 @@ CompareResult Reverse(CompareResult res) {
   }
 }
 
-// CompareResult Negate(CompareResult res) {
-//   switch (res) {
-//     case CompareResult::kInconsistent:
-//       return CompareResult::kInconsistent;
-//     case CompareResult::kEQ:
-//       return CompareResult::kNE;
-//     case CompareResult::kLT:
-//       return CompareResult::kGE;
-//     case CompareResult::kLE:
-//       return CompareResult::kGT;
-//     case CompareResult::kGT:
-//       return CompareResult::kLE;
-//     case CompareResult::kGE:
-//       return CompareResult::kLT;
-//     case CompareResult::kNE:
-//       return CompareResult::kEQ;
-//     case CompareResult::kUnknown:
-//       return CompareResult::kUnknown;
-//     default:
-//       LOG(FATAL) << "Invalid CompareResult: " << res;
-//       return CompareResult::kInconsistent;
-//   }
-// }
+CompareResult Negate(CompareResult res) {
+  switch (res) {
+    case CompareResult::kInconsistent:
+      return CompareResult::kInconsistent;
+    case CompareResult::kEQ:
+      return CompareResult::kNE;
+    case CompareResult::kLT:
+      return CompareResult::kGE;
+    case CompareResult::kLE:
+      return CompareResult::kGT;
+    case CompareResult::kGT:
+      return CompareResult::kLE;
+    case CompareResult::kGE:
+      return CompareResult::kLT;
+    case CompareResult::kNE:
+      return CompareResult::kEQ;
+    case CompareResult::kUnknown:
+      return CompareResult::kUnknown;
+    default:
+      LOG(FATAL) << "Invalid CompareResult: " << res;
+      return CompareResult::kInconsistent;
+  }
+}
 
 // // Result of comparing (x RES_A y) and (y RES_B z) into (x OUT z)
 // CompareResult Transitive(CompareResult a, CompareResult b) {
@@ -157,14 +157,22 @@ CompareResult Reverse(CompareResult res) {
 Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
   // std::cout << "Parsing expression " << expr << std::endl;
   PVar<PrimExpr> x, y;
-  if ((x <= y).Match(expr) || (y >= x).Match(expr)) {
+  if ((x <= y).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
     result_ = CompareResult::kLE;
-  } else if ((x < y).Match(expr) || (y < x).Match(expr)) {
+  } else if ((x >= y).Match(expr)) {
+    lhs_ = x.Eval();
+    rhs_ = y.Eval();
+    result_ = CompareResult::kGE;
+  } else if ((x < y).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
     result_ = CompareResult::kLT;
+  } else if ((x > y).Match(expr)) {
+    lhs_ = x.Eval();
+    rhs_ = y.Eval();
+    result_ = CompareResult::kGT;
   } else if ((x == y).Match(expr)) {
     lhs_ = x.Eval();
     rhs_ = y.Eval();
@@ -176,7 +184,8 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
   }
 
   // std::cout << "\t"
-  //           << "Parsed as lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", comparison = " << result_
+  //           << "Parsed as lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", comparison = " <<
+  //           result_
   //           << std::endl;
 
   if (lhs_.as<IntImmNode>() && rhs_.as<IntImmNode>()) {
@@ -188,7 +197,8 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
   Normalize();
 
   // std::cout << "\t"
-  //           << "Normalized to lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", offset = " << offset_
+  //           << "Normalized to lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", offset = " <<
+  //           offset_
   //           << ", comparison = " << result_ << std::endl;
 }
 
@@ -264,6 +274,12 @@ Comparison Comparison::NormalizedTo(const PrimExpr& expr) const {
   }
 }
 
+Comparison Comparison::Negated() const {
+  Comparison output = *this;
+  output.result_ = Negate(output.result_);
+  return output;
+}
+
 Optional<PrimExpr> Comparison::debug_as_primexpr() const {
   if (!IsValid()) {
     // return NullOpt;
@@ -298,78 +314,190 @@ Optional<PrimExpr> Comparison::debug_as_primexpr() const {
   }
 }
 
-Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other) const {
-  Comparison output = *this;
+bool Comparison::Implies(const Comparison& other) const {
+  // TODO: Remove these checks with appropriate comments
+  ExprDeepEqual expr_equal;
+  ICHECK(expr_equal(lhs_, other.lhs_) && expr_equal(rhs_, other.rhs_));
 
-  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kEQ) {
-    // x == y + c1 && x == y + c2, x == y + c2 && c1 == c2
-    output.result_ = (other.offset_ == offset_) ? CompareResult::kEQ : CompareResult::kInconsistent;
-    return output;
+  auto any = [](CompareResult cmp) -> bool { return cmp != CompareResult::kInconsistent; };
+
+  // TODO: Simplify these with bitwise operators
+
+  // EQ rules
+
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kEQ &&
+      (offset_ == other.offset_)) {
+    // if c1 == c2, x == y + c1 => x == y + c2
+    return true;
   }
-  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kLE) {
-    // x <= y + c1 && x <= y + c2, x <= y + min(c1, c2)
-    output.offset_ = std::min(other.offset_, offset_);
-    return output;
+
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kLT &&
+      (offset_ < other.offset_)) {
+    // if c1 < c2, x == y + c1 => x < y + c2
+    return true;
   }
-  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kGE) {
-    // x >= y + c1 && x >= y + c2, x >= y + max(c1, c2)
-    output.offset_ = std::max(other.offset_, offset_);
-    return output;
-  }
+
   if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kLE &&
-      offset_ > other.offset_) {
-    // x == y + c1 && x <= y + c2, x == y + c1 && c1 <= c2
-    output.result_ = CompareResult::kInconsistent;
-    return output;
+      (offset_ <= other.offset_)) {
+    // if c1 <= c2, x == y + c1 => x <= y + c2
+    return true;
   }
+
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kGT &&
+      (offset_ > other.offset_)) {
+    // if c1 > c2, x == y + c1 => x > y + c2
+    return true;
+  }
+
   if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kGE &&
-      offset_ < other.offset_) {
-    // x == y + c1 && x >= y + c2, x == y + c1 && c1 >= c2
+      (offset_ >= other.offset_)) {
+    // if c1 >= c2, x == y + c1 => x >= y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kEQ && other.result_ == CompareResult::kNE &&
+      (offset_ != other.offset_)) {
+    // if c1 != c2, x == y + c1 => x != y + c2
+    return true;
+  }
+
+  // LT rules
+
+  if (result_ == CompareResult::kLT && other.result_ == CompareResult::kLT &&
+      (offset_ <= other.offset_)) {
+    // if c1 <= c2, x < y + c1 => x < y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kLT && other.result_ == CompareResult::kLE &&
+      (offset_ <= other.offset_)) {
+    // if c1 <= c2, x < y + c1 => x <= y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kLT && other.result_ == CompareResult::kNE &&
+      (offset_ <= other.offset_)) {
+    // if c1 <= c2, x < y + c1 => x != y + c2
+    return true;
+  }
+
+  // LE rules
+
+  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kLT &&
+      (offset_ < other.offset_)) {
+    // if c1 < c2, x <= y + c1 => x < y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kLE &&
+      (offset_ <= other.offset_)) {
+    // if c1 <= c2, x <= y + c1 => x <= y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kNE &&
+      (offset_ < other.offset_)) {
+    // if c1 < c2, x <= y + c1 => x < y + c2 => x != y + c2
+    return true;
+  }
+
+  // GT rules
+
+  if (result_ == CompareResult::kGT && other.result_ == CompareResult::kGT &&
+      (offset_ >= other.offset_)) {
+    // if c1 >= c2, x > y + c1 => x > y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kGT && other.result_ == CompareResult::kGE &&
+      (offset_ > other.offset_)) {
+    // if c1 > c2, x > y + c1 => x >= y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kGT && other.result_ == CompareResult::kNE &&
+      (offset_ >= other.offset_)) {
+    // if c1 <= c2, x > y + c1 => x > y + c2 => x != y + c2
+    return true;
+  }
+
+  // GE rules
+
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kGT &&
+      (offset_ > other.offset_)) {
+    // if c1 > c2, x >= y + c1 => x > y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kGE &&
+      (offset_ >= other.offset_)) {
+    // if c1 >= c2, x >= y + c1 => x >= y + c2
+    return true;
+  }
+
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kNE &&
+      (offset_ > other.offset_)) {
+    // if c1 != c2, x >= y + c1 => x > y + c2 => x != y + c2
+    return true;
+  }
+
+  // NE rules
+
+  if (result_ == CompareResult::kNE && other.result_ == CompareResult::kNE &&
+      (offset_ == other.offset_)) {
+    // if c1 == c2, x != y + c1 => x != y + c2
+    return true;
+  }
+
+  return false;
+}
+
+Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other) const {
+  // TODO: Remove these checks with appropriate comments
+  ExprDeepEqual expr_equal;
+  ICHECK(expr_equal(lhs_, other.lhs_) && expr_equal(rhs_, other.rhs_));
+
+  if (Implies(other)) {
+    return *this;
+  } else if (other.Implies(*this)) {
+    return other;
+  } else if (Implies(other.Negated())) {
+    Comparison output = *this;
     output.result_ = CompareResult::kInconsistent;
     return output;
   }
-  if (result_ == CompareResult::kLE && other.result_ == CompareResult::kEQ &&
-      offset_ < other.offset_) {
-    // x <= y + c1 && x == y + c2, x == y + c2 && c1 >= c2
-    output.offset_ = other.offset_;
-    output.result_ = CompareResult::kInconsistent;
-    return output;
-  }
-  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kEQ &&
-      offset_ > other.offset_) {
-    // x >= y + c1 && x == y + c2, x == y + c2 && c1 >= c2
-    output.offset_ = other.offset_;
-    output.result_ = CompareResult::kInconsistent;
-    return output;
-  }
-  if (result_ == CompareResult::kNE && other.result_ == CompareResult::kLE &&
+
+  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kNE &&
       offset_ == other.offset_) {
-    // x != y + c1 && x <= y + c1, x <= y + (c1 - 1)
-    output.offset_ = offset_ - 1;
-    output.result_ = CompareResult::kGE;
+    // (x >= y + c1) && (x != y + c1) => (x > y + c1) => (x >= y + c1 + 1)
+    Comparison output = *this;
+    output.offset_ += 1;
     return output;
   }
   if (result_ == CompareResult::kNE && other.result_ == CompareResult::kGE &&
       offset_ == other.offset_) {
-    // x != y + c1 && x >= y + c1, x >= y + (c1 + 1)
-    output.offset_ = offset_ + 1;
-    output.result_ = CompareResult::kGE;
-    return output;
-  }
-  if (result_ == CompareResult::kGE && other.result_ == CompareResult::kNE &&
-      offset_ == other.offset_) {
-    // x <= y + c1 && x != y + c1, x <= y + (c1 - 1)
-    output.offset_ = offset_ - 1;
+    // (x != y + c1) && (x >= y + c1) => (x > y + c1) => (x >= y + c1 + 1)
+    Comparison output = other;
+    output.offset_ += 1;
     return output;
   }
   if (result_ == CompareResult::kLE && other.result_ == CompareResult::kNE &&
       offset_ == other.offset_) {
-    // x >= y + c1 && x != y + c1, x >= y + (c1 + 1)
-    output.offset_ = offset_ + 1;
-    output.result_ = CompareResult::kGE;
+    // (x <= y + c1) && (x != y + c1) => (x < y + c1) => (x <= y + c1 + 1)
+    Comparison output = *this;
+    output.offset_ -= 1;
+    return output;
+  }
+  if (result_ == CompareResult::kNE && other.result_ == CompareResult::kLE &&
+      offset_ == other.offset_) {
+    // (x != y + c1) && (x <= y + c1) => (x < y + c1) => (x <= y + c1 + 1)
+    Comparison output = other;
+    output.offset_ -= 1;
     return output;
   }
 
+  // The intersection of these comparisons cannot be expressed as a
+  // single comparison.
   return Comparison();
 }
 
@@ -379,6 +507,7 @@ ComparisonSet::ComparisonSet(const std::vector<PrimExpr>& knowns) {
   }
 }
 void ComparisonSet::AddKnown(const PrimExpr& expr) {
+  // std::cout << "ComparisonSet, adding known " << expr << std::endl;
   for (const auto& subexpr : ExtractConstraints(expr)) {
     Comparison cmp(subexpr);
     if (cmp.IsValid()) {
@@ -387,8 +516,8 @@ void ComparisonSet::AddKnown(const PrimExpr& expr) {
   }
 }
 
-CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
-                                        const PrimExpr& rhs_input) const {
+CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input, const PrimExpr& rhs_input,
+                                        Analyzer* analyzer) const {
   // std::cout << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input <<
   // std::endl; Currently only supports integer checks
   if (!lhs_input.dtype().is_int() || !rhs_input.dtype().is_int()) {
@@ -412,7 +541,7 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
   // Have the integer value on the right, if present.
   if (x_int) {
     // std::cout << "Reversing inequality and running again" << std::endl;
-    return Reverse(TryCompare(rhs_input, lhs_input));
+    return Reverse(TryCompare(rhs_input, lhs_input, analyzer));
   }
 
   auto print_vec_compare = [](const std::vector<Comparison>& vec) {
@@ -428,10 +557,10 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
     return ss.str();
   };
 
-  // std::cout << "Attempting to compare between " << lhs << " and " << rhs
+  // std::cout << "Attempting to compare between " << lhs_input << " and " << rhs_input
   //           << " using transitive knowns" << std::endl;
   // std::cout << "\t"
-  //           << "Knowns = " << print_vec_compare(knowns) << std::endl;
+  //           << "Knowns = " << print_vec_compare(knowns_) << std::endl;
 
   PrimExpr lhs = lhs_input;
   PrimExpr rhs = rhs_input;
@@ -480,11 +609,32 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
     return ss.str();
   };
 
+  auto declare_known = [&](Comparison cmp) {
+    auto& prev_knowns = compared_to_x[cmp.rhs_];
+
+    for (auto& prev_known : prev_knowns) {
+      if (prev_known.Implies(cmp)) {
+        return;
+      }
+    }
+
+    to_visit.insert(cmp.rhs_);
+
+    for (auto& prev_known : prev_knowns) {
+      Comparison intersect = cmp.IntersectAssumingExpressionsMatch(prev_known);
+      if (intersect.IsValid()) {
+        prev_known = cmp;
+        return;
+      }
+    }
+
+    prev_knowns.push_back(cmp);
+  };
+
   for (const auto& known : knowns_) {
     Comparison normalized = known.NormalizedTo(lhs);
     if (normalized.IsValid()) {
-      compared_to_x[normalized.rhs_].push_back(normalized);
-      to_visit.insert(normalized.rhs_);
+      declare_known(normalized);
     }
   }
 
@@ -503,15 +653,14 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
     // std::cout << "\t"
     //           << "Checking for transitive comparisons involving " << middle_expr << std::endl;
 
-    for (const auto& known : knowns_) {
-      Comparison cmp = known.NormalizedTo(middle_expr);
+    auto attempt_transitive = [&](Comparison cmp) {
       if (!cmp.IsValid()) {
-        continue;
+        return;
       }
 
       const PrimExpr& right_expr = cmp.rhs_;
       if (expr_equal(right_expr, lhs)) {
-        continue;
+        return;
       }
 
       // std::cout << "\t\t"
@@ -547,25 +696,42 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
         //             << ", couldn't find any additional comparisons" << std::endl;
         // }
       }
+    };
+
+    for (const auto& known : knowns_) {
+      Comparison cmp = known.NormalizedTo(middle_expr);
+      attempt_transitive(cmp);
     }
+
+    if (middle_expr->IsInstance<VarNode>()) {
+      // std::cout << "\t"
+      //           << "Checking for transitive comparisons involving declared bounds of "
+      //           << middle_expr << std::endl;
+      IntSet int_set = analyzer->int_set(middle_expr);
+      // std::cout << "\t\t"
+      //           << "Expr " << middle_expr << " has known bounds " << int_set << std::endl;
+      if (int_set.HasLowerBound()) {
+        PrimExpr expr = middle_expr >= int_set.min();
+        Comparison cmp(expr);
+        // std::cout << "\t\t"
+        //           << "Attempting transitive comparison using expression " << expr
+        //           << " (comparison:  " << cmp.debug_as_primexpr() << ")" << std::endl;
+        attempt_transitive(cmp);
+      }
+      if (int_set.HasUpperBound()) {
+        Comparison cmp(middle_expr <= int_set.max());
+        // std::cout << "\t\t"
+        //           << "Attempting transitive comparison using " << cmp.debug_as_primexpr()
+        //           << std::endl;
+        attempt_transitive(cmp);
+      }
+    }
+
     // std::cout << "\t"
     //           << "Found new knowns " << print_vec_compare(new_knowns_using_lhs) << std::endl;
 
     for (const auto& new_known : new_knowns_using_lhs) {
-      auto& prev_knowns = compared_to_x[new_known.rhs_];
-      bool handled = false;
-      for (auto& prev_known : prev_knowns) {
-        Comparison intersection = prev_known.IntersectAssumingExpressionsMatch(new_known);
-        if (intersection.IsValid()) {
-          prev_known = intersection;
-          handled = true;
-          break;
-        }
-      }
-
-      if (!handled) {
-        prev_knowns.push_back(new_known);
-      }
+      declare_known(new_known);
     }
 
     // std::cout << "\t\t"
@@ -579,9 +745,7 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
   auto it = compared_to_x.find(rhs);
   if (it == compared_to_x.end()) {
     // std::cout << "\t"
-    //           << "No paths from " << lhs << " to " << rhs << " using known
-    //           values"
-    //           << std::endl;
+    //           << "No paths from " << lhs << " to " << rhs << " using known values" << std::endl;
     return CompareResult::kUnknown;
   }
 
@@ -609,18 +773,20 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
 
       case CompareResult::kLE:
         if (known.offset_ < offset) {
-          // std::cout << "Known value of " << known.debug_as_primexpr()
+          // std::cout << "\t\t"
+          //           << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
           result = result & CompareResult::kLT;
           // std::cout << " to " << result << std::endl;
         } else if (known.offset_ <= offset) {
-          // std::cout << "Known value of " << known.debug_as_primexpr()
+          // std::cout << "\t\t"
+          //           << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
           result = result & CompareResult::kLE;
           // std::cout << " to " << result << std::endl;
-          ;
         }  // else {
-        //   std::cout << "Known value of " << known.debug_as_primexpr()
+        //   std::cout << "\t\t"
+        //             << "Known value of " << known.debug_as_primexpr()
         //             << " couldn't be applied to comparison of " << lhs << " and "
         //             << rhs + IntImm(rhs.dtype(), offset) << std::endl;
         // }
@@ -628,17 +794,20 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input,
 
       case CompareResult::kGE:
         if (known.offset_ > offset) {
-          // std::cout << "Known value of " << known.debug_as_primexpr()
+          // std::cout << "\t\t"
+          //           << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
           result = result & CompareResult::kGT;
           // std::cout << " to " << result << std::endl;
         } else if (known.offset_ >= offset) {
-          // std::cout << "Known value of " << known.debug_as_primexpr()
+          // std::cout << "\t\t"
+          //           << "Known value of " << known.debug_as_primexpr()
           //           << " reduced possibilities from " << result;
           result = result & CompareResult::kGE;
           // std::cout << " to " << result << std::endl;
         }  //  else {
-        //   std::cout << "Known value of " << known.debug_as_primexpr()
+        //   std::cout << "\t\t"
+        //             << "Known value of " << known.debug_as_primexpr()
         //             << " couldn't be applied to comparison of " << lhs << " and "
         //             << rhs + IntImm(rhs.dtype(), offset) << std::endl;
         // }

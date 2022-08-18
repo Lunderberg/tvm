@@ -33,6 +33,8 @@
 namespace tvm {
 namespace arith {
 
+class Analyzer;
+
 /*! \brief internal structure for comparison.
  *
  * Values are assigned to allow these flags to be used in bitwise
@@ -70,9 +72,11 @@ class Comparison {
 
   void Normalize();
   Comparison NormalizedTo(const PrimExpr& expr) const;
+  Comparison Negated() const;
 
   Optional<PrimExpr> debug_as_primexpr() const;
 
+  bool Implies(const Comparison& other) const;
   Comparison IntersectAssumingExpressionsMatch(const Comparison& other) const;
 
   static std::pair<PrimExpr, int64_t> RemoveOffset(const PrimExpr& expr);
@@ -91,7 +95,7 @@ class ComparisonSet {
  public:
   explicit ComparisonSet(const std::vector<PrimExpr>& knowns);
 
-  CompareResult TryCompare(const PrimExpr& lhs, const PrimExpr& rhs) const;
+  CompareResult TryCompare(const PrimExpr& lhs, const PrimExpr& rhs, Analyzer* analyzer) const;
 
   void AddKnown(const PrimExpr& expr);
 

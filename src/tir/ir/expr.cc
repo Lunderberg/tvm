@@ -536,11 +536,19 @@ TVM_REGISTER_NODE_TYPE(AndNode);
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<AndNode>([](const ObjectRef& node, ReprPrinter* p) {
-      auto* op = static_cast<const AndNode*>(node.get());
+      std::function<void(const ObjectRef& node)> recursive;
+      recursive = [&](const ObjectRef& node) {
+        if (auto as_and = node.as<AndNode>()) {
+          recursive(as_and->a);
+          p->stream << " && ";
+          recursive(as_and->b);
+        } else {
+          p->Print(node);
+        }
+      };
+
       p->stream << '(';
-      p->Print(op->a);
-      p->stream << " && ";
-      p->Print(op->b);
+      recursive(node);
       p->stream << ')';
     });
 
@@ -568,11 +576,19 @@ TVM_REGISTER_NODE_TYPE(OrNode);
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<OrNode>([](const ObjectRef& node, ReprPrinter* p) {
-      auto* op = static_cast<const OrNode*>(node.get());
+      std::function<void(const ObjectRef& node)> recursive;
+      recursive = [&](const ObjectRef& node) {
+        if (auto as_and = node.as<OrNode>()) {
+          recursive(as_and->a);
+          p->stream << " || ";
+          recursive(as_and->b);
+        } else {
+          p->Print(node);
+        }
+      };
+
       p->stream << '(';
-      p->Print(op->a);
-      p->stream << " || ";
-      p->Print(op->b);
+      recursive(node);
       p->stream << ')';
     });
 

@@ -1167,6 +1167,28 @@ class TestInequalities8(BaseBeforeAfter):
         )
 
 
+class TestInequalities9(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], j: T.int32, k: T.int32):
+        for i in T.serial(k, 16):
+            A[0] = i < j and k - 5 < j
+
+    def expected(A: T.Buffer[1, "bool"], j: T.int32, k: T.int32):
+        for i in T.serial(k, 16):
+            A[0] = i < j
+
+
+class TestInequalities10(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], j: T.int32):
+        for i in T.serial(0, 16):
+            # A[0] = (j < i) and ((0 < j) or ((i - 1) <= j)) and (j != 0) and (0 < i)
+            A[0] = (i < j) and (0 < j)
+
+    def expected(A: T.Buffer[1, "bool"], j: T.int32):
+        for i in T.serial(0, 16):
+            # A[0] = (j < i) and (((i - 1) <= j)) and (j != 0) and (0 < i)
+            A[0] = i < j
+
+
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     """A known value may be used until it is overwritten
 
