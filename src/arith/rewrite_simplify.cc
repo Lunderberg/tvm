@@ -95,10 +95,9 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
 
   output = CompareResult(output & TryCompareUsingConstIntBounds(x, y));
 
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using inquealities, comparison between " << x << "
-  //           and "
-  //           << y << " is " << output << std::endl;
+  std::cout << "\t"
+            << "In RewriteSimplifier, after using inequalities, comparison between " << x << " and "
+            << y << " is " << output << std::endl;
 
   if (is_finished()) return output;
 
@@ -106,9 +105,9 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
     output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
   }
 
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using const int bounds, comparison between " << x
-  //           << " and " << y << " is " << output << std::endl;
+  std::cout << "\t"
+            << "In RewriteSimplifier, after using const int bounds, comparison between " << x
+            << " and " << y << " is " << output << std::endl;
 
   // TODO: Is the VariableIntBounds check required?
 
@@ -1862,19 +1861,19 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   // std::cout << "Simplifying OrNode " << GetRef<PrimExpr>(op) << std::endl;
-  // {
-  //   if (!recursive) {
-  //     recursive = true;
-  //     PrimExpr orig = GetRef<PrimExpr>(op);
-  //     PrimExpr expr = orig;
-  //     std::cout << "Simplifying OrNode " << expr << std::endl;
-  //     expr = SimplifyUsingAndOfOrs(expr, analyzer_);
-  //     std::cout << "\t"
-  //               << "OrNode " << orig << " would simplify to " << expr << std::endl;
-  //     recursive = false;
-  //     return expr;
-  //   }
-  // }
+  {
+    if (!recursive) {
+      recursive = true;
+      PrimExpr orig = GetRef<PrimExpr>(op);
+      PrimExpr expr = orig;
+      std::cout << "Simplifying OrNode " << expr << std::endl;
+      expr = SimplifyUsingAndOfOrs(expr, analyzer_);
+      std::cout << "\t"
+                << "OrNode " << orig << " would simplify to " << expr << std::endl;
+      recursive = false;
+      return expr;
+    }
+  }
   std::vector<Optional<PrimExpr>> subexprs;
   for (const auto& subexpr : ExtractComponents(GetRef<PrimExpr>(op))) {
     subexprs.push_back(subexpr);

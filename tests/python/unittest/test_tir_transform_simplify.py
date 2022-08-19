@@ -938,6 +938,10 @@ class TestSimplifyUsingPartiallyKnownBufferConditional(BaseBeforeAfter):
                 if A[i] == 0:
                     A[i] = 42
 
+            else:
+                if A[i] == 0:
+                    A[i] = 100
+
     def expected(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             if 14 <= i:
@@ -946,6 +950,10 @@ class TestSimplifyUsingPartiallyKnownBufferConditional(BaseBeforeAfter):
         for i in T.serial(16):
             if 14 <= i:
                 A[i] = 42
+
+            else:
+                if A[i] == 0:
+                    A[i] = 100
 
 
 class TestSimplifyUsingPartiallyKnownBufferExpression(BaseBeforeAfter):
@@ -1187,6 +1195,26 @@ class TestInequalities10(BaseBeforeAfter):
         for i in T.serial(0, 16):
             # A[0] = (j < i) and (((i - 1) <= j)) and (j != 0) and (0 < i)
             A[0] = i < j
+
+
+class TestInequalities11(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
+        A[0] = (
+            (0 <= j)
+            and (j <= 23)
+            and (0 <= (j + n))
+            and (((j + n) < 3) or (17 <= (j + n)) or (i < (j + n)))
+            and (((3 <= (j + n)) and ((j + n) < 17)) or (i < (j + n)))
+        ) or (
+            (0 <= (j + n))
+            and (((j + n) < 3) or (17 <= (j + n)))
+            and (j < 24)
+            and (0 <= j)
+            and ((j + n) <= i)
+        )
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
+        A[0] = 0 <= j and j < 24 and 0 <= j + n and (i < j + n or j + n < 3 or 17 <= j + n)
 
 
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
