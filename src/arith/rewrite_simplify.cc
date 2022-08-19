@@ -1861,19 +1861,19 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   // std::cout << "Simplifying OrNode " << GetRef<PrimExpr>(op) << std::endl;
-  {
-    if (!recursive) {
-      recursive = true;
-      PrimExpr orig = GetRef<PrimExpr>(op);
-      PrimExpr expr = orig;
-      std::cout << "Simplifying OrNode " << expr << std::endl;
-      expr = SimplifyUsingAndOfOrs(expr, analyzer_);
-      std::cout << "\t"
-                << "OrNode " << orig << " would simplify to " << expr << std::endl;
-      recursive = false;
-      return expr;
-    }
-  }
+  // {
+  //   if (!recursive) {
+  //     recursive = true;
+  //     PrimExpr orig = GetRef<PrimExpr>(op);
+  //     PrimExpr expr = orig;
+  //     std::cout << "Simplifying OrNode " << expr << std::endl;
+  //     expr = SimplifyUsingAndOfOrs(expr, analyzer_);
+  //     std::cout << "\t"
+  //               << "OrNode " << orig << " would simplify to " << expr << std::endl;
+  //     recursive = false;
+  //     return expr;
+  //   }
+  // }
   std::vector<Optional<PrimExpr>> subexprs;
   for (const auto& subexpr : ExtractComponents(GetRef<PrimExpr>(op))) {
     subexprs.push_back(subexpr);

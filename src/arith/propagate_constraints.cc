@@ -531,21 +531,17 @@ class NullStream : public std::ostream {
 };
 }  // namespace
 
-CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input, const PrimExpr& rhs_input,
+CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs, const PrimExpr& rhs,
                                         Analyzer* analyzer) const {
-  auto& printer = std::cout;
-  // auto printer = NullStream();
-  printer << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input << std::endl;
-
   // Currently only supports integer checks
-  if (!lhs_input.dtype().is_int() || !rhs_input.dtype().is_int()) {
+  if (!lhs.dtype().is_int() || !rhs.dtype().is_int()) {
     return CompareResult::kUnknown;
   }
 
   // Bail out early if possible.  This int check should have been
   // constant-folded earlier, so this check shouldn't occur.
-  auto* x_int = lhs_input.as<IntImmNode>();
-  auto* y_int = rhs_input.as<IntImmNode>();
+  auto* x_int = lhs.as<IntImmNode>();
+  auto* y_int = rhs.as<IntImmNode>();
   if (x_int && y_int) {
     if (x_int->value < y_int->value) {
       return CompareResult::kLT;
@@ -556,12 +552,16 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs_input, const PrimExp
     }
   }
 
-  // Have the integer value on the right, if present.
-  if (x_int) {
-    printer << "Reversing inequality and running again" << std::endl;
-    return Reverse(TryCompare(rhs_input, lhs_input, analyzer));
-  }
+  return TryCompareFromLHS(lhs, rhs, analyzer) & Reverse(TryCompareFromLHS(rhs, lhs, analyzer));
+}
 
+CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const PrimExpr& rhs_input,
+                                               Analyzer* analyzer) const {
+  auto& printer = std::cout;
+  // auto printer = NullStream();
+  printer << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input << std::endl;
+
+  // Have the integer value on the right, if present.
   auto print_vec_compare = [](const std::vector<Comparison>& vec) {
     std::stringstream ss;
     ss << "[";

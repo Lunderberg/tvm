@@ -100,6 +100,9 @@ class ComparisonSet {
   void AddKnown(const PrimExpr& expr);
 
  private:
+  CompareResult TryCompareFromLHS(const PrimExpr& lhs, const PrimExpr& rhs,
+                                  Analyzer* analyzer) const;
+
   std::vector<Comparison> knowns_;
 };
 
