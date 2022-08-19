@@ -557,8 +557,8 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs, const PrimExpr& rhs
 
 CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const PrimExpr& rhs_input,
                                                Analyzer* analyzer) const {
-  auto& printer = std::cout;
-  // auto printer = NullStream();
+  // auto& printer = std::cout;
+  auto printer = NullStream();
   printer << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input << std::endl;
 
   // Have the integer value on the right, if present.
@@ -594,6 +594,7 @@ CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const 
   ExprDeepEqual expr_equal;
 
   // Everything in `to_visit` has lhs as its lhs.
+  std::unordered_set<PrimExpr, StructuralHash, StructuralEqual> seen;
   std::unordered_set<PrimExpr, StructuralHash, StructuralEqual> to_visit;
   std::unordered_map<PrimExpr, std::vector<Comparison>, StructuralHash, StructuralEqual>
       compared_to_x;
@@ -653,8 +654,9 @@ CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const 
       }
     }
 
-    if (!expr_equal(cmp.rhs_, rhs)) {
+    if (!expr_equal(cmp.rhs_, rhs) && !seen.count(cmp.rhs_)) {
       to_visit.insert(cmp.rhs_);
+      seen.insert(cmp.rhs_);
     }
 
     for (auto& prev_known : prev_knowns) {

@@ -111,12 +111,12 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
 
   // TODO: Is the VariableIntBounds check required?
 
-  // if (is_finished()) return output;
-  // output = CompareResult(output & TryCompareUsingVariableIntBounds(x, y));
+  if (is_finished()) return output;
+  output = CompareResult(output & TryCompareUsingVariableIntBounds(x, y));
 
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using variable int bounds, comparison between " << x
-  //           << " and " << y << " is " << output << std::endl;
+  std::cout << "\t"
+            << "In RewriteSimplifier, after using variable int bounds, comparison between " << x
+            << " and " << y << " is " << output << std::endl;
 
   return output;
 }

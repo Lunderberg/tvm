@@ -1197,6 +1197,7 @@ class TestInequalities10(BaseBeforeAfter):
             A[0] = i < j
 
 
+@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
 class TestInequalities11(BaseBeforeAfter):
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
         A[0] = (
