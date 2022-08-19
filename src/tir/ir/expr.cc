@@ -540,7 +540,7 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       recursive = [&](const ObjectRef& node) {
         if (auto as_and = node.as<AndNode>()) {
           recursive(as_and->a);
-          p->stream << " && ";
+          p->stream << " and ";
           recursive(as_and->b);
         } else {
           p->Print(node);
@@ -580,7 +580,7 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       recursive = [&](const ObjectRef& node) {
         if (auto as_and = node.as<OrNode>()) {
           recursive(as_and->a);
-          p->stream << " || ";
+          p->stream << " or ";
           recursive(as_and->b);
         } else {
           p->Print(node);

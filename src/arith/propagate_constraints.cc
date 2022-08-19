@@ -501,19 +501,64 @@ Comparison Comparison::IntersectAssumingExpressionsMatch(const Comparison& other
   return Comparison();
 }
 
-ComparisonSet::ComparisonSet(const std::vector<PrimExpr>& knowns) {
+TransitiveComparisonAnalyzer::TransitiveComparisonAnalyzer() : impl_(std::make_unique<Impl>()) {}
+TransitiveComparisonAnalyzer::~TransitiveComparisonAnalyzer() {}
+
+CompareResult TransitiveComparisonAnalyzer::TryCompare(const PrimExpr& lhs, const PrimExpr& rhs) {
+  return impl_->TryCompare(lhs, rhs);
+}
+
+void TransitiveComparisonAnalyzer::Bind(const Var& var, const PrimExpr& expr) {
+  impl_->Bind(var, expr);
+}
+void TransitiveComparisonAnalyzer::Bind(const Var& var, const Range& range) {
+  impl_->Bind(var, range);
+}
+
+std::function<void()> TransitiveComparisonAnalyzer::EnterConstraint(const PrimExpr& constraint) {
+  return impl_->EnterConstraint(constraint);
+}
+
+TransitiveComparisonAnalyzer::Impl::Impl(const std::vector<PrimExpr>& knowns) {
   for (const auto& expr : knowns) {
     AddKnown(expr);
   }
 }
-void ComparisonSet::AddKnown(const PrimExpr& expr) {
+
+void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr) {
   // std::cout << "ComparisonSet, adding known " << expr << std::endl;
-  for (const auto& subexpr : ExtractConstraints(expr)) {
+  AddKnown(expr, knowns_);
+}
+
+void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr,
+                                                  std::vector<Comparison>& vec) {
+  for (const auto& subexpr : ExtractConstraints(expr, false)) {
     Comparison cmp(subexpr);
     if (cmp.IsValid()) {
-      knowns_.push_back(cmp);
+      vec.push_back(cmp);
     }
   }
+}
+
+void TransitiveComparisonAnalyzer::Impl::Bind(const tir::Var& var, const Range& range) {
+  AddKnown(var >= range->min);
+  AddKnown(var < range->min + range->extent);
+}
+
+void TransitiveComparisonAnalyzer::Impl::Bind(const tir::Var& var, const PrimExpr& expr) {
+  AddKnown(var == expr);
+}
+
+std::function<void()> TransitiveComparisonAnalyzer::Impl::EnterConstraint(const PrimExpr& expr) {
+  size_t old_literal_size = scoped_knowns_.size();
+  AddKnown(expr, scoped_knowns_);
+  size_t new_literal_size = scoped_knowns_.size();
+
+  auto frecover = [old_literal_size, new_literal_size, this]() {
+    ICHECK_EQ(scoped_knowns_.size(), new_literal_size);
+    scoped_knowns_.erase(scoped_knowns_.begin() + old_literal_size, scoped_knowns_.end());
+  };
+  return frecover;
 }
 
 namespace {
@@ -531,8 +576,8 @@ class NullStream : public std::ostream {
 };
 }  // namespace
 
-CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs, const PrimExpr& rhs,
-                                        Analyzer* analyzer) const {
+CompareResult TransitiveComparisonAnalyzer::Impl::TryCompare(const PrimExpr& lhs,
+                                                             const PrimExpr& rhs) const {
   // Currently only supports integer checks
   if (!lhs.dtype().is_int() || !rhs.dtype().is_int()) {
     return CompareResult::kUnknown;
@@ -552,11 +597,11 @@ CompareResult ComparisonSet::TryCompare(const PrimExpr& lhs, const PrimExpr& rhs
     }
   }
 
-  return TryCompareFromLHS(lhs, rhs, analyzer) & Reverse(TryCompareFromLHS(rhs, lhs, analyzer));
+  return TryCompareFromLHS(lhs, rhs) & Reverse(TryCompareFromLHS(rhs, lhs));
 }
 
-CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const PrimExpr& rhs_input,
-                                               Analyzer* analyzer) const {
+CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
+    const PrimExpr& lhs_input, const PrimExpr& rhs_input) const {
   // auto& printer = std::cout;
   auto printer = NullStream();
   printer << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input << std::endl;
@@ -579,6 +624,8 @@ CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const 
           << " using transitive knowns" << std::endl;
   printer << "\t"
           << "Knowns = " << print_vec_compare(knowns_) << std::endl;
+  printer << "\t"
+          << "Scoped Knowns = " << print_vec_compare(scoped_knowns_) << std::endl;
 
   PrimExpr lhs = lhs_input;
   PrimExpr rhs = rhs_input;
@@ -694,6 +741,12 @@ CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const 
       declare_known(normalized);
     }
   }
+  for (const auto& known : scoped_knowns_) {
+    Comparison normalized = known.NormalizedTo(lhs);
+    if (normalized.IsValid()) {
+      declare_known(normalized);
+    }
+  }
 
   printer << "\t"
           << "After first pass, knowns = " << x_known_str() << std::endl;
@@ -760,28 +813,9 @@ CompareResult ComparisonSet::TryCompareFromLHS(const PrimExpr& lhs_input, const 
       attempt_transitive(cmp);
     }
 
-    if (middle_expr->IsInstance<VarNode>()) {
-      printer << "\t"
-              << "Checking for transitive comparisons involving declared bounds of " << middle_expr
-              << std::endl;
-      IntSet int_set = analyzer->int_set(middle_expr);
-      printer << "\t\t"
-              << "Expr " << middle_expr << " has known bounds " << int_set << std::endl;
-      if (int_set.HasLowerBound()) {
-        PrimExpr expr = middle_expr >= int_set.min();
-        Comparison cmp(expr);
-        printer << "\t\t"
-                << "Attempting transitive comparison using expression " << expr
-                << " (comparison:  " << cmp.debug_as_primexpr() << ")" << std::endl;
-        attempt_transitive(cmp);
-      }
-      if (int_set.HasUpperBound()) {
-        Comparison cmp(middle_expr <= int_set.max());
-        printer << "\t\t"
-                << "Attempting transitive comparison using " << cmp.debug_as_primexpr()
-                << std::endl;
-        attempt_transitive(cmp);
-      }
+    for (const auto& known : scoped_knowns_) {
+      Comparison cmp = known.NormalizedTo(middle_expr);
+      attempt_transitive(cmp);
     }
 
     printer << "\t"

@@ -221,8 +221,8 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
     }
   };
 
-  std::ostream& printer = std::cout;
-  // auto printer = NullStream();
+  // std::ostream& printer = std::cout;
+  auto printer = NullStream();
 
   auto print_current = [&](size_t num_tabs = 0) {
     std::string tabs(num_tabs, '\t');

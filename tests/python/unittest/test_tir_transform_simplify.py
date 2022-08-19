@@ -1218,6 +1218,14 @@ class TestInequalities11(BaseBeforeAfter):
         A[0] = 0 <= j and j < 24 and 0 <= j + n and (i < j + n or j + n < 3 or 17 <= j + n)
 
 
+class TestInequalities12(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = (j < i) and ((0 < j) or ((i - 1) <= j)) and (j != 0) and (0 < i)
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
+        A[0] = (j < i) and (0 < j)
+
+
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     """A known value may be used until it is overwritten
 

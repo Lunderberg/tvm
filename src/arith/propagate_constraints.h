@@ -26,6 +26,7 @@
 #ifndef TVM_ARITH_PROPAGATE_CONSTRAINT_H_
 #define TVM_ARITH_PROPAGATE_CONSTRAINT_H_
 
+#include <tvm/arith/analyzer.h>
 #include <tvm/tir/expr.h>
 
 #include <vector>
@@ -34,26 +35,6 @@ namespace tvm {
 namespace arith {
 
 class Analyzer;
-
-/*! \brief internal structure for comparison.
- *
- * Values are assigned to allow these flags to be used in bitwise
- * operations.
- */
-enum class CompareResult : int {
-  kInconsistent = 0,
-  kEQ = 1,
-  kLT = 2,
-  kLE = 3,
-  kGT = 4,
-  kGE = 5,
-  kNE = 6,
-  kUnknown = 7
-};
-CompareResult operator&(CompareResult lhs, CompareResult rhs);
-CompareResult operator|(CompareResult lhs, CompareResult rhs);
-CompareResult operator~(CompareResult cmp);
-std::ostream& operator<<(std::ostream& os, CompareResult cmp);
 
 class Comparison {
  public:
@@ -64,7 +45,7 @@ class Comparison {
   Comparison Reversed() const;
 
  private:
-  friend class ComparisonSet;
+  friend class TransitiveComparisonAnalyzer;
 
   Comparison() {}
   Comparison(const PrimExpr& lhs, const PrimExpr& rhs, CompareResult result);
@@ -91,18 +72,25 @@ class Comparison {
   CompareResult result_{CompareResult::kInconsistent};
 };
 
-class ComparisonSet {
+class TransitiveComparisonAnalyzer::Impl {
  public:
-  explicit ComparisonSet(const std::vector<PrimExpr>& knowns);
+  Impl() {}
+  explicit Impl(const std::vector<PrimExpr>& knowns);
 
-  CompareResult TryCompare(const PrimExpr& lhs, const PrimExpr& rhs, Analyzer* analyzer) const;
+  CompareResult TryCompare(const PrimExpr& lhs, const PrimExpr& rhs) const;
 
   void AddKnown(const PrimExpr& expr);
 
- private:
-  CompareResult TryCompareFromLHS(const PrimExpr& lhs, const PrimExpr& rhs,
-                                  Analyzer* analyzer) const;
+  void Bind(const tir::Var& var, const PrimExpr& expr);
+  void Bind(const tir::Var& var, const Range& expr);
+  std::function<void()> EnterConstraint(const PrimExpr& expr);
 
+ private:
+  void AddKnown(const PrimExpr& expr, std::vector<Comparison>& vec);
+
+  CompareResult TryCompareFromLHS(const PrimExpr& lhs, const PrimExpr& rhs) const;
+
+  std::vector<Comparison> scoped_knowns_;
   std::vector<Comparison> knowns_;
 };
 
