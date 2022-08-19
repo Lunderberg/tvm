@@ -81,8 +81,8 @@ class TransitiveComparisonAnalyzer::Impl {
 
   void AddKnown(const PrimExpr& expr);
 
-  void Bind(const tir::Var& var, const PrimExpr& expr);
-  void Bind(const tir::Var& var, const Range& expr);
+  void Bind(const tir::Var& var, const PrimExpr& expr, bool allow_override = false);
+  void Bind(const tir::Var& var, const Range& expr, bool allow_override = false);
   std::function<void()> EnterConstraint(const PrimExpr& expr);
 
  private:
@@ -90,6 +90,7 @@ class TransitiveComparisonAnalyzer::Impl {
 
   CompareResult TryCompareFromLHS(const PrimExpr& lhs, const PrimExpr& rhs) const;
 
+  Map<Var, Range> prev_bindings_;
   std::vector<Comparison> scoped_knowns_;
   std::vector<Comparison> knowns_;
 };

@@ -508,11 +508,11 @@ CompareResult TransitiveComparisonAnalyzer::TryCompare(const PrimExpr& lhs, cons
   return impl_->TryCompare(lhs, rhs);
 }
 
-void TransitiveComparisonAnalyzer::Bind(const Var& var, const PrimExpr& expr) {
-  impl_->Bind(var, expr);
+void TransitiveComparisonAnalyzer::Bind(const Var& var, const PrimExpr& expr, bool allow_override) {
+  impl_->Bind(var, expr, allow_override);
 }
-void TransitiveComparisonAnalyzer::Bind(const Var& var, const Range& range) {
-  impl_->Bind(var, range);
+void TransitiveComparisonAnalyzer::Bind(const Var& var, const Range& range, bool allow_override) {
+  impl_->Bind(var, range, allow_override);
 }
 
 std::function<void()> TransitiveComparisonAnalyzer::EnterConstraint(const PrimExpr& constraint) {
@@ -540,13 +540,35 @@ void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr,
   }
 }
 
-void TransitiveComparisonAnalyzer::Impl::Bind(const tir::Var& var, const Range& range) {
-  AddKnown(var >= range->min);
-  AddKnown(var < range->min + range->extent);
+void TransitiveComparisonAnalyzer::Impl::Bind(const tir::Var& var, const Range& range,
+                                              bool allow_override) {
+  auto it = prev_bindings_.find(var);
+  if (it != prev_bindings_.end()) {
+    ExprDeepEqual expr_equal;
+    bool differs_from_previous = !expr_equal(range->min, (*it).second->min) ||
+                                 !expr_equal(range->extent, (*it).second->extent);
+    if (differs_from_previous) {
+      ICHECK(allow_override) << "Binding of variable " << var << " as " << range
+                             << " conflicts with previous binding as " << (*it).second;
+      knowns_.erase(std::remove_if(knowns_.begin(), knowns_.end(),
+                                   [&](const auto& known) { return known.lhs_.same_as(var); }),
+                    knowns_.end());
+    }
+  }
+
+  prev_bindings_.Set(var, range);
+
+  if (is_const_int(range->extent, 1)) {
+    AddKnown(var == range->min);
+  } else {
+    AddKnown(var >= range->min);
+    AddKnown(var < range->min + range->extent);
+  }
 }
 
-void TransitiveComparisonAnalyzer::Impl::Bind(const tir::Var& var, const PrimExpr& expr) {
-  AddKnown(var == expr);
+void TransitiveComparisonAnalyzer::Impl::Bind(const tir::Var& var, const PrimExpr& expr,
+                                              bool allow_override) {
+  Bind(var, Range::FromMinExtent(expr, 1), allow_override);
 }
 
 std::function<void()> TransitiveComparisonAnalyzer::Impl::EnterConstraint(const PrimExpr& expr) {
@@ -602,8 +624,8 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompare(const PrimExpr& lhs
 
 CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
     const PrimExpr& lhs_input, const PrimExpr& rhs_input) const {
-  // auto& printer = std::cout;
-  auto printer = NullStream();
+  auto& printer = std::cout;
+  // auto printer = NullStream();
   printer << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input << std::endl;
 
   // Have the integer value on the right, if present.

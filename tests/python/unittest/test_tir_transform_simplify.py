@@ -1219,11 +1219,13 @@ class TestInequalities11(BaseBeforeAfter):
 
 
 class TestInequalities12(BaseBeforeAfter):
-    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = (j < i) and ((0 < j) or ((i - 1) <= j)) and (j != 0) and (0 < i)
+    def before(A: T.Buffer[16, "bool"], j: T.int32):
+        for i in T.serial(16):
+            A[i] = (j < i) and ((0 < j) or ((i - 1) <= j)) and (j != 0) and (0 < i)
 
-    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
-        A[0] = (j < i) and (0 < j)
+    def expected(A: T.Buffer[16, "bool"], j: T.int32):
+        for i in T.serial(16):
+            A[i] = (j < i) and (0 < j)
 
 
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
