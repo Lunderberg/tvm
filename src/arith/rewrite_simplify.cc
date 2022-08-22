@@ -94,15 +94,14 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
            output == CompareResult::kGT;
   };
 
-  // std::cout << "In RewriteSimplifier, attempting to compare between " << x << " and " << y
-  //           << std::endl;
+  std::cout << "In RewriteSimplifier, attempting to compare between " << x << " and " << y
+            << std::endl;
 
   output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
 
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using inequalities, comparison between " << x << "
-  //           and "
-  //           << y << " is " << output << std::endl;
+  std::cout << "\t"
+            << "In RewriteSimplifier, after using inequalities, comparison between " << x << " and "
+            << y << " is " << output << std::endl;
 
   if (is_finished()) return output;
 
@@ -110,9 +109,9 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
     output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
   }
 
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using const int bounds, comparison between " << x
-  //           << " and " << y << " is " << output << std::endl;
+  std::cout << "\t"
+            << "In RewriteSimplifier, after using const int bounds, comparison between " << x
+            << " and " << y << " is " << output << std::endl;
 
   // TODO: Is the VariableIntBounds check required?
 
@@ -1442,15 +1441,62 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryMatchLiteralConstraint(const Prim
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const EQNode* op) {
-  return VisitExpr_(GetRef<EQ>(op), false);
+  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
+  op = ret.as<EQNode>();
+
+  if (auto const_res = TryConstFold<EQ>(op->a, op->b)) return const_res.value();
+
+  if (IsIndexType(op->a.dtype())) {
+    CompareResult result = TryCompare(op->a, op->b);
+    if (result == CompareResult::kEQ) {
+      return make_const(op->dtype, true);
+    } else if (result == CompareResult::kNE || result == CompareResult::kGT ||
+               result == CompareResult::kLT) {
+      return make_const(op->dtype, false);
+    }
+  }
+
+  return VisitWithoutRecursion(Downcast<EQ>(ret));
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NENode* op) {
-  PrimExpr as_eq = VisitExpr_(EQ(op->a, op->b), true);
-  return this->VisitExpr(Not(as_eq));
+  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
+  op = ret.as<NENode>();
+
+  if (auto const_res = TryConstFold<NE>(op->a, op->b)) return const_res.value();
+
+  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+
+  if (IsIndexType(op->a.dtype())) {
+    CompareResult result = TryCompare(op->a, op->b);
+    if (result == CompareResult::kNE || result == CompareResult::kGT ||
+        result == CompareResult::kLT) {
+      return make_const(op->dtype, true);
+    } else if (result == CompareResult::kEQ) {
+      return make_const(op->dtype, false);
+    } else if (result == CompareResult::kGE) {
+      // Known: a >= b
+      //
+      // a != b
+      // (a < b) or (b < a)
+      // False or (b < a)
+      // b < a
+      return VisitWithoutRecursion(LT(op->b, op->a));
+    } else if (result == CompareResult::kLE) {
+      // Known: a <= b
+      //
+      // a != b
+      // (a < b) or (b < a)
+      // (a < b) or False
+      // a < b
+      return VisitWithoutRecursion(LT(op->a, op->b));
+    }
+  }
+
+  return RewriteBooleanOperators(Not(VisitWithoutRecursion(EQ(op->a, op->b))));
 }
 
-PrimExpr RewriteSimplifier::Impl::VisitExpr_(EQ node, bool negated) {
+PrimExpr RewriteSimplifier::Impl::VisitWithoutRecursion(EQ node) {
   PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(node.get());
   auto* op = ret.as<EQNode>();
 
@@ -1469,15 +1515,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(EQ node, bool negated) {
   }
 
   if (IsIndexType(op->a.dtype())) {
-    CompareResult result = TryCompare(op->a, op->b);
-    if (result == CompareResult::kEQ) {
-      return make_const(op->dtype, true);
-    } else if (result == CompareResult::kNE || result == CompareResult::kGT ||
-               result == CompareResult::kLT) {
-      return make_const(op->dtype, false);
-    }
-    // TODO: NE handling
-
     TVM_TRY_REWRITE(c1 == x, x == c1);
     TVM_TRY_REWRITE(x - c1 == 0, x == c1);
     TVM_TRY_REWRITE(c1 - x == 0, x == c1);
@@ -1491,7 +1528,39 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(EQ node, bool negated) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LENode* op) {
-  return this->VisitExpr(Not(op->b < op->a));
+  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
+  op = ret.as<LENode>();
+
+  if (auto const_res = TryConstFold<LE>(op->a, op->b)) return const_res.value();
+  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+
+  if (IsIndexType(op->a.dtype())) {
+    CompareResult result = TryCompare(op->a, op->b);
+    if (result == CompareResult::kLE || result == CompareResult::kLT ||
+        result == CompareResult::kEQ) {
+      return make_const(op->dtype, true);
+    } else if (result == CompareResult::kGT) {
+      return make_const(op->dtype, false);
+    } else if (result == CompareResult::kNE) {
+      // Known: a != b
+      //
+      // a <= b
+      // (a < b) or (a == b)
+      // (a < b) or False
+      // a < b
+      return VisitWithoutRecursion(LT(op->a, op->b));
+    } else if (result == CompareResult::kGE) {
+      // Known: a >= b
+      //
+      // a <= b
+      // (a < b) or (a == b)
+      // False or (a == b)
+      // a == b
+      return VisitWithoutRecursion(EQ(op->a, op->b));
+    }
+  }
+
+  return RewriteBooleanOperators(Not(VisitWithoutRecursion(LT(op->b, op->a))));
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const GTNode* op) {
@@ -1499,13 +1568,33 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const GTNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const GENode* op) {
-  return this->VisitExpr(Not(op->a < op->b));
+  return this->VisitExpr(op->b <= op->a);
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LTNode* op) {
   PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
   op = ret.as<LTNode>();
+
   if (auto const_res = TryConstFold<LT>(op->a, op->b)) return const_res.value();
+
+  if (IsIndexType(op->a.dtype())) {
+    CompareResult result = TryCompare(op->a, op->b);
+    if (result == CompareResult::kLT) {
+      return make_const(op->dtype, true);
+    }
+    if (result == CompareResult::kGT || result == CompareResult::kGE ||
+        result == CompareResult::kEQ) {
+      return make_const(op->dtype, false);
+    }
+  }
+
+  return VisitWithoutRecursion(Downcast<LT>(ret));
+}
+
+PrimExpr RewriteSimplifier::Impl::VisitWithoutRecursion(LT node) {
+  PrimExpr ret = node;
+  auto* op = node.get();
+
   if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
   // Pattern var to match any expression
@@ -1521,15 +1610,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LTNode* op) {
   }
 
   if (IsIndexType(op->a.dtype())) {
-    CompareResult result = TryCompare(op->a, op->b);
-    if (result == CompareResult::kLT) {
-      return make_const(op->dtype, true);
-    }
-    if (result == CompareResult::kEQ || result == CompareResult::kGT ||
-        result == CompareResult::kGE) {
-      return make_const(op->dtype, false);
-    }
-
     // clang-format off
     TVM_TRY_REWRITE(x + y < x + z, y < z);
     TVM_TRY_REWRITE(x + y < z + x, y < z);

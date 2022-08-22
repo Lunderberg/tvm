@@ -105,7 +105,15 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
    * node may have additional simplifications performed, such as
    * simplifying `x != y` into `x > y` if it is known that `x >= y`.
    */
-  PrimExpr VisitExpr_(EQ node, bool negated);
+  PrimExpr VisitWithoutRecursion(EQ node);
+
+  /* \brief Internal helper function for LT and LE
+   *
+   * The same simplification rules are used in general.  However, a LE
+   * node may have additional simplifications performed, such as
+   * simplifying `x != y` into `x > y` if it is known that `x >= y`.
+   */
+  PrimExpr VisitWithoutRecursion(LT node);
 
   struct Constraint {
     explicit Constraint(PrimExpr expr);
