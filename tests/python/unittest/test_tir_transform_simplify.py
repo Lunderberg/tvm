@@ -1131,7 +1131,8 @@ class TestInequalities6(BaseBeforeAfter):
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
         A[0] = 14 <= j and i - 1 == j and i < 16
 
-    expected = before
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[0] = j == 14 and i - 1 == j and i < 16
 
 
 class TestInequalities7(BaseBeforeAfter):
