@@ -99,10 +99,76 @@ PrimExpr ConvertToAndOfOrs(const PrimExpr& expr) {
   return output;
 }
 
+std::vector<std::vector<PrimExpr>> DedupExprList(
+    const std::vector<std::vector<PrimExpr>>& vec_vec) {
+  std::unordered_map<size_t, PrimExpr, StructuralHash, StructuralEqual> index_to_expr;
+  std::unordered_map<PrimExpr, size_t, StructuralHash, StructuralEqual> expr_to_index;
+
+  std::vector<std::vector<size_t>> collected;
+
+  auto expr_to_key = [&](const PrimExpr& expr) -> size_t {
+    auto it = expr_to_index.find(expr);
+    if (it != expr_to_index.end()) {
+      return it->second;
+    }
+
+    size_t index = expr_to_index.size();
+    expr_to_index[expr] = index;
+    index_to_expr[index] = expr;
+    return index;
+  };
+
+  // Could throw everything into a set from the start, but that would
+  // remove any ordering that is already present.
+  auto vector_same_contents = [&](const std::vector<size_t>& a,
+                                  const std::vector<size_t>& b) -> bool {
+    if (a.size() != b.size()) {
+      return false;
+    }
+
+    return std::is_permutation(a.begin(), a.end(), b.begin());
+  };
+
+  // Intermediate map of indices, to avoid repeated walking of each
+  // expression.
+  std::vector<std::vector<size_t>> indices;
+  for (const auto& vec : vec_vec) {
+    // Map from PrimExpr to size_t, de-duplicating
+    std::vector<size_t> inner;
+    for (const auto& expr : vec) {
+      size_t index = expr_to_key(expr);
+      if (std::all_of(inner.begin(), inner.end(), [&](size_t prev) { return prev != index; })) {
+        inner.push_back(index);
+      }
+    }
+
+    // Add to list of indices, de-duplicating
+    if (std::all_of(indices.begin(), indices.end(), [&](const std::vector<size_t>& prev) {
+          return !vector_same_contents(prev, inner);
+        })) {
+      indices.push_back(inner);
+    }
+  }
+
+  std::vector<std::vector<PrimExpr>> out;
+  for (const auto& vec : indices) {
+    std::vector<PrimExpr> expr_vec;
+    for (const auto& i : vec) {
+      auto it = index_to_expr.find(i);
+      ICHECK(it != index_to_expr.end());
+      expr_vec.push_back(it->second);
+    }
+    out.push_back(std::move(expr_vec));
+  }
+
+  return out;
+}
+
 std::vector<std::vector<PrimExpr>> ExtractAndOfOrs(const PrimExpr& expr) {
   std::vector<std::vector<PrimExpr>> out;
   CollectConstraints2(expr, [&](const PrimExpr& part) { out.push_back(ExtractComponents(part)); });
-  return out;
+
+  return DedupExprList(out);
 }
 
 void CollectComponents2(const PrimExpr& expr, std::function<void(const PrimExpr&)> callback) {
@@ -123,7 +189,7 @@ std::vector<std::vector<PrimExpr>> ExtractOrOfAnds(const PrimExpr& expr) {
   std::vector<std::vector<PrimExpr>> out;
   CollectComponents2(expr,
                      [&](const PrimExpr& part) { out.push_back(ExtractConstraints(part, false)); });
-  return out;
+  return DedupExprList(out);
 }
 
 template <typename F>
@@ -302,24 +368,24 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
           //         << "Simplified vec_and[" << i_and << "][" << i_or
           //         << "] = " << vec_and[i_and][i_or] << " to " << simplified << std::endl;
           if (!expr_equal(simplified, vec_or[i_or])) {
-            printer << "\t"
-                    << "Replacing vec_and[" << i_and << "][" << i_or
-                    << "] = " << vec_and[i_and][i_or] << " with " << simplified << std::endl;
+            // printer << "\t"
+            //         << "Replacing vec_and[" << i_and << "][" << i_or
+            //         << "] = " << vec_and[i_and][i_or] << " with " << simplified << std::endl;
             vec_or[i_or] = simplified;
             modified_or = true;
             modified_and = true;
 
-            print_current();
+            // print_current();
           }
           // printer << "Finished visiting i_and = " << i_and << ", i_or = " << i_or << std::flush
           //         << ", expr = " << vec_or[i_or] << std::endl;
         }
 
         if (modified_or) {
-          printer << "\t"
-                  << "Cleaning up OR-group # " << i_and << std::endl;
+          // printer << "\t"
+          //         << "Cleaning up OR-group # " << i_and << std::endl;
           cleanup_or(i_and);
-          print_current(1);
+          // print_current(1);
         } else {
           break;
         }
@@ -376,10 +442,10 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
         }
 
         if (modified_or) {
-          printer << "\t"
-                  << "Cleaning up OR-group # " << i_and << std::endl;
+          // printer << "\t"
+          //         << "Cleaning up OR-group # " << i_and << std::endl;
           cleanup_or(i_and);
-          print_current(1);
+          // print_current(1);
         } else {
           break;
         }
@@ -402,7 +468,7 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
   printer << "Starting Step 3 using AND of OR: "
           << "Simplifications across OR" << std::endl;
 
-  // Simplifications across AND pairs in related OR sets
+  // Simplifications across OR pairs in related OR sets
   //
   // Requiring that (B and C) simplifies to a single expression
   // (A or B) and (A or C) => A or (B and C)
@@ -436,18 +502,26 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
         }
 
         if (!i_distinct_expr.has_value()) {
-          // i_vec_or is a subset of j_vec_or.  i_vec_or imposes a
-          // stronger condition, so remove j_vec_or.
+          // I = (i_0 || i_1 || ... || i_N)
+          // J = (i_0 || i_1 || ... || i_N || j_0 || ... || j_N)
+          // I && J == I == I && false
+
+          // print_current(2);
 
           j_vec_or = {Bool(true)};
-          std::swap(i_vec_or, j_vec_or);
+          // std::swap(i_vec_or, j_vec_or);
           modified_and = true;
 
           printer << "\t"
-                  << "Removing vec_and[" << j_and << "], which is a subset of vec_and[" << i_and
-                  << "], then swapping vec_and[" << i_and << "] into location of vec_and[" << j_and
+                  << "Removing vec_and[" << j_and << "], which is a superset of vec_and[" << i_and
                   << "]" << std::endl;
-          print_current(2);
+
+          // printer << "\t"
+          //         << "Removing vec_and[" << j_and << "], which is a subset of vec_and[" << i_and
+          //         << "], then swapping vec_and[" << i_and << "] into location of vec_and[" <<
+          //         j_and
+          //         << "]" << std::endl;
+          // print_current(2);
           continue;
         }
 
@@ -463,14 +537,17 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
         }
 
         if (!j_distinct_expr.has_value()) {
-          // j_vec_or is a subset of i_vec_or.  j_vec_or imposes a
-          // stronger condition, so remove i_vec_or.
+          // I = (i_0 || ... || i_N || j_0 || ... || j_N)
+          // J = (j_0 || ... || j_N)
+          // I && J == J
 
-          j_vec_or = {Bool(true)};
+          print_current(2);
+
+          i_vec_or = {Bool(true)};
           modified_and = true;
 
           printer << "\t"
-                  << "Removing vec_and[" << i_and << "], which is a subset of vec_and[" << j_and
+                  << "Removing vec_and[" << i_and << "], which is a superset of vec_and[" << j_and
                   << "]" << std::endl;
           print_current(2);
 
@@ -485,10 +562,10 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
             }
           }
 
-          printer << "\t"
-                  << "vec_and[" << i_and << "] and vec_and[" << j_and << "] are the same length "
-                  << i_vec_or.size() << " and have " << num_shared_exprs
-                  << " expresssions in common" << std::endl;
+          // printer << "\t"
+          //         << "vec_and[" << i_and << "] and vec_and[" << j_and << "] are the same length "
+          //         << i_vec_or.size() << " and have " << num_shared_exprs
+          //         << " expresssions in common" << std::endl;
 
           if (num_shared_exprs + 1 == i_vec_or.size()) {
             // All but one of the expressions are shared.  If the AND
@@ -499,10 +576,10 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
             auto& expr_i = i_vec_or[i_distinct_expr.value()];
             auto& expr_j = j_vec_or[j_distinct_expr.value()];
             bool made_update = false;
-            printer << "\t"
-                    << "vec_and[" << i_and << "] and vec_and[" << j_and << "] differ only by "
-                    << expr_i << " in vec_and[" << i_and << "] and " << expr_j << " in vec_and["
-                    << j_and << "]" << std::endl;
+            // printer << "\t"
+            //         << "vec_and[" << i_and << "] and vec_and[" << j_and << "] differ only by "
+            //         << expr_i << " in vec_and[" << i_and << "] and " << expr_j << " in vec_and["
+            //         << j_and << "]" << std::endl;
             try_merge_and(expr_i, expr_j, [&](PrimExpr new_i, PrimExpr new_j) {
               printer << "\t\t"
                       << "Can simplify (" << expr_i << " && " << expr_j << ") to "
@@ -638,62 +715,62 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
   std::ostream& printer = std::cout;
   // auto printer = NullStream();
 
-  // auto print_current = [&](size_t num_tabs = 0) {
-  //   std::string tabs(num_tabs, '\t');
-  //   printer << tabs << "expr = (";
-  //   for (size_t i_and = 0; i_and < t_vec_or.size(); i_and++) {
-  //     const auto& t_vec_and = t_vec_or[i_and];
-
-  //     printer << "\n" << tabs << "\t";
-  //     if (i_and) {
-  //       printer << " or ";
-  //     } else {
-  //       printer << "    ";
-  //     }
-  //     printer << "(";
-  //     for (size_t i_or = 0; i_or < t_vec_and.size(); i_or++) {
-  //       const PrimExpr& expr = t_vec_and[i_or];
-
-  //       if (i_or) {
-  //         printer << " and ";
-  //       }
-  //       printer << expr;
-  //     }
-  //     printer << ")";
-  //   }
-  //   if (t_vec_or.size()) {
-  //     printer << "\n" << tabs;
-  //   }
-  //   printer << ")" << std::endl;
-  // };
-
   auto print_current = [&](size_t num_tabs = 0) {
     std::string tabs(num_tabs, '\t');
-    printer << tabs << "expr = any(";
+    printer << tabs << "expr = (";
     for (size_t i_and = 0; i_and < t_vec_or.size(); i_and++) {
       const auto& t_vec_and = t_vec_or[i_and];
 
       printer << "\n" << tabs << "\t";
-
-      if (t_vec_and.size() == 0) {
-        printer << "all()";
-      } else if (t_vec_and.size() == 1) {
-        printer << t_vec_and[0];
+      if (i_and) {
+        printer << " or ";
       } else {
-        printer << "all(";
-        for (size_t i_or = 0; i_or < t_vec_and.size(); i_or++) {
-          const PrimExpr& expr = t_vec_and[i_or];
-          printer << "\n" << tabs << "\t\t" << expr << ",";
-        }
-        printer << "\n"
-                << tabs << "\t"
-                << ")";
+        printer << "    ";
       }
+      printer << "(";
+      for (size_t i_or = 0; i_or < t_vec_and.size(); i_or++) {
+        const PrimExpr& expr = t_vec_and[i_or];
 
-      printer << ",";
+        if (i_or) {
+          printer << " and ";
+        }
+        printer << expr;
+      }
+      printer << ")";
     }
-    printer << "\n" << tabs << ")" << std::endl;
+    if (t_vec_or.size()) {
+      printer << "\n" << tabs;
+    }
+    printer << ")" << std::endl;
   };
+
+  // auto print_current = [&](size_t num_tabs = 0) {
+  //   std::string tabs(num_tabs, '\t');
+  //   printer << tabs << "expr = any(";
+  //   for (size_t i_and = 0; i_and < t_vec_or.size(); i_and++) {
+  //     const auto& t_vec_and = t_vec_or[i_and];
+
+  //     printer << "\n" << tabs << "\t";
+
+  //     if (t_vec_and.size() == 0) {
+  //       printer << "all()";
+  //     } else if (t_vec_and.size() == 1) {
+  //       printer << t_vec_and[0];
+  //     } else {
+  //       printer << "all(";
+  //       for (size_t i_or = 0; i_or < t_vec_and.size(); i_or++) {
+  //         const PrimExpr& expr = t_vec_and[i_or];
+  //         printer << "\n" << tabs << "\t\t" << expr << ",";
+  //       }
+  //       printer << "\n"
+  //               << tabs << "\t"
+  //               << ")";
+  //     }
+
+  //     printer << ",";
+  //   }
+  //   printer << "\n" << tabs << ")" << std::endl;
+  // };
 
   print_current();
 
@@ -730,7 +807,7 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
             t_modified_and = true;
             t_modified_or = true;
 
-            print_current();
+            // print_current();
           }
           // printer << "Finished visiting i_and = " << i_and << ", i_or = " << i_or << std::flush
           //         << ", expr = " << vec_or[i_or] << std::endl;
@@ -740,7 +817,7 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
           printer << "\t"
                   << "Cleaning up AND-group # " << t_i_or << std::endl;
           t_cleanup_and(t_i_or);
-          print_current(1);
+          // print_current(1);
         } else {
           break;
         }
@@ -751,7 +828,7 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
       printer << "\t"
               << "Cleaning up OR-groups" << std::endl;
       t_cleanup_or();
-      print_current(1);
+      // print_current(1);
     } else {
       break;
     }
@@ -792,16 +869,16 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
               expr_j = new_j;
               t_modified_and = true;
               t_modified_or = true;
-              print_current(2);
+              // print_current(2);
             });
           }
         }
 
         if (t_modified_and) {
-          printer << "\t"
-                  << "Cleaning up OR-group # " << t_i_or << std::endl;
+          // printer << "\t"
+          //         << "Cleaning up AND-group # " << t_i_or << std::endl;
           t_cleanup_and(t_i_or);
-          print_current(1);
+          // print_current(1);
         } else {
           break;
         }
@@ -809,10 +886,10 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
     }
 
     if (t_modified_or) {
-      printer << "\t"
-              << "Cleaning up AND-groups" << std::endl;
+      // printer << "\t"
+      //         << "Cleaning up AND-groups" << std::endl;
       t_cleanup_or();
-      print_current(1);
+      // print_current(1);
     }
   }
 
@@ -859,20 +936,31 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
         }
 
         if (!i_distinct_expr.has_value()) {
+          // I = (i_0 && i_1 && ... && i_N)
+          // J = (i_0 && i_1 && ... && i_N && j_0 && ... && j_N)
+          // I || J == I
+
           // all(i_vec_and) || (all(i_vec_and) && all(j_but_not_i))
           //
           // i_vec_and is a subset of the conditions in j_vec_and.
           // Anything that passes j_vec_and will also pass i_vec_and,
           // so we can remove j_vec_and.
 
+          print_current(2);
+
           t_j_vec_and = {Bool(false)};
-          std::swap(t_i_vec_and, t_j_vec_and);
+          // std::swap(t_i_vec_and, t_j_vec_and);
           t_modified_or = true;
 
           printer << "\t"
                   << "Removing vec_and[" << t_j_or << "], which is a subset of vec_and[" << t_i_or
-                  << "], then swapping vec_and[" << t_i_or << "] into location of vec_and["
-                  << t_j_or << "]" << std::endl;
+                  << "]" << std::endl;
+
+          // printer << "\t"
+          //         << "Removing vec_and[" << t_j_or << "], which is a subset of vec_and[" <<
+          //         t_i_or
+          //         << "], then swapping vec_and[" << t_i_or << "] into location of vec_and["
+          //         << t_j_or << "]" << std::endl;
           print_current(2);
           continue;
         }
@@ -889,11 +977,11 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
         }
 
         if (!j_distinct_expr.has_value()) {
-          // (all(j_vec_and) && all(i_but_not_j)) || all(j_vec_and)
-          //
-          // j_vec_and is a subset of i_vec_and.  Anything that passes
-          // i_vec_and will also pass j_vec_and, so we can remove
-          // i_vec_and.
+          // I = (i_0 && ... && i_N && j_0 && ... && j_N)
+          // J = (j_0 && ... && j_N)
+          // I || J == J
+
+          print_current(2);
 
           t_i_vec_and = {Bool(false)};
           t_modified_or = true;
@@ -914,10 +1002,10 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
             }
           }
 
-          printer << "\t"
-                  << "vec_or[" << t_i_or << "] and vec_or[" << t_j_or << "] are the same length "
-                  << t_i_vec_and.size() << " and have " << num_shared_exprs
-                  << " expresssions in common" << std::endl;
+          // printer << "\t"
+          //         << "vec_or[" << t_i_or << "] and vec_or[" << t_j_or << "] are the same length "
+          //         << t_i_vec_and.size() << " and have " << num_shared_exprs
+          //         << " expresssions in common" << std::endl;
 
           if (num_shared_exprs + 1 == t_i_vec_and.size()) {
             // All but one of the expressions are shared.  If the OR
@@ -928,10 +1016,10 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
             auto& expr_i = t_i_vec_and[i_distinct_expr.value()];
             auto& expr_j = t_j_vec_and[j_distinct_expr.value()];
             bool made_update = false;
-            printer << "\t"
-                    << "vec_or[" << t_i_or << "] and vec_or[" << t_j_or << "] differ only by "
-                    << expr_i << " in vec_or[" << t_i_or << "] and " << expr_j << " in vec_or["
-                    << t_j_or << "]" << std::endl;
+            // printer << "\t"
+            //         << "vec_or[" << t_i_or << "] and vec_or[" << t_j_or << "] differ only by "
+            //         << expr_i << " in vec_or[" << t_i_or << "] and " << expr_j << " in vec_or["
+            //         << t_j_or << "]" << std::endl;
             try_merge_or(expr_i, expr_j, [&](PrimExpr new_i, PrimExpr new_j) {
               printer << "\t\t"
                       << "Can simplify (" << expr_i << " || " << expr_j << ") to "
@@ -1012,7 +1100,10 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
     }();
 
     std::cout << "\t\t"
-              << "Round " << i << " simplified from " << expr << " to " << simplified << std::endl;
+              << "Round " << i << " simplified from " << expr << "\n"
+              << "\t\t"
+              << "\t"
+              << " to " << simplified << std::endl;
 
     bool converged = expr_equal(simplified, lookback);
     lookback = expr;
