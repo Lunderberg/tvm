@@ -2128,6 +2128,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
     TVM_TRY_REWRITE(y == x + 1 || x <= y, x <= y);
     TVM_TRY_REWRITE(x <= y || y == x + 1, x <= y);
 
+    TVM_TRY_REWRITE(x <= y || x == y + 1, x <= y + 1);
+    TVM_TRY_REWRITE(x <= y || x - 1 == y, x <= y + 1);
+    TVM_TRY_REWRITE(x == y + 1 || x <= y, x <= y + 1);
+    TVM_TRY_REWRITE(x - 1 == y || x <= y, x <= y + 1);
+
     TVM_TRY_REWRITE_IF(x == c1 || x <= c2, x <= c1, c1.Eval()->value - 1 == c2.Eval()->value);
     TVM_TRY_REWRITE_IF(x <= c2 || x == c1, x <= c1, c1.Eval()->value - 1 == c2.Eval()->value);
     TVM_TRY_REWRITE_IF(x == c1 || c2 <= x, c1 <= x, c1.Eval()->value + 1 == c2.Eval()->value);
