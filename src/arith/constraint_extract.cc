@@ -230,7 +230,12 @@ class NullStream : public std::ostream {
 namespace {
 class AndOfOrs {
  public:
-  AndOfOrs(const PrimExpr& expr);
+  enum class Rep {
+    AndOfOrs,
+    OrOfAnds,
+  };
+
+  AndOfOrs(const PrimExpr& expr, Rep rep);
 
   PrimExpr AsPrimExpr() const;
 
@@ -238,46 +243,24 @@ class AndOfOrs {
   void SimplifyWithinChunks(Analyzer* analyzer);
   void SimplifyAcrossChunks(Analyzer* analyzer);
 
+  void Debug_Cleanup() { Cleanup(); }
   std::vector<std::vector<PrimExpr>> Debug_Extract() const;
 
   friend std::ostream& operator<<(std::ostream& os, const AndOfOrs& obj);
 
  private:
-  template <typename F>
-  static void TrySimplifyOr(const PrimExpr& a, const PrimExpr& b, Analyzer* analyzer, F callback) {
-    PrimExpr joint = a || b;
-    PrimExpr simplified = analyzer->Simplify(joint);
-    if (!ExprDeepEqual()(simplified, joint)) {
-      if (auto* simplified_or = simplified.as<OrNode>()) {
-        callback(simplified_or->a, simplified_or->b);
-      } else {
-        callback(Bool(false), simplified);
-      }
-    }
-  }
-
-  template <typename F>
-  static void TrySimplifyAnd(const PrimExpr& a, const PrimExpr& b, Analyzer* analyzer, F callback) {
-    PrimExpr joint = a && b;
-    PrimExpr simplified = analyzer->Simplify(joint);
-    if (!ExprDeepEqual()(simplified, joint)) {
-      if (auto* simplified_and = simplified.as<OrNode>()) {
-        callback(simplified_and->a, simplified_and->b);
-      } else {
-        callback(Bool(true), simplified);
-      }
-    }
-  }
-
   void Cleanup();
 
   // Utility class to avoid mixing up indices and lookup keys.
   enum class Key : size_t {};
   Key GetKey(const PrimExpr& expr);
 
+  void TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer);
+  void TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer);
+
   PrimExpr GetExpr(Key key) const;
 
-  PrimExpr KnownProvidedByChunk(const std::vector<Key>& chunk) const;
+  PrimExpr ChunkExpr(const std::vector<Key>& chunk) const;
   PrimExpr KnownProvidedWhileInChunk(const std::vector<Key>& chunk) const;
   PrimExpr KnownProvidedByComponentToSiblings(Key key) const;
 
@@ -286,14 +269,19 @@ class AndOfOrs {
   std::unordered_map<PrimExpr, Key, StructuralHash, StructuralEqual> expr_to_key;
   Key key_true;
   Key key_false;
+
+  Rep rep;
 };
 
-AndOfOrs::AndOfOrs(const PrimExpr& expr)
-    : key_true(GetKey(Bool(true))), key_false(GetKey(Bool(false))) {
-  CollectConstraints2(expr, [&](const PrimExpr& or_expr) {
+AndOfOrs::AndOfOrs(const PrimExpr& expr, Rep rep)
+    : key_true(GetKey(Bool(true))), key_false(GetKey(Bool(false))), rep(rep) {
+  auto collect_outer = (rep == Rep::AndOfOrs) ? CollectConstraints2 : CollectComponents2;
+  auto collect_inner = (rep == Rep::AndOfOrs) ? CollectComponents2 : CollectConstraints2;
+
+  collect_outer(expr, [&](const PrimExpr& outer_expr) {
     std::vector<Key> or_components;
-    CollectComponents2(or_expr, [&](const PrimExpr& or_component) {
-      Key key = GetKey(or_component);
+    collect_inner(outer_expr, [&](const PrimExpr& inner_expr) {
+      Key key = GetKey(inner_expr);
       bool is_duplicate = std::any_of(or_components.begin(), or_components.end(),
                                       [&](Key prev) { return prev == key; });
       if (!is_duplicate) {
@@ -343,24 +331,70 @@ PrimExpr AndOfOrs::AsPrimExpr() const {
   return out;
 }
 
+void AndOfOrs::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
+  PrimExpr joint = GetExpr(a) || GetExpr(b);
+  PrimExpr simplified = analyzer->Simplify(joint);
+  if (!ExprDeepEqual()(simplified, joint)) {
+    std::cout << "Can simplify " << joint << " to " << simplified << std::endl;
+    if (auto* simplified_or = simplified.as<OrNode>()) {
+      std::cout << "\t"
+                << "Replacing " << GetExpr(a) << " with " << simplified_or->a << std::endl;
+      std::cout << "\t"
+                << "Replacing " << GetExpr(b) << " with " << simplified_or->b << std::endl;
+      a = GetKey(simplified_or->a);
+      b = GetKey(simplified_or->b);
+    } else {
+      std::cout << "\t"
+                << "Replacing " << GetExpr(a) << " with " << GetExpr(key_false) << std::endl;
+      std::cout << "\t"
+                << "Replacing " << GetExpr(b) << " with " << simplified << std::endl;
+      a = key_false;
+      b = GetKey(simplified);
+    }
+  }
+}
+
+void AndOfOrs::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
+  PrimExpr joint = GetExpr(a) && GetExpr(b);
+  PrimExpr simplified = analyzer->Simplify(joint);
+  if (!ExprDeepEqual()(simplified, joint)) {
+    std::cout << "Can simplify " << joint << " to " << simplified << std::endl;
+    if (auto* simplified_and = simplified.as<AndNode>()) {
+      std::cout << "\t"
+                << "Replacing " << GetExpr(a) << " with " << simplified_and->a << std::endl;
+      std::cout << "\t"
+                << "Replacing " << GetExpr(b) << " with " << simplified_and->b << std::endl;
+      a = GetKey(simplified_and->a);
+      b = GetKey(simplified_and->b);
+    } else {
+      std::cout << "\t"
+                << "Replacing " << GetExpr(a) << " with " << GetExpr(key_true) << std::endl;
+      std::cout << "\t"
+                << "Replacing " << GetExpr(b) << " with " << simplified << std::endl;
+      a = key_true;
+      b = GetKey(simplified);
+    }
+  }
+}
+
 std::ostream& operator<<(std::ostream& os, const AndOfOrs& obj) {
   os << "expr = (";
-  for (size_t i_and = 0; i_and < obj.expr_indices.size(); i_and++) {
-    const auto& chunk_indices = obj.expr_indices[i_and];
+  for (size_t i_outer = 0; i_outer < obj.expr_indices.size(); i_outer++) {
+    const auto& chunk_indices = obj.expr_indices[i_outer];
 
     os << "\n"
        << "\t";
-    if (i_and) {
-      os << " and ";
+    if (i_outer) {
+      os << (obj.rep == AndOfOrs::Rep::AndOfOrs ? " and " : " or  ");
     } else {
       os << "     ";
     }
     os << "(";
-    for (size_t i_or = 0; i_or < chunk_indices.size(); i_or++) {
-      auto key = chunk_indices[i_or];
+    for (size_t i_inner = 0; i_inner < chunk_indices.size(); i_inner++) {
+      auto key = chunk_indices[i_inner];
 
-      if (i_or) {
-        os << " or ";
+      if (i_inner) {
+        os << (obj.rep == AndOfOrs::Rep::AndOfOrs ? " or " : " and ");
       }
       os << obj.GetExpr(key);
     }
@@ -373,26 +407,38 @@ std::ostream& operator<<(std::ostream& os, const AndOfOrs& obj) {
   return os;
 }
 
-PrimExpr AndOfOrs::KnownProvidedByChunk(const std::vector<Key>& chunk) const {
-  PrimExpr known = Bool(false);
+PrimExpr AndOfOrs::ChunkExpr(const std::vector<Key>& chunk) const {
+  PrimExpr expr = Bool(rep != Rep::AndOfOrs);
   for (Key j : chunk) {
-    known = known || GetExpr(j);
+    if (rep == Rep::AndOfOrs) {
+      expr = expr || GetExpr(j);
+    } else {
+      expr = expr && GetExpr(j);
+    }
   }
-  return known;
+  return expr;
 }
 
 PrimExpr AndOfOrs::KnownProvidedWhileInChunk(const std::vector<Key>& chunk) const {
   PrimExpr known = Bool(true);
   for (const auto& other_chunk : expr_indices) {
     if (&chunk != &other_chunk) {
-      known = known && KnownProvidedByChunk(other_chunk);
+      PrimExpr provides = ChunkExpr(other_chunk);
+      if (rep == Rep::OrOfAnds) {
+        provides = RewriteBooleanOperators(!provides);
+      }
+      known = known && provides;
     }
   }
   return known;
 }
 
 PrimExpr AndOfOrs::KnownProvidedByComponentToSiblings(Key key) const {
-  return RewriteBooleanOperators(!GetExpr(key));
+  PrimExpr provides = GetExpr(key);
+  if (rep == Rep::AndOfOrs) {
+    provides = RewriteBooleanOperators(!provides);
+  }
+  return provides;
 }
 
 void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
@@ -425,7 +471,7 @@ void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
     }
   }
 
-  Cleanup();
+  // Cleanup();
 }
 
 void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
@@ -435,11 +481,11 @@ void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
         Key& key_i = chunk[expr_i];
         Key& key_j = chunk[expr_j];
 
-        TrySimplifyOr(GetExpr(key_i), GetExpr(key_j), analyzer,
-                      [&](const PrimExpr& new_i, const PrimExpr& new_j) {
-                        key_i = GetKey(new_i);
-                        key_j = GetKey(new_j);
-                      });
+        if (rep == Rep::AndOfOrs) {
+          TrySimplifyOr(key_i, key_j, analyzer);
+        } else {
+          TrySimplifyAnd(key_i, key_j, analyzer);
+        }
       }
     }
   }
@@ -447,6 +493,8 @@ void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
 }
 
 void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
+  std::cout << "Starting SimplifyAcrossChunks, expr = " << *this << std::endl;
+
   bool modified_and = false;
 
   for (size_t i_and = 0; i_and < expr_indices.size(); i_and++) {
@@ -454,15 +502,17 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
       auto& i_chunk = expr_indices[i_and];
       auto& j_chunk = expr_indices[j_and];
 
+      std::cout << "Starting comparison between chunk " << i_and << " and chunk " << j_and
+                << ", exprs = " << ChunkExpr(i_chunk) << ",  " << ChunkExpr(j_chunk) << std::endl;
+
       if (i_chunk.size() == 1 && j_chunk.size() == 1) {
         auto& key_i = i_chunk[0];
         auto& key_j = j_chunk[0];
-        TrySimplifyAnd(GetExpr(key_i), GetExpr(key_j), analyzer,
-                       [&](PrimExpr new_i, PrimExpr new_j) {
-                         key_i = GetKey(new_i);
-                         key_j = GetKey(new_j);
-                         modified_and = true;
-                       });
+        if (rep == Rep::AndOfOrs) {
+          TrySimplifyAnd(key_i, key_j, analyzer);
+        } else {
+          TrySimplifyOr(key_i, key_j, analyzer);
+        }
         continue;
       }
       std::unordered_set<Key> j_set(j_chunk.begin(), j_chunk.end());
@@ -476,11 +526,21 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
       }
 
       if (!i_distinct_index.has_value()) {
+        // For AndOfOrs
         // I = (i_0 || i_1 || ... || i_N)
         // J = (i_0 || i_1 || ... || i_N || j_0 || ... || j_N)
         // I && J == I == I && true
 
-        j_chunk = {key_true};
+        // For OrOfAnds
+        // I = (i_0 && i_1 && ... && i_N)
+        // J = (i_0 && i_1 && ... && i_N && j_0 && ... && j_N)
+        // I || J == I == I || false
+
+        if (rep == Rep::AndOfOrs) {
+          j_chunk = {key_true};
+        } else {
+          j_chunk = {key_false};
+        }
         modified_and = true;
         continue;
       }
@@ -496,11 +556,21 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
       }
 
       if (!j_distinct_index.has_value()) {
+        // For AndOfOrs
         // I = (i_0 || ... || i_N || j_0 || ... || j_N)
         // J = (j_0 || ... || j_N)
         // I && J == J == true && J
 
-        i_chunk = {key_true};
+        // For OrOfAnds
+        // I = (i_0 && ... && i_N && j_0 && ... && j_N)
+        // J = (j_0 && ... && j_N)
+        // I || J == J == false || J
+
+        if (rep == Rep::AndOfOrs) {
+          i_chunk = {key_true};
+        } else {
+          i_chunk = {key_false};
+        }
         modified_and = true;
 
         continue;
@@ -517,33 +587,43 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
         if (num_shared_exprs + 1 == i_chunk.size()) {
           // All but one of the expressions are shared.  If the AND
           // of the distinct expressions can be simplified, we can
-          // replace
+          // replace.
           //
+          // In AndOfOrs:
           // (A or B) and (A or C) => A or (B and C)
+          //
+          // In OrOfAnds:
+          // (A and B) or (A and C) => A and (B or C)
           auto& key_i = i_chunk[i_distinct_index.value()];
           auto& key_j = j_chunk[j_distinct_index.value()];
-          TrySimplifyAnd(GetExpr(key_i), GetExpr(key_j), analyzer,
-                         [&](PrimExpr new_i, PrimExpr new_j) {
-                           key_i = GetKey(new_i);
-                           key_j = GetKey(new_j);
-                         });
+          if (rep == Rep::AndOfOrs) {
+            TrySimplifyAnd(key_i, key_j, analyzer);
+          } else {
+            TrySimplifyOr(key_i, key_j, analyzer);
+          }
         }
       }
     }
   }
+  std::cout << "After SimplifyAcrossChunks, expr = " << *this << std::endl;
   Cleanup();
+
+  std::cout << "After Cleanup, expr = " << *this << std::endl;
 }
 
 void AndOfOrs::Cleanup() {
+  Key outer_identity = (rep == Rep::AndOfOrs) ? key_true : key_false;
+  Key inner_identity = (rep == Rep::AndOfOrs) ? key_false : key_true;
+
   for (auto& chunk : expr_indices) {
     // Any occurrence of True inside an OR makes the entire expression True.
-    if (std::any_of(chunk.begin(), chunk.end(), [&](Key key) { return key == key_true; })) {
-      chunk = {key_true};
+    if (std::any_of(chunk.begin(), chunk.end(), [&](Key key) { return key == outer_identity; })) {
+      chunk = {outer_identity};
     } else {
       // Any occurrence of False inside an OR can be removed
-      chunk.erase(
-          std::remove_if(chunk.begin(), chunk.end(), [&](Key key) { return key == key_false; }),
-          chunk.end());
+      chunk.erase(std::remove_if(chunk.begin(), chunk.end(),
+                                 [&](Key key) { return key == inner_identity; }),
+                  chunk.end());
     }
   }
 
@@ -555,7 +635,7 @@ void AndOfOrs::Cleanup() {
     // Any occurrence of True inside an AND can be removed.
     expr_indices.erase(std::remove_if(expr_indices.begin(), expr_indices.end(),
                                       [&](const std::vector<Key>& chunk) {
-                                        return chunk.size() == 1 && chunk[0] == key_true;
+                                        return chunk.size() == 1 && chunk[0] == outer_identity;
                                       }),
                        expr_indices.end());
   }
@@ -576,7 +656,7 @@ std::vector<std::vector<PrimExpr>> AndOfOrs::Debug_Extract() const {
 }  // namespace
 
 PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
-  AndOfOrs and_of_ors(orig);
+  AndOfOrs and_of_ors(orig, AndOfOrs::Rep::AndOfOrs);
 
   // std::ostream& printer = std::cout;
   auto printer = NullStream();
@@ -589,8 +669,6 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
 
   printer << "Finished Step 1 using AND of OR: "
           << "Local simplifications" << std::endl;
-
-  and_of_ors.SimplifyWithinChunks(analyzer);
 
   printer << "Starting Step 2 using AND of OR: "
           << "Simplifications within OR" << std::endl;
@@ -611,6 +689,9 @@ PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
 }
 
 PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
+  AndOfOrs or_of_ands(orig, AndOfOrs::Rep::OrOfAnds);
+  // or_of_ands.Debug_Cleanup();
+
   // TODO: Swap all usage/semantics of AND/OR
   auto t_vec_or = ExtractOrOfAnds(orig);
 
@@ -822,6 +903,11 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
 
   print_current();
 
+  or_of_ands.SimplifyComponents(analyzer);
+  t_vec_or = or_of_ands.Debug_Extract();
+
+  print_current();
+
   printer << "Starting Step 2 using OR of AND: "
           << "Simplifications within AND" << std::endl;
 
@@ -880,6 +966,10 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
   printer << "Finished Step 2 using OR of AND: "
           << "Simplifications within AND" << std::endl;
 
+  print_current();
+
+  or_of_ands.SimplifyWithinChunks(analyzer);
+  t_vec_or = or_of_ands.Debug_Extract();
   print_current();
 
   printer << "Starting Step 3 using OR of AND: "
@@ -1044,6 +1134,10 @@ PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
 
   print_current();
 
+  or_of_ands.SimplifyAcrossChunks(analyzer);
+  t_vec_or = or_of_ands.Debug_Extract();
+  print_current();
+
   // Make the final expression
   PrimExpr output = Bool(false);
   for (const auto& vec_or : t_vec_or) {
@@ -1066,12 +1160,12 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
 
   for (int i = 0; i < max_rounds; i++) {
     temp_total_rounds++;
-    // std::cout << "\t"
-    //           << "Starting round " << i << ", expr = " << expr << std::endl;
+    std::cout << "\t"
+              << "Starting round " << i << ", expr = " << expr << std::endl;
 
     if (as_const_int(expr)) {
-      // std::cout << "\t\t"
-      //           << "Round " << i << " started with a constant, breaking" << std::endl;
+      std::cout << "\t\t"
+                << "Round " << i << " started with a constant, breaking" << std::endl;
       break;
     }
 
@@ -1083,27 +1177,25 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
       }
     }();
 
-    // std::cout << "\t\t"
-    //           << "Round " << i << " simplified from " << expr << "\n"
-    //           << "\t\t"
-    //           << "\t"
-    //           << " to " << simplified << std::endl;
+    std::cout << "\t\t"
+              << "Round " << i << " simplified from " << expr << "\n"
+              << "\t\t"
+              << "\t"
+              << " to " << simplified << std::endl;
 
     bool converged = expr_equal(simplified, lookback);
     lookback = expr;
     expr = simplified;
     if (converged) {
-      // std::cout << "\t\t"
-      //           << "Round " << i << " is the same as round " << i - 2 << ", breaking" <<
-      //           std::endl;
+      std::cout << "\t\t"
+                << "Round " << i << " is the same as round " << i - 2 << ", breaking" << std::endl;
       break;
     }
-    break;
   }
 
-  // std::cout << "\t"
-  //           << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << expr << " after "
-  //           << temp_total_rounds << " total rounds" << std::endl;
+  std::cout << "\t"
+            << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << expr << " after "
+            << temp_total_rounds << " total rounds" << std::endl;
 
   return expr;
 }
