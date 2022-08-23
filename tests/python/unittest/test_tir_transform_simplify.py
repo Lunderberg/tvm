@@ -1229,6 +1229,25 @@ class TestInequalities12(BaseBeforeAfter):
             A[i] = (j < i) and (0 < j)
 
 
+class TestInequalities13(BaseBeforeAfter):
+    def before(A: T.Buffer[16, "bool"], j: T.int32, k: T.int32):
+        for i in T.serial(16):
+            A[i] = (i < j + 1) or (i == j + 1)
+
+    def expected(A: T.Buffer[16, "bool"], j: T.int32, k: T.int32):
+        for i in T.serial(16):
+            A[i] = i <= j + 1
+
+
+@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
+class TestInequalities14(BaseBeforeAfter):
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[i] = (i == 0 or j <= 0) and (i == 0 or j != 0)
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
+        A[i] = i == 0 or j < 0
+
+
 class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     """A known value may be used until it is overwritten
 
