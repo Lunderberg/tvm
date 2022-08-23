@@ -576,7 +576,25 @@ std::function<void()> TransitiveComparisonAnalyzer::Impl::EnterConstraint(const 
   AddKnown(expr, scoped_knowns_);
   size_t new_literal_size = scoped_knowns_.size();
 
-  auto frecover = [old_literal_size, new_literal_size, this]() {
+  // std::cout << "Entering constraint that " << expr << " which provided [";
+  // for (size_t i = old_literal_size; i < new_literal_size; i++) {
+  //   if (i > old_literal_size) {
+  //     std::cout << ", ";
+  //   }
+  //   std::cout << scoped_knowns_[i].debug_as_primexpr();
+  // }
+  // std::cout << "]" << std::endl;
+
+  PrimExpr temp = expr;
+  auto frecover = [old_literal_size, new_literal_size, this, temp]() {
+    // std::cout << "Leaving constraint that " << temp << " which provided [";
+    // for (size_t i = old_literal_size; i < new_literal_size; i++) {
+    //   if (i > old_literal_size) {
+    //     std::cout << ", ";
+    //   }
+    //   std::cout << scoped_knowns_[i].debug_as_primexpr();
+    // }
+    // std::cout << "]" << std::endl;
     ICHECK_EQ(scoped_knowns_.size(), new_literal_size);
     scoped_knowns_.erase(scoped_knowns_.begin() + old_literal_size, scoped_knowns_.end());
   };
@@ -596,6 +614,9 @@ class NullStream : public std::ostream {
  public:
   NullStream() : std::ostream(&m_nb) {}
 };
+
+// auto& printer = std::cout;
+auto printer = NullStream();
 }  // namespace
 
 CompareResult TransitiveComparisonAnalyzer::Impl::TryCompare(const PrimExpr& lhs,
@@ -619,14 +640,23 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompare(const PrimExpr& lhs
     }
   }
 
-  return TryCompareFromLHS(lhs, rhs) & Reverse(TryCompareFromLHS(rhs, lhs));
+  printer << "Comparing between lhs = " << lhs << " and rhs = " << rhs << std::endl;
+
+  auto from_lhs = TryCompareFromLHS(lhs, rhs);
+  auto from_rhs = Reverse(TryCompareFromLHS(rhs, lhs));
+  auto output = from_lhs & from_rhs;
+
+  printer << "Propagating from lhs = " << lhs << " resulted in " << from_lhs
+          << ", and from rhs = " << rhs << " resulted in " << from_rhs
+          << ".  Together, they resulted in " << output << "." << std::endl;
+
+  return output;
 }
 
 CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
     const PrimExpr& lhs_input, const PrimExpr& rhs_input) const {
-  auto& printer = std::cout;
-  // auto printer = NullStream();
-  printer << "Comparing between lhs = " << lhs_input << " and rhs = " << rhs_input << std::endl;
+  printer << "Attempting to propagate constraints from lhs = " << lhs_input
+          << " to rhs = " << rhs_input << std::endl;
 
   // Have the integer value on the right, if present.
   auto print_vec_compare = [](const std::vector<Comparison>& vec) {

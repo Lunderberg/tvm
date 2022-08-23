@@ -66,7 +66,9 @@ std::vector<std::vector<PrimExpr>> ExtractAndOfOrs(const PrimExpr& expr);
 PrimExpr ConvertToAndOfOrs(const PrimExpr& expr);
 
 class Analyzer;
+PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int max_rounds = 10);
 PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer);
+PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer);
 
 /* \brief Returns components, at least one of which must be true if the expression is true.
  *
