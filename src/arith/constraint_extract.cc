@@ -735,6 +735,7 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
 
     if (repr.NumTerms() < num_terms_in_best) {
       best = repr.AsPrimExpr();
+      num_terms_in_best = repr.NumTerms();
       rounds_since_improvement = 0;
     } else {
       rounds_since_improvement++;
