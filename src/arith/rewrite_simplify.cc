@@ -43,7 +43,7 @@ using namespace tir;
 static bool line_num = false;
 
 static bool recursive = false;
-static bool debug_enable_simplification_with_and_of_ors = true;
+static bool debug_enable_simplification_with_and_of_ors = false;
 
 // macro for doing simple rewrite
 #define TVM_TRY_REWRITE(SrcExpr, ResExpr)                                 \
