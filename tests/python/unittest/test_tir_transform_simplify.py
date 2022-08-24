@@ -375,13 +375,42 @@ class TestAlteredBufferContents(BaseBeforeAfter):
     def before(A: T.Buffer[(1,), "int32"], n: T.int32):
         if A[0] == n:
             A[0] = A[0] + 1
+            # If the simplifier incorrectly uses the invalidated
+            # A[0]==n condition required to reach this point, then it
+            # will incorrectly simplify to the then-case.  If the
+            # simplifier correctly determines that A[0] now contains
+            # n+1, then it will correctly simplify to the else-case.
             if A[0] == n:
-                A[0] = 0
+                A[0] = 5
+            else:
+                A[0] = 10
 
     def expected(A: T.Buffer[(1,), "int32"], n: T.int32):
         if A[0] == n:
             A[0] = A[0] + 1
-            T.evaluate(0)
+            A[0] = 10
+
+
+class TestPossiblyAlteredBufferContents(BaseBeforeAfter):
+    """No simplification of data-dependent conditionals.
+
+    Like TestAlteredBufferContents, but the `m==0` conditional
+    prevents the value of `A[0]` from being known at the point of the
+    inner conditional, either as `A[0] == n` from the outer
+    conditional or as `A[0] == n+1` from the write statement.
+    """
+
+    def before(A: T.Buffer[(1,), "int32"], n: T.int32, m: T.int32):
+        if A[0] == n:
+            if m == 0:
+                A[0] = A[0] + 1
+
+            if A[0] == n:
+                A[0] = 5
+            else:
+                A[0] = 10
+
+    expected = before
 
 
 class TestNegationOfCondition(BaseBeforeAfter):
