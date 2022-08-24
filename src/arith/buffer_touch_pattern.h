@@ -99,6 +99,8 @@ class Predicate : public ParametrizedExpression {
    */
   Predicate Intersection(const Predicate& other, Analyzer* analyzer) const;
 
+  Predicate Union(const Predicate& other, Analyzer* analyzer) const;
+
   /* \brief Remap variables within the predicate
    *
    * Remaps variables in the predicate according to the supplied map.
@@ -299,6 +301,8 @@ class BufferTouchPattern {
     tir::Buffer buffer;
     Predicate predicate;
     ParametrizedExpression known_value;
+
+    friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
 
     bool IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const;
 

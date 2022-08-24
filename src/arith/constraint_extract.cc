@@ -239,6 +239,8 @@ class AndOfOrs {
 
   PrimExpr AsPrimExpr() const;
 
+  size_t NumTerms() const;
+
   void Simplify(Analyzer* analyzer);
   void SimplifyComponents(Analyzer* analyzer);
   void SimplifyWithinChunks(Analyzer* analyzer);
@@ -330,6 +332,14 @@ PrimExpr AndOfOrs::AsPrimExpr() const {
     }
   }
   return expr;
+}
+
+size_t AndOfOrs::NumTerms() const {
+  size_t total = 0;
+  for (const auto& chunk : expr_indices) {
+    total += chunk.size();
+  }
+  return total;
 }
 
 void AndOfOrs::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
@@ -703,6 +713,10 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
 
   int temp_total_rounds = 0;
 
+  Optional<PrimExpr> best = NullOpt;
+  size_t num_terms_in_best = -1;
+  int rounds_since_improvement = 0;
+
   for (int i = 0; i < max_rounds; i++) {
     temp_total_rounds++;
     printer << "\t"
@@ -714,13 +728,17 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
       break;
     }
 
-    PrimExpr simplified = [&]() {
-      if (i % 2 == 0) {
-        return SimplifyUsingAndOfOrs(expr, analyzer);
-      } else {
-        return SimplifyUsingOrOfAnds(expr, analyzer);
-      }
-    }();
+    auto representation = (i % 2 == 0) ? AndOfOrs::Rep::AndOfOrs : AndOfOrs::Rep::OrOfAnds;
+    AndOfOrs repr(orig, representation);
+    repr.Simplify(analyzer);
+    PrimExpr simplified = repr.AsPrimExpr();
+
+    if (repr.NumTerms() < num_terms_in_best) {
+      best = repr.AsPrimExpr();
+      rounds_since_improvement = 0;
+    } else {
+      rounds_since_improvement++;
+    }
 
     printer << "\t\t"
             << "Round " << i << " simplified from " << expr << "\n"
@@ -736,13 +754,22 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
               << "Round " << i << " is the same as round " << i - 2 << ", breaking" << std::endl;
       break;
     }
+
+    if (rounds_since_improvement >= 4) {
+      printer << "\t\t"
+              << "No improvement found in the past " << rounds_since_improvement
+              << " simplification rounds, breaking" << std::endl;
+      break;
+    }
   }
 
+  PrimExpr result = best.value_or(expr);
+
   printer << "\t"
-          << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << expr << " after "
+          << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << result << " after "
           << temp_total_rounds << " total rounds" << std::endl;
 
-  return expr;
+  return result;
 }
 
 }  // namespace arith

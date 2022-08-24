@@ -172,7 +172,7 @@ Predicate Predicate::Difference(const Predicate& other, Analyzer* analyzer) cons
   // new_predicate_expr = analyzer.Simplify(new_predicate_expr);
 
   PrimExpr new_predicate_expr =
-      SimplifyUsingAndOfOrs(expression_.value() && !other_predicate, analyzer);
+      SimplifyUsingCNFAndDNF(expression_.value() && !other_predicate, analyzer);
 
   Map<tir::Var, Range> new_free_params = free_parameters_;
   for (const auto& pair : other.free_parameters_) {
@@ -206,6 +206,52 @@ Predicate Predicate::Intersection(const Predicate& other, Analyzer* analyzer) co
   Map<tir::Var, Range> new_free_params = free_parameters_;
   for (const auto& pair : other.free_parameters_) {
     new_free_params.Set(pair.first, pair.second);
+  }
+
+  return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
+}
+
+Predicate Predicate::Union(const Predicate& other, Analyzer* analyzer) const {
+  ICHECK_EQ(parameter_vars_.size(), other.parameter_vars_.size())
+      << "Predicates must be over the same number of parameters to be comparable";
+
+  if (!IsDefined() || !other.IsDefined()) {
+    return Predicate(parameter_vars_, NullOpt, {});
+  }
+
+  // if (this->IsSubsetOf(other, analyzer)) {
+  //   return (*this);
+  // } else if (other.IsSubsetOf(*this, analyzer)) {
+  //   return other;
+  // }
+
+  PrimExpr other_predicate = other(parameter_vars_).value();
+
+  With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
+  With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
+
+  // PrimExpr new_predicate_expr = analyzer->Simplify(expression_.value() || other_predicate);
+  PrimExpr new_predicate_expr =
+      SimplifyUsingCNFAndDNF(expression_.value() || other_predicate, analyzer);
+
+  Map<tir::Var, Range> new_free_params;
+
+  std::unordered_set<const VarNode*> undefined;
+  auto undefined_var_arr = UndefinedVars(new_predicate_expr);
+  for (const auto& var : undefined_var_arr) {
+    undefined.insert(var.get());
+  }
+
+  for (const auto& pair : free_parameters_) {
+    if (undefined.count(pair.first.get())) {
+      new_free_params.Set(pair.first, pair.second);
+    }
+  }
+
+  for (const auto& pair : other.free_parameters_) {
+    if (undefined.count(pair.first.get())) {
+      new_free_params.Set(pair.first, pair.second);
+    }
   }
 
   return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
@@ -961,6 +1007,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Map<Var, PrimExpr> loop_var_to_axis_var = transform->src_to_dst;
     Map<Var, Range> free_params = transform->dst->ranges;
 
+    // Constraints imposed on the axis variable (min/max bounds) and
+    // on free parameters (relationships relative to axis vars).
+    // These are used as part of the access predicate.
+    PrimExpr axis_var_relations = Bool(true);
+    for (const auto& expr : transform->dst->relations) {
+      axis_var_relations = axis_var_relations && expr;
+    }
+
     // The arith::SolveLinearEquation sometimes introduces free
     // parameters with extent of one.  Filtering them out here avoids
     // needing to track them through later simplifications.
@@ -1029,8 +1083,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // implied by the indices used to access the buffer, and any
     // additional statements resulting from unpacking the expression
     // contained in builtin::assume().
-    Optional<PrimExpr> predicate_expr = IndexRangePredicate(index_variables, index_expressions) &&
-                                        additional_predicate.value_or(Bool(true));
+    Optional<PrimExpr> predicate_expr =
+        axis_var_relations && additional_predicate.value_or(Bool(true));
 
     predicate_expr = normalize_expr(predicate_expr, &analyzer_);
     known_value_expr = normalize_expr(known_value_expr, &analyzer_);
@@ -1556,7 +1610,7 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
           // std::cout << "\t"
           //           << "As AND of ORs: " << union_predicate << std::endl;
           // union_predicate = analyzer.Simplify(union_predicate);
-          union_predicate = SimplifyUsingAndOfOrs(union_predicate, analyzer);
+          union_predicate = SimplifyUsingCNFAndDNF(union_predicate, analyzer);
           std::cout << "\t"
                     << "Then simplified: " << union_predicate << std::endl;
 
@@ -1581,6 +1635,11 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
   return constraints;
 }
 
+std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::BufferConstraint& obj) {
+  return os << "Buffer " << obj.buffer->name << " is " << obj.known_value << " if "
+            << obj.predicate;
+}
+
 /* \brief Merge constraints that may overwrite each other.
  *
  * Assumes that "before" and "after" sets of constraints are
@@ -1588,15 +1647,224 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
  */
 std::vector<BufferTouchPattern::BufferConstraint>
 BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
-    const std::vector<BufferTouchPattern::BufferConstraint>& before,
-    const std::vector<BufferTouchPattern::BufferConstraint>& after, Analyzer* analyzer) {
-  std::vector<BufferTouchPattern::BufferConstraint> output;
-  output.insert(output.end(), before.begin(), before.end());
-  output.insert(output.end(), after.begin(), after.end());
+    const std::vector<BufferTouchPattern::BufferConstraint>& arg_before,
+    const std::vector<BufferTouchPattern::BufferConstraint>& arg_after, Analyzer* analyzer) {
+  auto before = arg_before;
+  auto after = arg_after;
 
-  output = SimplifyOverwrittenConstraints(std::move(output), analyzer);
+  // std::cout << "Merging " << before.size() << " prior knowns with " << after.size() << " new
+  // knowns"
+  //           << std::endl;
 
-  return output;
+  // std::cout << "\t"
+  //           << "Initial state: " << std::endl;
+  // for (const auto& i : before) {
+  //   std::cout << "\t\t"
+  //             << "Before: " << i << std::endl;
+  // }
+  // for (const auto& i : after) {
+  //   std::cout << "\t\t"
+  //             << "Overwritten by: " << i << std::endl;
+  // }
+
+  {
+    std::vector<bool> used(after.size(), false);
+    std::vector<BufferTouchPattern::BufferConstraint> merged;
+
+    // std::cout << "\t"
+    //           << "Testing an alternative method" << std::endl;
+
+    for (const auto& prev : before) {
+      // std::cout << "\t\t"
+      //           << "Examining prior known " << prev << std::endl;
+      Predicate overwrite_at = prev.predicate;
+      overwrite_at.expression_ = Bool(false);
+
+      Predicate expand_known_at = prev.predicate;
+      expand_known_at.expression_ = Bool(false);
+
+      auto axis_vars = prev.known_value.parameter_vars_;
+      PrimExpr prev_value = prev.known_value.expression_.value();
+
+      // std::cout << "\t\t\t"
+      //           << "Looking through the newly applied writes" << std::endl;
+      for (size_t i = 0; i < after.size(); i++) {
+        if (after[i].buffer.same_as(prev.buffer)) {
+          Optional<PrimExpr> overwritten_with = after[i].known_value(axis_vars);
+          if (overwritten_with && analyzer->CanProveEqual(prev_value, overwritten_with.value())) {
+            // std::cout << "\t\t\t\t"
+            //           << "New known " << after[i]
+            //           << " provides the same value, and enlarge the region" << std::endl;
+            expand_known_at = expand_known_at.Union(after[i].predicate, analyzer);
+            used[i] = true;
+          } else {
+            // std::cout << "\t\t\t\t"
+            //           << "New known " << after[i]
+            //           << " provides a different value, should shrink the region" << std::endl;
+            overwrite_at = overwrite_at.Union(after[i].predicate, analyzer);
+          }
+        }
+      }
+
+      // std::cout << "\t\t\t"
+      //           << "The known value should be reduced by " << overwrite_at
+      //           << " and then expanded at " << expand_known_at << std::endl;
+
+      Predicate new_predicate = prev.predicate;
+      if (!overwrite_at.IsAlwaysFalse()) {
+        new_predicate = new_predicate.Difference(overwrite_at, analyzer);
+        // std::cout << "\t\t\t"
+        //           << "Reducing by " << overwrite_at << " results in " << new_predicate <<
+        //           std::endl;
+      }
+      if (!expand_known_at.IsAlwaysFalse()) {
+        new_predicate = new_predicate.Union(expand_known_at, analyzer);
+        // std::cout << "\t\t\t"
+        //           << "Expanding by " << expand_known_at << " results in " << new_predicate
+        //           << std::endl;
+      }
+
+      if (!new_predicate.IsAlwaysFalse()) {
+        // std::cout << "\t\t\t"
+        //           << "Predicate not entirely overwritten, keeping" << std::endl;
+        BufferTouchPattern::BufferConstraint post_constraint = prev;
+        post_constraint.predicate = new_predicate;
+        merged.push_back(post_constraint);
+      } else {
+        // std::cout << "\t\t\t"
+        //           << "Predicate entirely overwritten, doesn't get propagated forward" <<
+        //           std::endl;
+      }
+    }
+
+    for (size_t i = 0; i < after.size(); i++) {
+      // std::cout << "\t\t"
+      //           << "Examining new known " << after[i] << std::endl;
+      if (!used[i]) {
+        if (after[i].known_value.IsDefined()) {
+          // std::cout << "\t\t\t"
+          //           << "This known provides a different value than any previous constraint,
+          //           using."
+          //           << std::endl;
+          merged.push_back(after[i]);
+        } else {
+          // std::cout << "\t\t\t"
+          //           << "This write doesn't have a known value, don't need to record." <<
+          //           std::endl;
+        }
+      } else {
+        // std::cout << "\t\t\t"
+        //           << "This known was already merged with a previous constraint." << std::endl;
+      }
+    }
+
+    // std::cout << "\t\t"
+    //           << "Alternative method results in " << merged.size() << " post knowns" <<
+    //           std::endl;
+    // for (const auto& c : merged) {
+    //   std::cout << "\t\t\t"
+    //             << "Post: " << c << std::endl;
+    // }
+
+    return merged;
+  }
+
+  // std::unordered_map<const BufferNode*, Predicate> buffer_overwrites;
+  // for (const auto& j : after) {
+  //   const BufferNode* key = j.buffer.get();
+  //   auto it = buffer_overwrites.find(key);
+  //   if (it != buffer_overwrites.end()) {
+  //     Predicate prev = it->second;
+  //     Predicate updated = prev.Union(j.predicate, analyzer);
+  //     // buffer_overwrites[key] = updated;
+  //     it->second = updated;
+  //   } else {
+  //     buffer_overwrites.insert({key, j.predicate});
+  //   }
+  // }
+
+  // std::cout << "\t"
+  //           << "After merging buffers, found " << buffer_overwrites.size() << " overwrites"
+  //           << std::endl;
+  // for (const auto& pair : buffer_overwrites) {
+  //   std::cout << "\t\t"
+  //             << "In buffer " << pair.first->name << " overwrite in region " << pair.second
+  //             << std::endl;
+  // }
+
+  // for (auto& i : before) {
+  //   const BufferNode* key = i.buffer.get();
+  //   auto it = buffer_overwrites.find(key);
+  //   if (it != buffer_overwrites.end()) {
+  //     Predicate overwrite_by = it->second;
+  //     // std::cout << "Overwriting old predicate " << i.predicate << " by OR of all overwrites "
+  //     //           << overwrite_by << std::endl;
+  //     i.predicate = i.predicate.Difference(overwrite_by, analyzer);
+  //     // std::cout << "Finished overwrite" << i.predicate << std::endl;
+  //   }
+
+  //   for (const auto& j : after) {
+  //     // std::cout << "\t"
+  //     //           << "Starting an overwrite" << std::endl;
+  //     // std::cout << "\t\t"
+  //     //           << "Checking if these are distinct" << std::endl;
+  //     if (!i.IsDistinctFrom(j, analyzer)) {
+  //       // std::cout << "\t\t"
+  //       //           << "Will compute the difference of " << i.predicate << " and " <<
+  //       j.predicate
+  //       //           << std::endl;
+  //       i.OverwriteBy(j, analyzer);
+  //     }
+  //     // std::cout << "\t"
+  //     //           << "Finished an overwrite" << std::endl;
+  //   }
+  // }
+
+  // std::cout << "\t"
+  //           << "After reducing the predicate of priors" << std::endl;
+  // for (const auto& i : before) {
+  //   std::cout << "\t\t"
+  //             << "From before: " << i << std::endl;
+  // }
+
+  // // std::cout << "Finished overwriting " << before.size() << " prior knowns with predicates of "
+  // //           << after.size() << " new knowns" << std::endl;
+
+  // before.erase(std::remove_if(before.begin(), before.end(),
+  //                             [](const auto& constraint) -> bool {
+  //                               return constraint.predicate.IsAlwaysFalse();
+  //                             }),
+  //              before.end());
+  // after.erase(std::remove_if(after.begin(), after.end(),
+  //                            [](const auto& constraint) -> bool {
+  //                              return !constraint.known_value.IsDefined();
+  //                            }),
+  //             after.end());
+
+  // // std::cout << "Finished removing unknowns" << std::endl;
+
+  // std::vector<BufferTouchPattern::BufferConstraint> output;
+  // output.insert(output.end(), before.begin(), before.end());
+  // output.insert(output.end(), after.begin(), after.end());
+
+  // std::cout << "\t"
+  //           << "After overwrites, have " << output.size() << " disjoint" << std::endl;
+  // for (const auto& c : output) {
+  //   std::cout << "\t\t"
+  //             << "Disjoint: " << c << std::endl;
+  // }
+
+  // output = MergeDisjointConstraints(output, analyzer);
+
+  // std::cout << "\t"
+  //           << "After merging disjoint buffers, have " << output.size() << " knowns" <<
+  //           std::endl;
+  // for (const auto& c : output) {
+  //   std::cout << "\t\t"
+  //             << "Disjoint: " << c << std::endl;
+  // }
+
+  // return output;
 }
 
 std::vector<BufferTouchPattern::BufferConstraint>
@@ -1734,7 +2002,7 @@ class BufferRegionCollector : public ExprVisitor {
 
       PrimExpr touch_predicate = constraint.predicate(op->indices).value();
       // touch_predicate = analyzer_->Simplify(touch_predicate;)
-      touch_predicate = SimplifyUsingAndOfOrs(touch_predicate, analyzer_);
+      touch_predicate = SimplifyUsingCNFAndDNF(touch_predicate, analyzer_);
 
       std::cout << "\t\t"
                 << "Substituting indices, constraint applies iff " << touch_predicate << std::endl;
@@ -1748,7 +2016,7 @@ class BufferRegionCollector : public ExprVisitor {
                   << known_value << std::endl;
 
         unknown_region = unknown_region && !touch_predicate;
-        unknown_region = SimplifyUsingAndOfOrs(unknown_region, analyzer_);
+        unknown_region = SimplifyUsingCNFAndDNF(unknown_region, analyzer_);
 
         std::cout << "\t\t"
                   << "Remaining untouched regions are " << unknown_region << std::endl;
@@ -1819,9 +2087,9 @@ class BufferRegionCollector : public ExprVisitor {
           // PrimExpr intersection =
           //     local_analyzer.Simplify(prev_region.region_predicate && new_region.predicate);
 
-          // PrimExpr intersection = SimplifyUsingAndOfOrs(
+          // PrimExpr intersection = SimplifyUsingCNFAndDNF(
           //     prev_region.region_predicate && new_region.predicate, &local_analyzer);
-          PrimExpr intersection = SimplifyUsingAndOfOrs(
+          PrimExpr intersection = SimplifyUsingCNFAndDNF(
               prev_region.region_predicate && new_region.predicate, analyzer_);
 
           std::cout << "Updating region (" << prev_region.region_predicate << " && "
@@ -2108,7 +2376,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     auto normalize_simplify = [&](std::vector<BufferTouchPattern::BufferConstraint> priors) {
       for (auto& prior : priors) {
         prior.predicate.expression_ =
-            SimplifyUsingAndOfOrs(prior.predicate.expression_.value(), &analyzer);
+            SimplifyUsingCNFAndDNF(prior.predicate.expression_.value(), &analyzer);
       }
       return priors;
     };
@@ -2123,7 +2391,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
             PrimExpr before_remap = prior.predicate.expression_.value();
             PrimExpr after_remap = Substitute(before_remap, var_remap);
             if (!before_remap.same_as(after_remap)) {
-              prior.predicate.expression_ = SimplifyUsingAndOfOrs(after_remap, &analyzer);
+              prior.predicate.expression_ = SimplifyUsingCNFAndDNF(after_remap, &analyzer);
             }
           }
         }
@@ -2421,7 +2689,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
         // updated_predicate = ConvertToAndOfOrs(updated_predicate);
         // updated_predicate = analyzer.Simplify(updated_predicate);
-        updated_predicate = SimplifyUsingAndOfOrs(updated_predicate, &analyzer);
+        updated_predicate = SimplifyUsingCNFAndDNF(updated_predicate, &analyzer);
         std::cout << "\t\t\t"
                   << "Buffer predicate && region predicate is normalized and further simplified to "
                   << updated_predicate << std::endl;
@@ -2495,7 +2763,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     for (auto& known : post_knowns) {
       known.predicate = known.predicate.WithoutFreeParameters();
       known.predicate.expression_ =
-          SimplifyUsingAndOfOrs(known.predicate.expression_.value(), &analyzer);
+          SimplifyUsingCNFAndDNF(known.predicate.expression_.value(), &analyzer);
     }
 
     std::cout << "\t"
