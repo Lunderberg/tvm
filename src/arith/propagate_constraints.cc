@@ -533,9 +533,11 @@ void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr) {
 void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr,
                                                   std::vector<Comparison>& vec) {
   for (const auto& subexpr : ExtractConstraints(expr, false)) {
-    Comparison cmp(subexpr);
-    if (cmp.IsValid()) {
-      vec.push_back(cmp);
+    if (tir::SideEffect(expr) <= tir::CallEffectKind::kPure) {
+      Comparison cmp(subexpr);
+      if (cmp.IsValid()) {
+        vec.push_back(cmp);
+      }
     }
   }
 }
