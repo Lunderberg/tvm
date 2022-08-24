@@ -239,6 +239,7 @@ class AndOfOrs {
 
   PrimExpr AsPrimExpr() const;
 
+  void Simplify(Analyzer* analyzer);
   void SimplifyComponents(Analyzer* analyzer);
   void SimplifyWithinChunks(Analyzer* analyzer);
   void SimplifyAcrossChunks(Analyzer* analyzer);
@@ -439,6 +440,43 @@ PrimExpr AndOfOrs::KnownProvidedByComponentToSiblings(Key key) const {
     provides = RewriteBooleanOperators(!provides);
   }
   return provides;
+}
+
+void AndOfOrs::Simplify(Analyzer* analyzer) {
+  // std::ostream& printer = std::cout;
+  auto printer = NullStream();
+
+  printer << *this << std::endl;
+
+  printer << "Starting Step 1 using OR of AND: "
+          << "Local simplifications" << std::endl;
+
+  SimplifyComponents(analyzer);
+
+  printer << "Finished Step 1 using OR of AND: "
+          << "Local simplifications" << std::endl;
+
+  printer << *this << std::endl;
+
+  printer << "Starting Step 2 using OR of AND: "
+          << "Simplifications within AND" << std::endl;
+
+  SimplifyWithinChunks(analyzer);
+
+  printer << "Finished Step 2 using OR of AND: "
+          << "Simplifications within AND" << std::endl;
+
+  printer << *this << std::endl;
+
+  printer << "Starting Step 3 using OR of AND: "
+          << "Simplifications across AND" << std::endl;
+
+  SimplifyAcrossChunks(analyzer);
+
+  printer << "Finished Step 3 using OR of AND: "
+          << "Simplifications across AND" << std::endl;
+
+  printer << *this << std::endl;
 }
 
 void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
@@ -644,76 +682,13 @@ std::vector<std::vector<PrimExpr>> AndOfOrs::Debug_Extract() const {
 
 PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
   AndOfOrs and_of_ors(orig, AndOfOrs::Rep::AndOfOrs);
-
-  // std::ostream& printer = std::cout;
-  auto printer = NullStream();
-
-  // Simplification within each individual expression
-  printer << "Starting Step 1 using AND of OR: "
-          << "Local simplifications" << std::endl;
-
-  and_of_ors.SimplifyComponents(analyzer);
-
-  printer << "Finished Step 1 using AND of OR: "
-          << "Local simplifications" << std::endl;
-
-  printer << "Starting Step 2 using AND of OR: "
-          << "Simplifications within OR" << std::endl;
-
-  and_of_ors.SimplifyWithinChunks(analyzer);
-
-  printer << "Finished Step 2 using AND of OR: "
-          << "Simplifications within OR" << std::endl;
-
-  printer << and_of_ors << std::endl;
-
-  printer << "Starting Step 3 using AND of OR: "
-          << "Simplifications across OR" << std::endl;
-
-  and_of_ors.SimplifyAcrossChunks(analyzer);
-
+  and_of_ors.Simplify(analyzer);
   return and_of_ors.AsPrimExpr();
 }
 
 PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
   AndOfOrs or_of_ands(orig, AndOfOrs::Rep::OrOfAnds);
-  auto t_vec_or = or_of_ands.Debug_Extract();
-
-  // std::ostream& printer = std::cout;
-  auto printer = NullStream();
-
-  printer << or_of_ands << std::endl;
-
-  printer << "Starting Step 1 using OR of AND: "
-          << "Local simplifications" << std::endl;
-
-  or_of_ands.SimplifyComponents(analyzer);
-
-  printer << "Finished Step 1 using OR of AND: "
-          << "Local simplifications" << std::endl;
-
-  printer << or_of_ands << std::endl;
-
-  printer << "Starting Step 2 using OR of AND: "
-          << "Simplifications within AND" << std::endl;
-
-  or_of_ands.SimplifyWithinChunks(analyzer);
-
-  printer << "Finished Step 2 using OR of AND: "
-          << "Simplifications within AND" << std::endl;
-
-  printer << or_of_ands << std::endl;
-
-  printer << "Starting Step 3 using OR of AND: "
-          << "Simplifications across AND" << std::endl;
-
-  or_of_ands.SimplifyAcrossChunks(analyzer);
-
-  printer << "Finished Step 3 using OR of AND: "
-          << "Simplifications across AND" << std::endl;
-
-  printer << or_of_ands << std::endl;
-
+  or_of_ands.Simplify(analyzer);
   return or_of_ands.AsPrimExpr();
 }
 
