@@ -335,19 +335,19 @@ void AndOfOrs::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
   PrimExpr joint = GetExpr(a) || GetExpr(b);
   PrimExpr simplified = analyzer->Simplify(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
-    std::cout << "Can simplify " << joint << " to " << simplified << std::endl;
+    // std::cout << "Can simplify " << joint << " to " << simplified << std::endl;
     if (auto* simplified_or = simplified.as<OrNode>()) {
-      std::cout << "\t"
-                << "Replacing " << GetExpr(a) << " with " << simplified_or->a << std::endl;
-      std::cout << "\t"
-                << "Replacing " << GetExpr(b) << " with " << simplified_or->b << std::endl;
+      // std::cout << "\t"
+      //           << "Replacing " << GetExpr(a) << " with " << simplified_or->a << std::endl;
+      // std::cout << "\t"
+      //           << "Replacing " << GetExpr(b) << " with " << simplified_or->b << std::endl;
       a = GetKey(simplified_or->a);
       b = GetKey(simplified_or->b);
     } else {
-      std::cout << "\t"
-                << "Replacing " << GetExpr(a) << " with " << GetExpr(key_false) << std::endl;
-      std::cout << "\t"
-                << "Replacing " << GetExpr(b) << " with " << simplified << std::endl;
+      // std::cout << "\t"
+      //           << "Replacing " << GetExpr(a) << " with " << GetExpr(key_false) << std::endl;
+      // std::cout << "\t"
+      //           << "Replacing " << GetExpr(b) << " with " << simplified << std::endl;
       a = key_false;
       b = GetKey(simplified);
     }
