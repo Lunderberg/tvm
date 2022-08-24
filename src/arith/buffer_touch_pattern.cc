@@ -668,7 +668,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   void VisitStmt_(const EvaluateNode* op) override {
     if (auto* call = op->value.as<CallNode>()) {
       if (call->op.same_as(builtin::assume())) {
-        Assume(call->args[0]);
+        Assume(call->args[0], true);
         return;
       }
     }
@@ -676,13 +676,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Parent::VisitStmt_(op);
   }
 
-  void Assume(PrimExpr assumption) {
+  void Assume(PrimExpr assumption, bool from_assume_statement) {
     for (const auto& expr : ExtractConstraints(assumption, false)) {
-      AssumeConstraintComponent(expr);
+      AssumeConstraintComponent(expr, from_assume_statement);
     }
   }
 
-  void AssumeConstraintComponent(PrimExpr assumption) {
+  void AssumeConstraintComponent(PrimExpr assumption, bool from_assume_statement) {
     PrimExpr additional_predicate = Bool(true);
 
     std::vector<PrimExpr> buffer_exprs;
@@ -713,8 +713,16 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     CHECK_EQ(buffer_exprs.size(), 1) << "T.assume must contain only a single buffer expression";
 
     auto* as_equal_node = buffer_exprs[0].as<tir::EQNode>();
-    CHECK(as_equal_node)
-        << "T.assume buffer constraint must be of the form 'buffer[indices] == value'";
+    CHECK(as_equal_node || !from_assume_statement)
+        << "T.assume buffer constraint must be of the form 'buffer[indices] == "
+           "value', but received "
+        << assumption;
+    if (!as_equal_node) {
+      // This assumption is an inequality a data-dependent
+      // conditional.  Not an error for this to occur, but also not
+      // something that is currently supported.
+      return;
+    }
 
     tir::BufferLoad load;
     PrimExpr value;
@@ -1109,7 +1117,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
         conditions_.pop_back();
       };
     } else if (side_effect <= tir::CallEffectKind::kReadState) {
-      Assume(constraint);
+      Assume(constraint, false);
       return []() {};
     } else {
       return []() {};
