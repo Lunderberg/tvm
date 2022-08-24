@@ -997,7 +997,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // iterators which may contain BufferLoad to an expression in
     // terms of buffer indices which may not contain BufferLoad.  If
     // this conversion cannot be done, returns None.
-    auto normalize_expr = [&](const Optional<PrimExpr>& opt) -> Optional<PrimExpr> {
+    auto normalize_expr = [&](const Optional<PrimExpr>& opt,
+                              Analyzer* arg_analyzer) -> Optional<PrimExpr> {
       if (!opt) {
         return NullOpt;
       }
@@ -1018,7 +1019,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       //   return NullOpt;
       // }
 
-      expr = analyzer_.Simplify(expr);
+      expr = arg_analyzer->Simplify(expr);
 
       return expr;
     };
@@ -1028,12 +1029,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // implied by the indices used to access the buffer, and any
     // additional statements resulting from unpacking the expression
     // contained in builtin::assume().
-    Optional<PrimExpr> predicate_expr = CurrentScopePredicate() &&
-                                        IndexRangePredicate(index_variables, index_expressions) &&
+    Optional<PrimExpr> predicate_expr = IndexRangePredicate(index_variables, index_expressions) &&
                                         additional_predicate.value_or(Bool(true));
 
-    predicate_expr = normalize_expr(predicate_expr);
-    known_value_expr = normalize_expr(known_value_expr);
+    predicate_expr = normalize_expr(predicate_expr, &analyzer_);
+    known_value_expr = normalize_expr(known_value_expr, &analyzer_);
+
+    Analyzer local_analyzer;
+    PrimExpr scope_predicate = normalize_expr(CurrentScopePredicate(), &local_analyzer).value();
 
     std::cout << "Initial predicate is " << predicate_expr << std::endl;
 
@@ -1057,10 +1060,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // }
     // predicate_expr = predicate_expr.value() && relation_predicate;
 
-    {
-      Analyzer local_analyzer;
-      predicate_expr = local_analyzer.Simplify(predicate_expr.value() && loop_predicate);
-    }
+    predicate_expr =
+        local_analyzer.Simplify(predicate_expr.value() && scope_predicate && loop_predicate);
     // predicate_expr = predicate_expr.value() && loop_predicate;
     // predicate_expr = analyzer_.Simplify(predicate_expr.value() && loop_predicate);
     std::cout << "\t"
