@@ -1100,12 +1100,20 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   }
 
   std::function<void()> EnterConstraint(const PrimExpr& constraint) override {
-    conditions_.push_back(constraint);
+    auto side_effect = tir::SideEffect(constraint);
+    if (side_effect <= tir::CallEffectKind::kPure) {
+      conditions_.push_back(constraint);
 
-    return [this]() {
-      ICHECK(conditions_.size()) << "Internal error: Each condition should only be popped once.";
-      conditions_.pop_back();
-    };
+      return [this]() {
+        ICHECK(conditions_.size()) << "Internal error: Each condition should only be popped once.";
+        conditions_.pop_back();
+      };
+    } else if (side_effect <= tir::CallEffectKind::kReadState) {
+      Assume(constraint);
+      return []() {};
+    } else {
+      return []() {};
+    }
   }
 
   Array<Var> MakeIndexVariables(const Array<PrimExpr>& indices) {
