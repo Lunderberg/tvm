@@ -1092,7 +1092,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Analyzer local_analyzer;
     PrimExpr scope_predicate = normalize_expr(CurrentScopePredicate(), &local_analyzer).value();
 
-    std::cout << "Initial predicate is " << predicate_expr << std::endl;
+    // std::cout << "Initial predicate is " << predicate_expr << std::endl;
 
     PrimExpr loop_predicate = Bool(true);
     for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
@@ -1105,8 +1105,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       loop_predicate =
           (it->loop_var >= loop_expr) || ((it->loop_var == loop_expr) && loop_predicate);
     }
-    std::cout << "\t"
-              << "Loop-based predicate is " << loop_predicate << std::endl;
+    // std::cout << "\t"
+    //           << "Loop-based predicate is " << loop_predicate << std::endl;
 
     // PrimExpr relation_predicate = Bool(true);
     // for (const auto& relation : transform->dst->relations) {
@@ -2903,7 +2903,7 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(
 
 PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
                                                Analyzer* analyzer) const {
-  // std::cout << "Attempting to simplify " << expr << std::endl;
+  // std::cout << "Attempting to simplify " << expr << " in context of " << context << std::endl;
 
   size_t context_index = [&]() {
     // auto it = context_lookup_.find(context.get());
@@ -2939,6 +2939,9 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
 
   BufferConstraintApply mutator(*this, context_index, analyzer);
   expr = mutator(expr);
+
+  // std::cout << "\t"
+  //           << "After applying knowns " << expr << std::endl;
 
   // auto it = constraint_lookup_.find(context_index);
   // if (it != constraint_lookup_.end()) {
@@ -2993,7 +2996,10 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
   // std::cout << "\t"
   //           << "So the expression simplifies to " << analyzer->Simplify(expr) << std::endl;
 
-  return analyzer->Simplify(expr);
+  expr = analyzer->Simplify(expr);
+  // std::cout << "\t"
+  //           << "After simplification " << expr << std::endl;
+  return expr;
 }
 
 Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferStore& store) const {
