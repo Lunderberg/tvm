@@ -364,7 +364,7 @@ class TestNestedVarCondition(BaseBeforeAfter):
 
 
 class TestAlteredBufferContents(BaseBeforeAfter):
-    """No simplification of data-dependent conditionals.
+    """Propagation of data-dependent conditionals.
 
     A literal constraint must not be propagated if the values
     referenced may change.  TIR requires single assignment of
@@ -1251,6 +1251,7 @@ class TestInequalities11(BaseBeforeAfter):
         A[0] = 0 <= j and j < 24 and 0 <= j + n and (j + n < 3 or 17 <= j + n or i < j + n)
 
 
+@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
 class TestInequalities12(BaseBeforeAfter):
     def before(A: T.Buffer[16, "bool"], j: T.int32):
         for i in T.serial(16):
