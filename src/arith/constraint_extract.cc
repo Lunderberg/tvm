@@ -493,18 +493,10 @@ void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
 }
 
 void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
-  std::cout << "Starting SimplifyAcrossChunks, expr = " << *this << std::endl;
-
-  bool modified_and = false;
-
   for (size_t i_and = 0; i_and < expr_indices.size(); i_and++) {
     for (size_t j_and = i_and + 1; j_and < expr_indices.size(); j_and++) {
       auto& i_chunk = expr_indices[i_and];
       auto& j_chunk = expr_indices[j_and];
-
-      // std::cout << "Starting comparison between chunk " << i_and << " and chunk " << j_and
-      //           << ", exprs = " << ChunkExpr(i_chunk) << ",  " << ChunkExpr(j_chunk) <<
-      //           std::endl;
 
       if (i_chunk.size() == 1 && j_chunk.size() == 1) {
         auto& key_i = i_chunk[0];
@@ -542,7 +534,6 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
         } else {
           j_chunk = {key_false};
         }
-        modified_and = true;
         continue;
       }
 
@@ -572,8 +563,6 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
         } else {
           i_chunk = {key_false};
         }
-        modified_and = true;
-
         continue;
       }
 
@@ -606,10 +595,7 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
       }
     }
   }
-  std::cout << "After SimplifyAcrossChunks, expr = " << *this << std::endl;
   Cleanup();
-
-  std::cout << "After Cleanup, expr = " << *this << std::endl;
 }
 
 void AndOfOrs::Cleanup() {
@@ -737,16 +723,19 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
   PrimExpr lookback = Bool(false);
   PrimExpr expr = orig;
 
+  // std::ostream& printer = std::cout;
+  auto printer = NullStream();
+
   int temp_total_rounds = 0;
 
   for (int i = 0; i < max_rounds; i++) {
     temp_total_rounds++;
-    std::cout << "\t"
-              << "Starting round " << i << ", expr = " << expr << std::endl;
+    printer << "\t"
+            << "Starting round " << i << ", expr = " << expr << std::endl;
 
     if (as_const_int(expr)) {
-      std::cout << "\t\t"
-                << "Round " << i << " started with a constant, breaking" << std::endl;
+      printer << "\t\t"
+              << "Round " << i << " started with a constant, breaking" << std::endl;
       break;
     }
 
@@ -758,25 +747,25 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
       }
     }();
 
-    std::cout << "\t\t"
-              << "Round " << i << " simplified from " << expr << "\n"
-              << "\t\t"
-              << "\t"
-              << " to " << simplified << std::endl;
+    printer << "\t\t"
+            << "Round " << i << " simplified from " << expr << "\n"
+            << "\t\t"
+            << "\t"
+            << " to " << simplified << std::endl;
 
     bool converged = expr_equal(simplified, lookback);
     lookback = expr;
     expr = simplified;
     if (converged) {
-      std::cout << "\t\t"
-                << "Round " << i << " is the same as round " << i - 2 << ", breaking" << std::endl;
+      printer << "\t\t"
+              << "Round " << i << " is the same as round " << i - 2 << ", breaking" << std::endl;
       break;
     }
   }
 
-  std::cout << "\t"
-            << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << expr << " after "
-            << temp_total_rounds << " total rounds" << std::endl;
+  printer << "\t"
+          << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << expr << " after "
+          << temp_total_rounds << " total rounds" << std::endl;
 
   return expr;
 }
