@@ -1248,7 +1248,7 @@ class TestInequalities11(BaseBeforeAfter):
         )
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
-        A[0] = 0 <= j and j < 24 and 0 <= j + n and (i < j + n or j + n < 3 or 17 <= j + n)
+        A[0] = 0 <= j and j < 24 and 0 <= j + n and (j + n < 3 or 17 <= j + n or i < j + n)
 
 
 class TestInequalities12(BaseBeforeAfter):
