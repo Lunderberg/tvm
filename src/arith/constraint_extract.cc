@@ -225,6 +225,9 @@ class NullStream : public std::ostream {
  public:
   NullStream() : std::ostream(&m_nb) {}
 };
+
+// std::ostream& printer = std::cout;
+auto printer = NullStream();
 }  // namespace
 
 namespace {
@@ -453,9 +456,6 @@ PrimExpr AndOfOrs::KnownProvidedByComponentToSiblings(Key key) const {
 }
 
 void AndOfOrs::Simplify(Analyzer* analyzer) {
-  // std::ostream& printer = std::cout;
-  auto printer = NullStream();
-
   printer << *this << std::endl;
 
   printer << "Starting Step 1 using OR of AND: "
@@ -707,9 +707,6 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
 
   PrimExpr lookback = Bool(false);
   PrimExpr expr = orig;
-
-  // std::ostream& printer = std::cout;
-  auto printer = NullStream();
 
   int temp_total_rounds = 0;
 
