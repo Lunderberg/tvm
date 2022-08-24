@@ -78,7 +78,7 @@ class ExpressionNarrowerToTrue : public tir::ExprMutator {
       return this->VisitExpr(t->b);
     }();
 
-    if (buffer_load_in_current_comparison_) {
+    if (buffer_load_in_current_comparison_ && t.dtype().is_bool()) {
       buffer_load_in_current_comparison_ = false;
       return Bool(CurrentContext() == Context::Minimize);
     } else if (a.same_as(t->a) && b.same_as(t->b)) {
