@@ -1234,10 +1234,12 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Map<Var, Range> ranges;
     for (const auto& loop_entry : active_loop_iterators_) {
       loop_vars.push_back(loop_entry.loop_var);
-      IntSet loop_set = analyzer_.int_set(loop_entry.loop_var);
-      auto max = loop_set.HasUpperBound() ? loop_set.max() + 1 : loop_set.max();
-      Range loop_range = Range(loop_set.min(), max);
-      ranges.Set(loop_entry.loop_var, loop_range);
+      ranges.Set(loop_entry.loop_var, loop_entry.loop_range);
+
+      // IntSet loop_set = analyzer_.int_set(loop_entry.loop_var);
+      // auto max = loop_set.HasUpperBound() ? loop_set.max() + 1 : loop_set.max();
+      // Range loop_range = Range(loop_set.min(), max);
+      // ranges.Set(loop_entry.loop_var, loop_range);
     }
 
     IntConstraints system(loop_vars, ranges, relations);
@@ -1307,9 +1309,11 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   struct BindActiveLoopVar {
     BindActiveLoopVar() : self{nullptr} {}
-    BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min, PrimExpr loop_max)
+    BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min, PrimExpr loop_extent)
         : self(self), var(var) {
-      self->active_loop_iterators_.push_back({var, loop_min, loop_max});
+      PrimExpr loop_max = loop_min + (loop_extent - 1);
+      auto loop_range = Range::FromMinExtent(loop_min, loop_extent);
+      self->active_loop_iterators_.push_back({var, loop_min, loop_max, loop_range});
       self->loop_dependent_vars_.insert(var.get());
     }
 
@@ -1363,6 +1367,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Var loop_var;
     PrimExpr loop_min;
     PrimExpr loop_max;
+    Range loop_range;
   };
 
   // Track in order to know which Vars to write in terms of the buffer
