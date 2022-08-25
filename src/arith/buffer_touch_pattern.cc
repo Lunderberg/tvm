@@ -797,12 +797,18 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     } else if (auto* as_load = as_equal_node->b.as<tir::BufferLoadNode>()) {
       load = GetRef<tir::BufferLoad>(as_load);
       value = as_equal_node->a;
+    } else if (!from_assume_statement) {
+      return;
     } else {
       LOG(FATAL) << "T.assume buffer constraint must be of the form 'buffer[indices] == value'";
     }
 
-    CHECK(tir::SideEffect(value) <= tir::CallEffectKind::kPure)
+    auto has_side_effect = tir::SideEffect(value) > tir::CallEffectKind::kPure;
+    CHECK(!has_side_effect || !from_assume_statement)
         << "Buffer value in constraint must be pure expression, but was " << value;
+    if (has_side_effect) {
+      return;
+    }
 
     // TODO: An assumption shouldn't remove previously known
     // constraints.  Will need to split out the BufferConstraint from
