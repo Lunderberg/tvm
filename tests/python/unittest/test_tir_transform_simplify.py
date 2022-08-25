@@ -1377,7 +1377,7 @@ class TestSimplifyElementWiseUsingPreLoopBufferValue(BaseBeforeAfter):
             B[i] = A[i] * 2 + B[i]
 
 
-@pytest.mark.xfail
+@pytest.mark.xfail(reason="not supported")
 class TestSimplifyUsingPreLoopBufferValueOneBranchOnly(BaseBeforeAfter):
     """A branch with a fixed point could be simplified
 
@@ -1394,13 +1394,13 @@ class TestSimplifyUsingPreLoopBufferValueOneBranchOnly(BaseBeforeAfter):
             else:
                 B[0] = A[i] + B[0]
 
-    def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
+    def expected(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
         B[0] = 0
         for i in T.serial(16):
             B[0] = 1
 
 
-@pytest.mark.xfail
+@pytest.mark.xfail(reason="not enabled")
 class TestSimplifyNonConditional(BaseBeforeAfter):
     """Propagate a known value to later expressions
 
