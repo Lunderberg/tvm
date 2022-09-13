@@ -20,6 +20,8 @@ import tvm.testing
 from tvm import te
 from tvm.script import tir as T
 
+import pytest
+
 
 def nop():
     return tvm.tir.Evaluate(0)
@@ -219,6 +221,7 @@ class TestKeepFirstWriteWhenUsed(BaseBeforeAfter):
     expected = before
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveOverwrittenLoop(BaseBeforeAfter):
     """Remove repeated writes to the same region
 
@@ -237,6 +240,7 @@ class TestRemoveOverwrittenLoop(BaseBeforeAfter):
             A[i] = 42
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveOverwrittenSubloop(BaseBeforeAfter):
     """Remove repeated writes to the same region
 
@@ -275,7 +279,8 @@ class TestKeepPartiallyOverwrittenLoop(BaseBeforeAfter):
     expected = before
 
 
-class TestRemoveOverwrittenPredicatedLoop(BaseBeforeAfter):
+@pytest.mark.xfail(reason="Not implemented yet")
+class TestRemoveOverwrittenPredicatedLoopWithIdenticalCondition(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
     Similar to TestKeepPartiallyOverwrittenLoop, except the first loop
@@ -298,13 +303,16 @@ class TestRemoveOverwrittenPredicatedLoop(BaseBeforeAfter):
                 A[i] = 100
 
 
-class TestRemoveOverwrittenPredicatedLoop(BaseBeforeAfter):
+@pytest.mark.xfail(reason="Not implemented yet")
+class TestRemoveOverwrittenPredicatedLoopWithProvableCondition(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
-    Similar to TestRemoveOverwrittenPredicatedLoop, except the first
-    loop's predicate is not a precise match for the second loop's
-    predicate.  So long as the regions written in the first loop are a
-    subset of those written in the second loop, they can be removed.
+    Similar to
+    TestRemoveOverwrittenPredicatedLoopWithIdenticalCondition, except
+    the first loop's predicate is not a precise match for the second
+    loop's predicate.  So long as the regions written in the first
+    loop are a subset of those written in the second loop, they can be
+    removed.
     """
 
     def before(A: T.Buffer[16, "int32"]):
@@ -322,6 +330,7 @@ class TestRemoveOverwrittenPredicatedLoop(BaseBeforeAfter):
                 A[i] = 42
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveSeparatedOverwrites(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
@@ -347,6 +356,7 @@ class TestRemoveSeparatedOverwrites(BaseBeforeAfter):
             A[i] = 42
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveSeparatedOverwriteOfPredicatedLoop(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
@@ -436,6 +446,7 @@ class TestRemoveReadWriteSameIndexUsingConstraint(BaseBeforeAfter):
                 A[i] = A[i - 1]
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveWritingOfKnownValue(BaseBeforeAfter):
     """Writing a value that already exists at that index is a no-op"""
 
@@ -450,6 +461,7 @@ class TestRemoveWritingOfKnownValue(BaseBeforeAfter):
             A[i] = i
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestKeepOneOfDuplicateLoops(BaseBeforeAfter):
     """Must not reason based on a touch point after removing it.
 
@@ -483,6 +495,7 @@ class TestRemoveEmptyTemporary(BaseBeforeAfter):
         T.evaluate(0)
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveUnusedTemporary(BaseBeforeAfter):
     """An unused allocation is a no-op."""
 
@@ -496,11 +509,12 @@ class TestRemoveUnusedTemporary(BaseBeforeAfter):
             A[i] = 1
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveUnusedWriteIntoTemporary(BaseBeforeAfter):
     """A write that only impacts a temporary allocation is a no-op."""
 
     def before():
-        A = T.allocate([16], "int32", "local")
+        A = T.decl_buffer([16], "int32", scope="local")
         for i in T.serial(16):
             A[i] = 0
 
@@ -512,7 +526,7 @@ class TestKeepUsedWriteIntoTemporary(BaseBeforeAfter):
     """A write into a temporary that is used later must be kept."""
 
     def before(B: T.Buffer[16, "int32"]):
-        A = T.allocate([16], "int32", "local")
+        A = T.decl_buffer([16], "int32", scope="local")
         for i in T.serial(16):
             A[i] = 0
 
@@ -522,11 +536,12 @@ class TestKeepUsedWriteIntoTemporary(BaseBeforeAfter):
     expected = before
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveWriteIntoTemporary(BaseBeforeAfter):
     """A write that only impacts a temporary allocation is a no-op."""
 
     def before(A: T.Buffer[16, "int32"], C: T.Buffer[1, "int32"]):
-        B = T.allocate([16], "int32", "local")
+        B = T.decl_buffer([16], "int32", scope="local")
         for i in T.serial(16):
             B[i] = A[i]
 
@@ -538,7 +553,7 @@ class TestRemoveWriteIntoTemporary(BaseBeforeAfter):
             B[i] = 0
 
     def expected(A: T.Buffer[16, "int32"], C: T.Buffer[1, "int32"]):
-        B = T.allocate([16], "int32", "local")
+        B = T.decl_buffer([16], "int32", scope="local")
         for i in T.serial(16):
             B[i] = A[i]
 

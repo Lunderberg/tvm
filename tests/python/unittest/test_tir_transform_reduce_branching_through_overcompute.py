@@ -19,6 +19,8 @@ import tvm
 import tvm.testing
 from tvm.script import tir as T
 
+import pytest
+
 
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     @tvm.testing.fixture
@@ -47,6 +49,7 @@ class TestIntroduceNoOp(BaseBeforeAfter):
             T.evaluate(0)
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceAdditionOfZero(BaseBeforeAfter):
     """Insert a conditionally no-op statement
 
@@ -65,6 +68,7 @@ class TestIntroduceAdditionOfZero(BaseBeforeAfter):
             A[0] = A[0] + i * i
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceAdditionOfKnownZeroInBuffer(BaseBeforeAfter):
     """Insert a conditionally no-op statement
 
@@ -90,6 +94,7 @@ class TestIntroduceAdditionOfKnownZeroInBuffer(BaseBeforeAfter):
             B[0] = B[0] + A[i]
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceOverwrittenWrite(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 
@@ -138,6 +143,7 @@ class TestMaintainValuesUsedLater(BaseBeforeAfter):
     expected = before
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestIdentifyOverwrittenWriteFromEquivalentExpressions(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 
@@ -164,6 +170,7 @@ class TestIdentifyOverwrittenWriteFromEquivalentExpressions(BaseBeforeAfter):
                 A[4 * io + ii] = 2
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceSupersetOverwrittenWrite(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 

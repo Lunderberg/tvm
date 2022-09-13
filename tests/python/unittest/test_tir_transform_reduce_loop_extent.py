@@ -19,10 +19,13 @@ import tvm
 import tvm.testing
 from tvm.script import tir as T
 
+import pytest
+
 # Tests for ReduceLoopExtents.  This is a weaker form of
 # LoopPartition, which only applies if an else case is empty.
 
 
+@pytest.mark.xfail(reason="Not implemented yet")
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     @tvm.testing.fixture
     def transform(self):
