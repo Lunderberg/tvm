@@ -37,6 +37,17 @@ if __name__ == "__main__":
     parser.add_argument("--sccache-bucket", required=False, help="sccache bucket name")
     parser.add_argument("--build-dir", default="build", help="build folder")
     parser.add_argument("--cmake-target", help="optional build target")
+    parser.add_argument(
+        "-j",
+        "--num-jobs",
+        default=None,
+        type=int,
+        help=(
+            "Number of CPU cores to use for build.  "
+            "If unspecified, determine from number of cores available "
+            "divided by CI_NUM_EXECUTORS environment variable."
+        ),
+    )
     args = parser.parse_args()
 
     env = {"VTA_HW_PATH": str(Path(os.getcwd()) / "3rdparty" / "vta-hw")}
@@ -69,12 +80,15 @@ if __name__ == "__main__":
         logging.info("===== sccache stats =====")
         sh.run("sccache --show-stats")
 
-    executors = int(os.environ.get("CI_NUM_EXECUTORS", 1))
+    if args.num_jobs is None:
+        executors = int(os.environ.get("CI_NUM_EXECUTORS", 1))
 
-    nproc = multiprocessing.cpu_count()
+        nproc = multiprocessing.cpu_count()
 
-    available_cpus = nproc // executors
-    num_cpus = max(available_cpus, 1)
+        available_cpus = nproc // executors
+        num_cpus = max(available_cpus, 1)
+    else:
+        num_cpus = args.num_jobs
 
     sh.run("cmake -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo ..", cwd=build_dir)
 

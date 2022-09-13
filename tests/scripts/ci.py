@@ -374,6 +374,7 @@ def generate_command(
         interactive: bool = False,
         docker_image: Optional[str] = None,
         verbose: bool = False,
+        num_build_jobs: Optional[int] = None,
         **kwargs,
     ) -> None:
         """
@@ -383,6 +384,7 @@ def generate_command(
         interactive -- start a shell after running build / test scripts
         docker-image -- manually specify the docker image to use
         verbose -- run verbose build
+        num_build_jobs -- CPU cores to use while building, or None to automatically determine
         """
         if precheck is not None:
             precheck()
@@ -392,9 +394,10 @@ def generate_command(
         if skip_build:
             scripts = []
         else:
+            job_arg = "" if num_build_jobs is None else f"--num-jobs={num_build_jobs}"
             scripts = [
                 f"./tests/scripts/task_config_build_{name}.sh {build_dir}",
-                f"./tests/scripts/task_build.py --build-dir {build_dir}",
+                f"./tests/scripts/task_build.py --build-dir {build_dir} {job_arg}",
             ]
 
         if post_build is not None:
