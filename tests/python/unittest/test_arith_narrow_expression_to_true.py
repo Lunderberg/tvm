@@ -73,11 +73,7 @@ before, expected = tvm.testing.parameters(
 
 def test_narrow_expression(before, expected):
     ranges = {n: tvm.ir.Range(0, 8)}
-    print("Before =", repr(before), flush=True)
     after = tvm.arith._ffi_api.NarrowExpressionToTrue(before, ranges)
-
-    print("After =", repr(after), flush=True)
-    print("Expected =", repr(expected), flush=True)
 
     if expected is None:
         assert after is None
