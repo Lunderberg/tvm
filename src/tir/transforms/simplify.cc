@@ -39,11 +39,22 @@ using namespace tir;
 
 struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
   bool transitively_prove_inequalities;
+  bool propagate_knowns_to_prove_conditional;
+  bool propagate_knowns_to_simplify_expressions;
 
   TVM_DECLARE_ATTRS(SimplifyConfigNode, "tir.transform.SimplifyConfig") {
     TVM_ATTR_FIELD(transitively_prove_inequalities)
         .describe(
             "If true, simplify conditionals with transitive combinations of scoped constraints")
+        .set_default(false);
+    TVM_ATTR_FIELD(propagate_knowns_to_prove_conditional)
+        .describe(
+            "If true, known buffer values are propagated and used to statically prove conditionals")
+        .set_default(false);
+    TVM_ATTR_FIELD(propagate_knowns_to_simplify_expressions)
+        .describe(
+            "If true, known buffer values are propagated and used to replace BufferLoad wherever "
+            "possible")
         .set_default(false);
   }
 
@@ -72,24 +83,35 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     analyzer->rewrite_simplify.SetEnabledExtensions(config->GetEnabledExtensions());
 
     // std::cout << "Starting collection of touch pattern" << std::endl;
-    BufferTouchPattern touch_pattern(stmt);
+    std::optional<BufferTouchPattern> touch_pattern = std::nullopt;
+    if (config->propagate_knowns_to_prove_conditional ||
+        config->propagate_knowns_to_simplify_expressions) {
+      touch_pattern = BufferTouchPattern(stmt);
+    }
     // BufferTouchPattern touch_pattern(Evaluate(0));
     // std::cout << "Finished collecting touch pattern" << std::endl;
     // std::cout << "========================================================== " << std::endl;
     // std::cout << "Touch pattern: \n" << touch_pattern << std::endl;
-    StmtSimplifier simplifier(analyzer, std::move(touch_pattern));
+    StmtSimplifier simplifier(analyzer, config, std::move(touch_pattern));
     return simplifier(std::move(stmt));
   }
 
  private:
-  explicit StmtSimplifier(Analyzer* analyzer, BufferTouchPattern touch_pattern)
-      : IRMutatorWithAnalyzer(analyzer), touch_pattern_(touch_pattern) {}
+  explicit StmtSimplifier(Analyzer* analyzer, SimplifyConfig config,
+                          std::optional<BufferTouchPattern> touch_pattern)
+      : IRMutatorWithAnalyzer(analyzer), config_(config), touch_pattern_(touch_pattern) {}
 
   using Parent = IRMutatorWithAnalyzer;
   using Parent::VisitStmt;
   using Parent::VisitStmt_;
 
-  PrimExpr VisitExpr(const PrimExpr& expr) final { return analyzer_->Simplify(expr); }
+  PrimExpr VisitExpr(const PrimExpr& expr) final {
+    if (config_->propagate_knowns_to_simplify_expressions) {
+      return touch_pattern_->SimplifyInContext(expr, current_stmt_.value(), analyzer_);
+    } else {
+      return analyzer_->Simplify(expr);
+    }
+  }
 
   Stmt Simplify(Stmt stmt) { return operator()(std::move(stmt)); }
 
@@ -208,7 +230,12 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
   Optional<Bool> ProveCondition(PrimExpr condition) const {
     // std::cout << "Attempting to prove conditional " << condition << std::endl;
     condition = Substitute(condition, non_inlined_bindings_);
-    condition = touch_pattern_.SimplifyInContext(condition, current_stmt_.value(), analyzer_);
+    if (config_->propagate_knowns_to_prove_conditional) {
+      ICHECK(touch_pattern_.has_value());
+      condition = touch_pattern_->SimplifyInContext(condition, current_stmt_.value(), analyzer_);
+    } else {
+      condition = analyzer_->Simplify(condition);
+    }
     if (const int64_t* as_int = as_const_int(condition)) {
       return Bool(*as_int);
     } else {
@@ -216,8 +243,10 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     }
   }
 
+  SimplifyConfig config_;
+  std::optional<BufferTouchPattern> touch_pattern_;
+
   Map<Var, PrimExpr> non_inlined_bindings_;
-  BufferTouchPattern touch_pattern_;
   Optional<Stmt> current_stmt_{NullOpt};
 };
 

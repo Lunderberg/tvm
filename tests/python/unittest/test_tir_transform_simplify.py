@@ -146,6 +146,8 @@ class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
             config = {
                 "tir.Simplify": {
                     "transitively_prove_inequalities": self.transitively_prove_inequalities,
+                    "propagate_knowns_to_prove_conditional": self.propagate_knowns_to_prove_conditional,
+                    "propagate_knowns_to_simplify_expressions": self.propagate_knowns_to_simplify_expressions,
                 }
             }
             with tvm.transform.PassContext(config=config):
