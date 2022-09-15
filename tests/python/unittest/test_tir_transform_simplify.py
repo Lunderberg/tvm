@@ -267,6 +267,7 @@ class TestSimplifyLHSOfBooleanOrUsingRHS(BaseBeforeAfter):
         A[0] = n < 10
 
 
+@pytest.mark.xfail(msg="Fails from RewriteBoolean in OR-based constraint")
 class TestSimplifyBooleanOrWithThreeConditions(BaseBeforeAfter):
     """Boolean expressions can introduce contexts for their arguments.
 

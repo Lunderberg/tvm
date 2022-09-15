@@ -1739,495 +1739,238 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
-  // std::cout << "Simplifying AndNode " << GetRef<PrimExpr>(op) << std::endl;
-  if (debug_enable_simplification_with_and_of_ors && !recursive) {
-    recursive = true;
-    PrimExpr orig = GetRef<PrimExpr>(op);
-    PrimExpr expr = orig;
-    // std::cout << "Simplifying AndNode " << expr << std::endl;
-    expr = SimplifyUsingCNFAndDNF(expr, analyzer_);
-    // std::cout << "\t"
-    //           << "AndNode " << orig << " would simplify to " << expr << std::endl;
-    recursive = false;
-    return expr;
+  PrimExpr a = op->a;
+  PrimExpr b = op->b;
+  {
+    With<ConstraintContext> context(analyzer_, b);
+    a = VisitExpr(std::move(a));
+  }
+  {
+    With<ConstraintContext> context(analyzer_, a);
+    b = VisitExpr(std::move(b));
   }
 
-  std::vector<Optional<PrimExpr>> subexprs;
-  for (const auto& subexpr : ExtractConstraints(GetRef<PrimExpr>(op), false)) {
-    subexprs.push_back(subexpr);
+  PrimExpr ret;
+  if (a.same_as(op->a) && b.same_as(op->b)) {
+    ret = GetRef<And>(op);
+  } else {
+    ret = And(a, b);
   }
-  ICHECK_GE(subexprs.size(), 2);
+  op = ret.as<AndNode>();
 
-  bool modified = false;
+  if (auto const_res = TryConstFold<And>(op->a, op->b)) return const_res.value();
+  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
-  // std::cout << "\t"
-  //           << "AndNode subexprs = [";
-  // for (size_t i = 0; i < subexprs.size(); i++) {
-  //   if (i) {
-  //     std::cout << ", ";
-  //   }
-  //   std::cout << subexprs[i];
-  // }
-  // std::cout << "]" << std::endl;
+  // Pattern var to match any expression
+  PVar<PrimExpr> x, y;
+  // Pattern var match IntImm
+  PVar<IntImm> c1, c2;
+  PVar<int> lanes;
 
-  // Simplify each of the subexpressions under the assumption that all
-  // other subexpressions are true.
-  for (size_t i = 0; i < subexprs.size(); i++) {
-    // std::vector<With<ConstraintContext>> context;
-    // context.reserve(subexprs.size() - 1);
-
-    PrimExpr full_constraint = Bool(true);
-
-    PrimExpr remainder = Bool(true);
-    for (size_t j = 0; j < subexprs.size(); j++) {
-      if (i != j && subexprs[j]) {
-        full_constraint = full_constraint && subexprs[j].value();
-        // context.emplace_back(analyzer_, subexprs[j]);
-      }
-    }
-
-    With<ConstraintContext> context(analyzer_, full_constraint);
-    PrimExpr simplified = VisitExpr(subexprs[i].value());
-    if (!simplified.same_as(subexprs[i])) {
-      modified = true;
-    }
-    // std::cout << "\t"
-    //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
-    //           << " under constraint that " << full_constraint << std::endl;
-
-    if (auto* as_int = simplified.as<IntImmNode>()) {
-      if (as_int->value) {
-        subexprs[i] = NullOpt;
-      } else {
-        return Bool(false);
-      }
-    } else {
-      subexprs[i] = simplified;
-    }
-
-    // while (context.size()) {
-    //   context.pop_back();
-    // }
+  if (op->dtype.lanes() != 1) {
+    TVM_TRY_REWRITE(broadcast(x, lanes) && broadcast(y, lanes), broadcast(x && y, lanes));
   }
 
-  // Rules to simplify a pair of conditions.  Returns NullOpt if no
-  // simplification is possible.
-  auto pairwise_simplify = [this](const PrimExpr& a, const PrimExpr& b) -> Optional<PrimExpr> {
-    if (auto const_res = TryConstFold<And>(a, b)) return const_res.value();
+  auto cfalse = PConst<PrimExpr>(make_const(op->dtype, false));
+  TVM_TRY_REWRITE(x == y && x != y, cfalse);
+  TVM_TRY_REWRITE(x != y && x == y, cfalse);
+  TVM_TRY_REWRITE(x && !x, cfalse);
+  TVM_TRY_REWRITE(x && x, x);
 
-    PrimExpr ret = a && b;
+  TVM_TRY_REWRITE(x <= y && y < x, cfalse);
+  TVM_TRY_REWRITE(y < x && x <= y, cfalse);
+  TVM_TRY_REWRITE(x <= y && x < y, x < y);
+  TVM_TRY_REWRITE(x < y && x <= y, x < y);
 
-    if (auto match = TryMatchLiteralConstraint(ret)) {
-      return match.value();
-    }
+  TVM_TRY_REWRITE(x < y && x == y, cfalse);
+  TVM_TRY_REWRITE(x < y && y == x, cfalse);
+  TVM_TRY_REWRITE(x == y && x < y, cfalse);
+  TVM_TRY_REWRITE(y == x && x < y, cfalse);
 
-    // Pattern var to match any expression
-    PVar<PrimExpr> x, y;
-    // Pattern var match IntImm
-    PVar<IntImm> c1, c2;
-    PVar<int> lanes;
+  TVM_TRY_REWRITE(x <= y && y <= x, x == y);
 
-    if (ret->dtype.lanes() != 1) {
-      TVM_TRY_REWRITE(broadcast(x, lanes) && broadcast(y, lanes), broadcast(x && y, lanes));
-    }
+  TVM_TRY_REWRITE(x <= y && x == y, x == y);
+  TVM_TRY_REWRITE(x <= y && y == x, x == y);
+  TVM_TRY_REWRITE(x == y && x <= y, x == y);
+  TVM_TRY_REWRITE(y == x && x <= y, x == y);
 
-    auto cfalse = PConst<PrimExpr>(make_const(ret->dtype, false));
-    TVM_TRY_REWRITE(x == y && x != y, cfalse);
-    TVM_TRY_REWRITE(x != y && x == y, cfalse);
-    TVM_TRY_REWRITE(x && !x, cfalse);
-    TVM_TRY_REWRITE(x && x, x);
+  TVM_TRY_REWRITE(x <= y && x != y, x < y);
+  TVM_TRY_REWRITE(x <= y && y != x, x < y);
+  TVM_TRY_REWRITE(x != y && x <= y, x < y);
+  TVM_TRY_REWRITE(y != x && x <= y, x < y);
 
-    TVM_TRY_REWRITE(x <= y && y < x, cfalse);
-    TVM_TRY_REWRITE(y < x && x <= y, cfalse);
-    TVM_TRY_REWRITE(x <= y && x < y, x < y);
-    TVM_TRY_REWRITE(x < y && x <= y, x < y);
+  TVM_TRY_REWRITE(x < y && x != y, x < y);
+  TVM_TRY_REWRITE(x < y && y != x, x < y);
+  TVM_TRY_REWRITE(x != y && x < y, x < y);
+  TVM_TRY_REWRITE(y != x && x < y, x < y);
 
-    TVM_TRY_REWRITE(x < y && x == y, cfalse);
-    TVM_TRY_REWRITE(x < y && y == x, cfalse);
-    TVM_TRY_REWRITE(x == y && x < y, cfalse);
-    TVM_TRY_REWRITE(y == x && x < y, cfalse);
+  // TVM_TRY_REWRITE_IF(x < y && x - c1 != y, x < y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x < y && x != y + c1, x < y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x - c1 != y && x < y, x < y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x != y + c1 && x < y, x < y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x <= y && x - c1 != y, x <= y, c1.Eval()->value > 0);
+  // TVM_TRY_REWRITE_IF(x <= y && x != y + c1, x <= y, c1.Eval()->value > 0);
+  // TVM_TRY_REWRITE_IF(x - c1 != y && x <= y, x <= y, c1.Eval()->value > 0);
+  // TVM_TRY_REWRITE_IF(x != y + c1 && x <= y, x <= y, c1.Eval()->value > 0);
 
-    TVM_TRY_REWRITE(x <= y && y <= x, x == y);
+  TVM_TRY_REWRITE(x < y && x + 1 != y, x < y - 1);
+  TVM_TRY_REWRITE(x < y && x != y - 1, x < y - 1);
+  TVM_TRY_REWRITE(x + 1 != y && x < y, x < y - 1);
+  TVM_TRY_REWRITE(x != y - 1 && x < y, x < y - 1);
 
-    TVM_TRY_REWRITE(x <= y && x == y, x == y);
-    TVM_TRY_REWRITE(x <= y && y == x, x == y);
-    TVM_TRY_REWRITE(x == y && x <= y, x == y);
-    TVM_TRY_REWRITE(y == x && x <= y, x == y);
+  TVM_TRY_REWRITE_IF(x < y + c1 && x != y + c2, x < y + (c1 - 1),
+                     c1.Eval()->value == c2.Eval()->value + 1);
+  TVM_TRY_REWRITE_IF(x != y + c2 && x < y + c1, x < y + (c1 - 1),
+                     c1.Eval()->value == c2.Eval()->value + 1);
+  TVM_TRY_REWRITE_IF(x < y + c1 && y != x - c2, x < y + (c1 - 1),
+                     c1.Eval()->value == c2.Eval()->value + 1);
+  TVM_TRY_REWRITE_IF(y != x - c2 && x < y + c1, x < y + (c1 - 1),
+                     c1.Eval()->value == c2.Eval()->value + 1);
 
-    TVM_TRY_REWRITE(x <= y && x != y, x < y);
-    TVM_TRY_REWRITE(x <= y && y != x, x < y);
-    TVM_TRY_REWRITE(x != y && x <= y, x < y);
-    TVM_TRY_REWRITE(y != x && x <= y, x < y);
+  TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
 
-    TVM_TRY_REWRITE(x < y && x != y, x < y);
-    TVM_TRY_REWRITE(x < y && y != x, x < y);
-    TVM_TRY_REWRITE(x != y && x < y, x < y);
-    TVM_TRY_REWRITE(y != x && x < y, x < y);
+  TVM_TRY_REWRITE_IF(x < c1 && c2 <= x, cfalse, c2.Eval()->value >= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 <= x && x < c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(x <= c1 && c2 < x, cfalse, c2.Eval()->value >= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 < x && x <= c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
 
-    // TVM_TRY_REWRITE_IF(x < y && x - c1 != y, x < y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x < y && x != y + c1, x < y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x - c1 != y && x < y, x < y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x != y + c1 && x < y, x < y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x <= y && x - c1 != y, x <= y, c1.Eval()->value > 0);
-    // TVM_TRY_REWRITE_IF(x <= y && x != y + c1, x <= y, c1.Eval()->value > 0);
-    // TVM_TRY_REWRITE_IF(x - c1 != y && x <= y, x <= y, c1.Eval()->value > 0);
-    // TVM_TRY_REWRITE_IF(x != y + c1 && x <= y, x <= y, c1.Eval()->value > 0);
+  TVM_TRY_REWRITE_IF(x <= c1 && c2 <= x, cfalse, c2.Eval()->value > c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 <= x && x <= c1, cfalse, c2.Eval()->value > c1.Eval()->value);
 
-    TVM_TRY_REWRITE(x < y && x + 1 != y, x < y - 1);
-    TVM_TRY_REWRITE(x < y && x != y - 1, x < y - 1);
-    TVM_TRY_REWRITE(x + 1 != y && x < y, x < y - 1);
-    TVM_TRY_REWRITE(x != y - 1 && x < y, x < y - 1);
-
-    TVM_TRY_REWRITE_IF(x < y + c1 && x != y + c2, x < y + (c1 - 1),
-                       c1.Eval()->value == c2.Eval()->value + 1);
-    TVM_TRY_REWRITE_IF(x != y + c2 && x < y + c1, x < y + (c1 - 1),
-                       c1.Eval()->value == c2.Eval()->value + 1);
-    TVM_TRY_REWRITE_IF(x < y + c1 && y != x - c2, x < y + (c1 - 1),
-                       c1.Eval()->value == c2.Eval()->value + 1);
-    TVM_TRY_REWRITE_IF(y != x - c2 && x < y + c1, x < y + (c1 - 1),
-                       c1.Eval()->value == c2.Eval()->value + 1);
-
-    TVM_TRY_REWRITE_IF(x < c1 && c2 < x, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 < x && x < c1, cfalse, c2.Eval()->value + 1 >= c1.Eval()->value);
-
-    TVM_TRY_REWRITE_IF(x < c1 && c2 <= x, cfalse, c2.Eval()->value >= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 <= x && x < c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(x <= c1 && c2 < x, cfalse, c2.Eval()->value >= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 < x && x <= c1, cfalse, c2.Eval()->value >= c1.Eval()->value);
-
-    TVM_TRY_REWRITE_IF(x <= c1 && c2 <= x, cfalse, c2.Eval()->value > c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 <= x && x <= c1, cfalse, c2.Eval()->value > c1.Eval()->value);
-
-    TVM_TRY_REWRITE(x == c1 && x != c2, x == c1 && c1 != c2);
-    TVM_TRY_REWRITE(x != c2 && x == c1, x == c1 && c1 != c2);
-
-    return NullOpt;
-  };
-
-  // Check each pairwise set of subexpressions for simplifications
-  for (size_t i = 0; i < subexprs.size(); i++) {
-    for (size_t j = i + 1; j < subexprs.size(); j++) {
-      Optional<PrimExpr>& a = subexprs[i];
-      Optional<PrimExpr>& b = subexprs[j];
-      if (a && b) {
-        // line_num = true;
-        if (Optional<PrimExpr> pairwise = pairwise_simplify(a.value(), b.value())) {
-          // std::cout << "Found pairwise simplification of (" << a << " && " << b << ") into "
-          //           << pairwise << std::endl;
-          a = NullOpt;
-          b = pairwise.value();
-          modified = true;
-        }
-        // line_num = false;
-      }
-    }
-  }
-
-  if (!modified) {
-    return GetRef<PrimExpr>(op);
-  }
-
-  // Sort the subexpressions to help in equality comparisons.
-  //
-  // TODO: Deterministic hash with
-  // std::sort(subexprs.begin(), subexprs.end(), [](const PrimExpr& a, const PrimExpr& b) {
-  //   return StructuralHash()(a) < StructuralHash()(b);
-  // });
-
-  // Merge all remaining subexpressions
-  PrimExpr ret = Bool(true);
-  for (const auto& subexpr : subexprs) {
-    if (subexpr) {
-      ret = ret && subexpr.value();
-    }
-  }
+  TVM_TRY_REWRITE(x == c1 && x != c2, x == c1 && c1 != c2);
+  TVM_TRY_REWRITE(x != c2 && x == c1, x == c1 && c1 != c2);
   return ret;
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
-  // std::cout << "Simplifying OrNode " << GetRef<PrimExpr>(op) << std::endl;
-  if (debug_enable_simplification_with_and_of_ors && !recursive) {
-    recursive = true;
-    PrimExpr orig = GetRef<PrimExpr>(op);
-    PrimExpr expr = orig;
-    // std::cout << "Simplifying OrNode " << expr << std::endl;
-    expr = SimplifyUsingCNFAndDNF(expr, analyzer_);
-    // std::cout << "\t"
-    //           << "OrNode " << orig << " would simplify to " << expr << std::endl;
-    recursive = false;
-    return expr;
+  PrimExpr a = op->a;
+  PrimExpr b = op->b;
+  {
+    With<ConstraintContext> context(analyzer_, RewriteBooleanOperators(Not(b)));
+    a = VisitExpr(std::move(a));
   }
-  std::vector<Optional<PrimExpr>> subexprs;
-  for (const auto& subexpr : ExtractComponents(GetRef<PrimExpr>(op))) {
-    subexprs.push_back(subexpr);
+  {
+    With<ConstraintContext> context(analyzer_, RewriteBooleanOperators(Not(a)));
+    b = VisitExpr(std::move(b));
   }
 
-  ICHECK_GE(subexprs.size(), 2);
+  PrimExpr ret;
+  if (a.same_as(op->a) && b.same_as(op->b)) {
+    ret = GetRef<Or>(op);
+  } else {
+    ret = Or(a, b);
+  }
+  op = ret.as<OrNode>();
 
-  // auto subexpr_as_str = [&]() {
-  //   std::stringstream ss;
-  //   ss << "[";
-  //   for (size_t i = 0; i < subexprs.size(); i++) {
-  //     if (i) {
-  //       ss << ", ";
-  //     }
-  //     if (subexprs[i].defined()) {
-  //       ss << subexprs[i];
-  //     } else {
-  //       ss << "(null)";
-  //     }
-  //   }
-  //   ss << "]";
-  //   return ss.str();
-  // };
+  if (auto const_res = TryConstFold<Or>(op->a, op->b)) return const_res.value();
+  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
-  // std::cout << "\t"
-  //           << "Subexprs = " << subexpr_as_str() << std::endl;
+  // Pattern var to match any expression
+  PVar<PrimExpr> x, y;
+  // Pattern var match IntImm
+  PVar<IntImm> c1, c2;
+  PVar<int> lanes;
 
-  bool modified = false;
-
-  // Simplify each of the subexpressions under the assumption that all
-  // other subexpressions are false.
-  for (size_t i = 0; i < subexprs.size(); i++) {
-    // std::vector<With<ConstraintContext>> context;
-    // context.reserve(subexprs.size() - 1);
-
-    PrimExpr full_constraint = Bool(true);
-
-    PrimExpr remainder = Bool(true);
-    for (size_t j = 0; j < subexprs.size(); j++) {
-      if (i != j && subexprs[j]) {
-        PrimExpr sub = RewriteBooleanOperators(Not(subexprs[j].value()));
-        full_constraint = full_constraint && sub;
-        // context.emplace_back(analyzer_, sub);
-      }
-    }
-
-    With<ConstraintContext> context(analyzer_, full_constraint);
-    PrimExpr simplified = VisitExpr(subexprs[i].value());
-    if (!simplified.same_as(subexprs[i])) {
-      modified = true;
-    }
-
-    // std::cout << "\t"
-    //           << "Simplified subexpr[" << i << "] = " << subexprs[i] << " to " << simplified
-    //           << " under constraint that " << full_constraint << std::endl;
-
-    if (auto* as_int = simplified.as<IntImmNode>()) {
-      if (as_int->value) {
-        return Bool(true);
-      } else {
-        subexprs[i] = NullOpt;
-      }
-    } else {
-      subexprs[i] = simplified;
-    }
-
-    // while (context.size()) {
-    //   context.pop_back();
-    // }
+  if (op->dtype.lanes() != 1) {
+    TVM_TRY_REWRITE(broadcast(x, lanes) || broadcast(y, lanes), broadcast(x || y, lanes));
   }
 
-  // std::cout << "\t"
-  //           << "Simplified subexprs = " << subexpr_as_str() << std::endl;
+  auto ctrue = PConst<PrimExpr>(make_const(op->dtype, true));
 
-  // Rules to simplify a pair of conditions.  Returns NullOpt if no
-  // simplification is possible.
-  auto pairwise_simplify = [this](const PrimExpr& a, const PrimExpr& b) -> Optional<PrimExpr> {
-    auto const_res = TryConstFold<Or>(a, b);
-    if (const_res.defined()) {
-      // std::cout << "\t\t"
-      //           << "Found result " << const_res << " by constant folding" << std::endl;
-      return const_res.value();
-    }
+  TVM_TRY_REWRITE(x == y || x != y, ctrue);
+  TVM_TRY_REWRITE(x != y || x == y, ctrue);
+  TVM_TRY_REWRITE(x || x, x);
+  TVM_TRY_REWRITE(x || !x, ctrue);
+  TVM_TRY_REWRITE(x <= y || y < x, ctrue);
+  TVM_TRY_REWRITE(y < x || x <= y, ctrue);
+  TVM_TRY_REWRITE(x <= y || y <= x, ctrue);
 
-    PrimExpr ret = a || b;
+  TVM_TRY_REWRITE(x < y || y < x, x != y);
 
-    // std::cout << "\t\t"
-    //           << "Comparing against unmodified return value " << ret << std::endl;
+  TVM_TRY_REWRITE_IF(c1 <= x || x < c2, x != c2, c1.Eval()->value - 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x < c2 || c1 <= x, x != c2, c1.Eval()->value - 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(c1 < x || x <= c2, x != c1, c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x <= c2 || c1 < x, x != c1, c1.Eval()->value + 1 == c2.Eval()->value);
 
-    if (auto match = TryMatchLiteralConstraint(ret)) {
-      // std::cout << "\t\t"
-      //           << "Found result " << match.value() << " by comparing to known literal"
-      //           << std::endl;
-      return match.value();
-    }
+  TVM_TRY_REWRITE(x <= y || y < x - 1, x != y + 1);
+  TVM_TRY_REWRITE(x <= y || y + 1 < x, x != y + 1);
+  TVM_TRY_REWRITE(y < x - 1 || x <= y, x != y + 1);
+  TVM_TRY_REWRITE(y - 1 < x || x <= y, x != y + 1);
 
-    // Pattern var to match any expression
-    PVar<PrimExpr> x, y;
-    // Pattern var match IntImm
-    PVar<IntImm> c1, c2;
-    PVar<int> lanes;
+  TVM_TRY_REWRITE(x < y - 1 || y <= x, x != y - 1);
+  TVM_TRY_REWRITE(y <= x || x < y - 1, x != y - 1);
+  TVM_TRY_REWRITE(x + 1 < y || y <= x, x != y - 1);
+  TVM_TRY_REWRITE(y <= x || x + 1 < y, x != y - 1);
 
-    if (ret->dtype.lanes() != 1) {
-      TVM_TRY_REWRITE(broadcast(x, lanes) || broadcast(y, lanes), broadcast(x || y, lanes));
-    }
+  TVM_TRY_REWRITE(x <= y || x == y, x <= y);
+  TVM_TRY_REWRITE(x <= y || y == x, x <= y);
+  TVM_TRY_REWRITE(x == y || x <= y, x <= y);
+  TVM_TRY_REWRITE(y == x || x <= y, x <= y);
 
-    auto ctrue = PConst<PrimExpr>(make_const(ret->dtype, true));
+  TVM_TRY_REWRITE(x < y || x == y, x <= y);
+  TVM_TRY_REWRITE(x < y || y == x, x <= y);
+  TVM_TRY_REWRITE(x == y || x < y, x <= y);
+  TVM_TRY_REWRITE(y == x || x < y, x <= y);
 
-    // std::cout << "\t\t"
-    //           << "Trying rewrite rules..." << std::endl;
+  // TVM_TRY_REWRITE_IF(x < y || x + c1 == y, x<y, c1.Eval()->value> 0);
+  // TVM_TRY_REWRITE_IF(x < y || x == y - c1, x<y, c1.Eval()->value> 0);
+  // TVM_TRY_REWRITE_IF(x + c1 == y || x < y, x<y, c1.Eval()->value> 0);
+  // TVM_TRY_REWRITE_IF(x == y - c1 || x < y, x<y, c1.Eval()->value> 0);
+  // TVM_TRY_REWRITE_IF(x <= y || x + c1 == y, x <= y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x <= y || x == y - c1, x <= y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x + c1 == y || x <= y, x <= y, c1.Eval()->value >= 0);
+  // TVM_TRY_REWRITE_IF(x == y - c1 || x <= y, x <= y, c1.Eval()->value >= 0);
 
-    TVM_TRY_REWRITE(x == y || x != y, ctrue);
-    TVM_TRY_REWRITE(x != y || x == y, ctrue);
-    TVM_TRY_REWRITE(x || x, x);
-    TVM_TRY_REWRITE(x || !x, ctrue);
-    TVM_TRY_REWRITE(x <= y || y < x, ctrue);
-    TVM_TRY_REWRITE(y < x || x <= y, ctrue);
-    TVM_TRY_REWRITE(x <= y || y <= x, ctrue);
+  TVM_TRY_REWRITE(x == y - 1 || x <= y, x <= y);
+  TVM_TRY_REWRITE(x <= y || x == y - 1, x <= y);
+  TVM_TRY_REWRITE(x == y + (-1) || x <= y, x <= y);
+  TVM_TRY_REWRITE(x <= y || x == y + (-1), x <= y);
+  TVM_TRY_REWRITE(x + 1 == y || x <= y, x <= y);
+  TVM_TRY_REWRITE(x <= y || x + 1 == y, x <= y);
+  TVM_TRY_REWRITE(y - 1 == x || x <= y, x <= y);
+  TVM_TRY_REWRITE(x <= y || y - 1 == x, x <= y);
+  TVM_TRY_REWRITE(y + (-1) == x || x <= y, x <= y);
+  TVM_TRY_REWRITE(x <= y || y + (-1) == x, x <= y);
+  TVM_TRY_REWRITE(y == x + 1 || x <= y, x <= y);
+  TVM_TRY_REWRITE(x <= y || y == x + 1, x <= y);
 
-    TVM_TRY_REWRITE(x < y || y < x, x != y);
+  TVM_TRY_REWRITE(x <= y || x == y + 1, x <= y + 1);
+  TVM_TRY_REWRITE(x <= y || x - 1 == y, x <= y + 1);
+  TVM_TRY_REWRITE(x == y + 1 || x <= y, x <= y + 1);
+  TVM_TRY_REWRITE(x - 1 == y || x <= y, x <= y + 1);
 
-    TVM_TRY_REWRITE_IF(c1 <= x || x < c2, x != c2, c1.Eval()->value - 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x < c2 || c1 <= x, x != c2, c1.Eval()->value - 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(c1 < x || x <= c2, x != c1, c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x <= c2 || c1 < x, x != c1, c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x == c1 || x <= c2, x <= c1, c1.Eval()->value - 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x <= c2 || x == c1, x <= c1, c1.Eval()->value - 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x == c1 || c2 <= x, c1 <= x, c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 <= x || x == c1, c1 <= x, c1.Eval()->value + 1 == c2.Eval()->value);
 
-    TVM_TRY_REWRITE(x <= y || y < x - 1, x != y + 1);
-    TVM_TRY_REWRITE(x <= y || y + 1 < x, x != y + 1);
-    TVM_TRY_REWRITE(y < x - 1 || x <= y, x != y + 1);
-    TVM_TRY_REWRITE(y - 1 < x || x <= y, x != y + 1);
+  TVM_TRY_REWRITE_IF(x == y + c1 || x <= y + c2, x <= y + c1,
+                     c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x <= y + c2 || x == y + c1, x <= y + c1,
+                     c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(y == x - c1 || x <= y + c2, x <= y + c1,
+                     c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x <= y + c2 || y == x - c1, x <= y + c1,
+                     c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(y == x + (0 - c1) || x <= y + c2, x <= y + c1,
+                     c1.Eval()->value + 1 == c2.Eval()->value);
+  TVM_TRY_REWRITE_IF(x <= y + c2 || y == x + (0 - c1), x <= y + c1,
+                     c1.Eval()->value + 1 == c2.Eval()->value);
 
-    TVM_TRY_REWRITE(x < y - 1 || y <= x, x != y - 1);
-    TVM_TRY_REWRITE(y <= x || x < y - 1, x != y - 1);
-    TVM_TRY_REWRITE(x + 1 < y || y <= x, x != y - 1);
-    TVM_TRY_REWRITE(y <= x || x + 1 < y, x != y - 1);
+  TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);
 
-    TVM_TRY_REWRITE(x <= y || x == y, x <= y);
-    TVM_TRY_REWRITE(x <= y || y == x, x <= y);
-    TVM_TRY_REWRITE(x == y || x <= y, x <= y);
-    TVM_TRY_REWRITE(y == x || x <= y, x <= y);
+  TVM_TRY_REWRITE_IF(x <= c1 || c2 < x, ctrue, c2.Eval()->value <= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 < x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(x < c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value);
+  TVM_TRY_REWRITE_IF(c2 <= x || x < c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
 
-    TVM_TRY_REWRITE(x < y || x == y, x <= y);
-    TVM_TRY_REWRITE(x < y || y == x, x <= y);
-    TVM_TRY_REWRITE(x == y || x < y, x <= y);
-    TVM_TRY_REWRITE(y == x || x < y, x <= y);
+  TVM_TRY_REWRITE_IF(x <= c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
+  TVM_TRY_REWRITE_IF(c2 <= x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
 
-    // TVM_TRY_REWRITE_IF(x < y || x + c1 == y, x<y, c1.Eval()->value> 0);
-    // TVM_TRY_REWRITE_IF(x < y || x == y - c1, x<y, c1.Eval()->value> 0);
-    // TVM_TRY_REWRITE_IF(x + c1 == y || x < y, x<y, c1.Eval()->value> 0);
-    // TVM_TRY_REWRITE_IF(x == y - c1 || x < y, x<y, c1.Eval()->value> 0);
-    // TVM_TRY_REWRITE_IF(x <= y || x + c1 == y, x <= y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x <= y || x == y - c1, x <= y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x + c1 == y || x <= y, x <= y, c1.Eval()->value >= 0);
-    // TVM_TRY_REWRITE_IF(x == y - c1 || x <= y, x <= y, c1.Eval()->value >= 0);
-
-    // std::cout << "\t\t"
-    //           << "Trying some more rewrite rules..." << std::endl;
-
-    TVM_TRY_REWRITE(x == y - 1 || x <= y, x <= y);
-    TVM_TRY_REWRITE(x <= y || x == y - 1, x <= y);
-    TVM_TRY_REWRITE(x == y + (-1) || x <= y, x <= y);
-    TVM_TRY_REWRITE(x <= y || x == y + (-1), x <= y);
-    TVM_TRY_REWRITE(x + 1 == y || x <= y, x <= y);
-    TVM_TRY_REWRITE(x <= y || x + 1 == y, x <= y);
-    TVM_TRY_REWRITE(y - 1 == x || x <= y, x <= y);
-    TVM_TRY_REWRITE(x <= y || y - 1 == x, x <= y);
-    TVM_TRY_REWRITE(y + (-1) == x || x <= y, x <= y);
-    TVM_TRY_REWRITE(x <= y || y + (-1) == x, x <= y);
-    TVM_TRY_REWRITE(y == x + 1 || x <= y, x <= y);
-    TVM_TRY_REWRITE(x <= y || y == x + 1, x <= y);
-
-    TVM_TRY_REWRITE(x <= y || x == y + 1, x <= y + 1);
-    TVM_TRY_REWRITE(x <= y || x - 1 == y, x <= y + 1);
-    TVM_TRY_REWRITE(x == y + 1 || x <= y, x <= y + 1);
-    TVM_TRY_REWRITE(x - 1 == y || x <= y, x <= y + 1);
-
-    TVM_TRY_REWRITE_IF(x == c1 || x <= c2, x <= c1, c1.Eval()->value - 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x <= c2 || x == c1, x <= c1, c1.Eval()->value - 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x == c1 || c2 <= x, c1 <= x, c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 <= x || x == c1, c1 <= x, c1.Eval()->value + 1 == c2.Eval()->value);
-
-    TVM_TRY_REWRITE_IF(x == y + c1 || x <= y + c2, x <= y + c1,
-                       c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x <= y + c2 || x == y + c1, x <= y + c1,
-                       c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(y == x - c1 || x <= y + c2, x <= y + c1,
-                       c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x <= y + c2 || y == x - c1, x <= y + c1,
-                       c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(y == x + (0 - c1) || x <= y + c2, x <= y + c1,
-                       c1.Eval()->value + 1 == c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(x <= y + c2 || y == x + (0 - c1), x <= y + c1,
-                       c1.Eval()->value + 1 == c2.Eval()->value);
-
-    // std::cout << "\t\t"
-    //           << "Trying even more rewrite rules..." << std::endl;
-
-    TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);
-
-    TVM_TRY_REWRITE_IF(x <= c1 || c2 < x, ctrue, c2.Eval()->value <= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 < x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(x < c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value);
-    TVM_TRY_REWRITE_IF(c2 <= x || x < c1, ctrue, c2.Eval()->value <= c1.Eval()->value);
-
-    TVM_TRY_REWRITE_IF(x <= c1 || c2 <= x, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
-    TVM_TRY_REWRITE_IF(c2 <= x || x <= c1, ctrue, c2.Eval()->value <= c1.Eval()->value + 1);
-
-    TVM_TRY_REWRITE(x != c1 || x == c2, x != c1 || c1 == c2);
-    TVM_TRY_REWRITE(x == c2 || x != c1, x != c1 || c1 == c2);
-
-    // std::cout << "\t\t"
-    //           << "Failed to do any rewrites..." << std::endl;
-
-    return NullOpt;
-  };
-
-  // Check each pairwise set of subexpressions for simplifications
-  for (size_t i = 0; i < subexprs.size(); i++) {
-    for (size_t j = i + 1; j < subexprs.size(); j++) {
-      Optional<PrimExpr>& a = subexprs[i];
-      Optional<PrimExpr>& b = subexprs[j];
-      // std::cout << "\t"
-      //           << "Attempting to compare subexprs[" << i << "] = " << a << " and subexprs[" << j
-      //           << "] = " << b << std::endl;
-      if (a && b) {
-        // line_num = true;
-        if (Optional<PrimExpr> pairwise = pairwise_simplify(a.value(), b.value())) {
-          // std::cout << "\t\t"
-          //           << "Found pairwise simplification of (" << a << " || " << b << ") into "
-          //           << pairwise << std::endl;
-          a = NullOpt;
-          b = pairwise.value();
-          modified = true;
-
-          // std::cout << "\t"
-          //           << "Updated subexprs to " << subexpr_as_str() << std::endl;
-        }
-        // line_num = false;
-      }
-    }
-  }
-
-  if (!modified) {
-    // std::cout << "No simplifications possible, returning original " << GetRef<PrimExpr>(op)
-    //           << std::endl;
-    return GetRef<PrimExpr>(op);
-  }
-
-  // std::cout << "\t"
-  //           << "Simplified = " << subexpr_as_str() << std::endl;
-
-  // Sort the subexpressions to help in equality comparisons.
-  // std::sort(subexprs.begin(), subexprs.end(), [](const PrimExpr& a, const PrimExpr& b) {
-  //   return StructuralHash()(a) < StructuralHash()(b);
-  // });
-
-  // std::cout << "\t"
-  //           << "Sorted = " << subexpr_as_str() << std::endl;
-
-  // Merge all remaining subexpressions
-  PrimExpr ret = Bool(false);
-  for (const auto& subexpr : subexprs) {
-    if (subexpr) {
-      ret = ret || subexpr.value();
-    }
-  }
-
-  // std::cout << "\t"
-  //           << "Returning " << ret << " as simplified form of " << GetRef<PrimExpr>(op)
-  //           << std::endl;
+  TVM_TRY_REWRITE(x != c1 || x == c2, x != c1 || c1 == c2);
+  TVM_TRY_REWRITE(x == c2 || x != c1, x != c1 || c1 == c2);
 
   return ret;
 }
