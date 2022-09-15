@@ -633,63 +633,6 @@ class IntSetAnalyzer {
   Impl* impl_;
 };
 
-class ConstraintTracker {
- public:
-  // Enter a scoped constraint.  This constraint may be exited by
-  // calling the provided callback.
-  std::function<void()> EnterScopedConstraint(PrimExpr constraint);
-
-  /*!
-   * \brief Provide a known true statement to the analyzers
-   *
-   * A pure expression may be assumed to be true for the remaining
-   * lifetime of the analyzer.  An expression with `SideEffect(expr)
-   * >= SideEffectKind::kRead` may be invalidated by later calls to
-   * `KnownBufferValue`.
-   *
-   * \param expr An expression that is known to be true.
-   */
-  void Assume(PrimExpr constraint);
-
-  // Provide a known value at the specified indices in a buffer,
-  // removing any previous assumptions about the value at these
-  // indices.
-  void KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices, PrimExpr value);
-
-  // Return a known value at the specified indices, if a known value
-  // exists.
-  Optional<PrimExpr> KnownBufferValue(tir::Buffer buf, Array<PrimExpr> indices);
-
-  // Return a collection of expressions that are known to be true,
-  // containing any scoped and global constraints.
-  std::vector<PrimExpr> CurrentlyKnown() const;
-
-  /* \brief Enter a context in which the buffer values may be used for simplifications
-   *
-   * To avoid unexpected conflicts or accidental inlining,
-   * simplifications that use a known buffer value must be explicitly
-   * enabled.  Currently, they are enabled when attempting to prove an
-   * expression, but not for general simplifications.
-   *
-   * \returns A callback to restore the previous state
-   */
-  std::function<void()> EnableExtraSimplifications();
-
-  /*! \brief Temporarily suppress use of constraints provided through EnterConstraint
-   *
-   * \return An exit function that removes the suppression
-   */
-  std::function<void()> SuppressConstraints();
-
- private:
-  friend class Analyzer;
-  ConstraintTracker(Analyzer* parent);
-  TVM_DLL ~ConstraintTracker();
-  class Impl;
-  /*! \brief Internal impl */
-  Impl* impl_;
-};
-
 /*!
  * \brief Analyzer that contains bunch of sub-analyzers.
  *
@@ -719,8 +662,6 @@ class TVM_DLL Analyzer {
   IntSetAnalyzer int_set;
   /*! \brief sub-analyzer transitive comparisons */
   TransitiveComparisonAnalyzer transitive_comparisons;
-  /*! \brief sub-analyzer: Track currently active constraints */
-  ConstraintTracker constraint_tracker;
   /*! \brief constructor */
   Analyzer();
   /*!

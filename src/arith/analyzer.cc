@@ -36,8 +36,7 @@ Analyzer::Analyzer()
       modular_set(this),
       rewrite_simplify(this),
       canonical_simplify(this),
-      int_set(this),
-      constraint_tracker(this) {}
+      int_set(this) {}
 
 void Analyzer::Bind(const Var& var, const PrimExpr& expr, bool allow_override) {
   PrimExpr new_expr = expr;
@@ -79,7 +78,6 @@ void ConstraintContext::EnterWithScope() {
   recovery_functions_.push_back(analyzer_->rewrite_simplify.EnterConstraint(constraint_));
   recovery_functions_.push_back(analyzer_->int_set.EnterConstraint(constraint_));
   recovery_functions_.push_back(analyzer_->transitive_comparisons.EnterConstraint(constraint_));
-  // recovery_functions_.push_back(analyzer_->constraint_tracker.EnterScopedConstraint(constraint_));
 }
 
 void ConstraintContext::ExitWithScope() {
