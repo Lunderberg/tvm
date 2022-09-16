@@ -319,8 +319,6 @@ bool Comparison::Implies(const Comparison& other) const {
   ExprDeepEqual expr_equal;
   ICHECK(expr_equal(lhs_, other.lhs_) && expr_equal(rhs_, other.rhs_));
 
-  auto any = [](CompareResult cmp) -> bool { return cmp != CompareResult::kInconsistent; };
-
   // TODO: Simplify these with bitwise operators
 
   // EQ rules
@@ -603,24 +601,6 @@ std::function<void()> TransitiveComparisonAnalyzer::Impl::EnterConstraint(const 
   return frecover;
 }
 
-namespace {
-// For debug, from https://stackoverflow.com/a/46455079
-//
-// TODO: Remove this
-class NullStream : public std::ostream {
-  class NullBuffer : public std::streambuf {
-   public:
-    int overflow(int c) { return c; }
-  } m_nb;
-
- public:
-  NullStream() : std::ostream(&m_nb) {}
-};
-
-// auto& printer = std::cout;
-auto printer = NullStream();
-}  // namespace
-
 CompareResult TransitiveComparisonAnalyzer::Impl::TryCompare(const PrimExpr& lhs,
                                                              const PrimExpr& rhs) const {
   // Currently only supports integer checks
@@ -642,45 +622,15 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompare(const PrimExpr& lhs
     }
   }
 
-  printer << "Comparing between lhs = " << lhs << " and rhs = " << rhs << std::endl;
-
   auto from_lhs = TryCompareFromLHS(lhs, rhs);
   auto from_rhs = Reverse(TryCompareFromLHS(rhs, lhs));
   auto output = from_lhs & from_rhs;
-
-  printer << "Propagating from lhs = " << lhs << " resulted in " << from_lhs
-          << ", and from rhs = " << rhs << " resulted in " << from_rhs
-          << ".  Together, they resulted in " << output << "." << std::endl;
 
   return output;
 }
 
 CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
     const PrimExpr& lhs_input, const PrimExpr& rhs_input) const {
-  printer << "Attempting to propagate constraints from lhs = " << lhs_input
-          << " to rhs = " << rhs_input << std::endl;
-
-  // Have the integer value on the right, if present.
-  auto print_vec_compare = [](const std::vector<Comparison>& vec) {
-    std::stringstream ss;
-    ss << "[";
-    for (size_t i = 0; i < vec.size(); i++) {
-      if (i) {
-        ss << ", ";
-      }
-      ss << vec[i].debug_as_primexpr();
-    }
-    ss << "]";
-    return ss.str();
-  };
-
-  printer << "Attempting to compare between " << lhs_input << " and " << rhs_input
-          << " using transitive knowns" << std::endl;
-  printer << "\t"
-          << "Knowns = " << print_vec_compare(knowns_) << std::endl;
-  printer << "\t"
-          << "Scoped Knowns = " << print_vec_compare(scoped_knowns_) << std::endl;
-
   PrimExpr lhs = lhs_input;
   PrimExpr rhs = rhs_input;
   int64_t offset;
@@ -700,57 +650,11 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
   std::unordered_map<PrimExpr, std::vector<Comparison>, StructuralHash, StructuralEqual>
       compared_to_x;
 
-  auto x_known_str = [&]() {
-    std::stringstream ss;
-
-    ss << "[";
-
-    bool first_set = true;
-    for (const auto& pair : compared_to_x) {
-      if (first_set) {
-        first_set = false;
-      } else {
-        ss << ", ";
-      }
-
-      bool first_expr = true;
-      ss << "[";
-      for (const auto& comparison : pair.second) {
-        if (first_expr) {
-          first_expr = false;
-        } else {
-          ss << ", ";
-        }
-        ss << comparison.debug_as_primexpr();
-      }
-      ss << "]";
-    }
-    ss << "]";
-    return ss.str();
-  };
-
   auto declare_known = [&](Comparison cmp) {
-    printer << "\t\t"
-            << "Declared a new known that " << cmp.debug_as_primexpr() << std::endl;
-
     auto& prev_knowns = compared_to_x[cmp.rhs_];
-
-    printer << "\t\t\t"
-            << "Current list comparing " << cmp.lhs_ << " to " << cmp.rhs_ << " + C is [";
-    for (size_t i = 0; i < prev_knowns.size(); i++) {
-      if (i) {
-        printer << ", ";
-      }
-      printer << prev_knowns[i].debug_as_primexpr();
-    }
-    printer << "]" << std::endl;
 
     for (auto& prev_known : prev_knowns) {
       if (prev_known.Implies(cmp)) {
-        printer << "\t\t\t"
-                << "Previous known " << prev_known.debug_as_primexpr()
-                << " is already just as strict a condition as " << cmp.debug_as_primexpr()
-                << std::endl;
         return;
       }
     }
@@ -763,30 +667,12 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
     for (auto& prev_known : prev_knowns) {
       Comparison intersect = cmp.IntersectAssumingExpressionsMatch(prev_known);
       if (intersect.IsValid()) {
-        printer << "\t\t\t"
-                << "Replacing " << prev_known.debug_as_primexpr() << " with the tighter condition "
-                << cmp.debug_as_primexpr() << std::endl;
         prev_known = cmp;
         return;
       }
     }
 
-    printer << "\t\t\t"
-            << "Declared  " << cmp.debug_as_primexpr()
-            << " is not expressible in terms of any other knowns, adding to list for rhs = "
-            << cmp.rhs_ << " + C" << std::endl;
-
     prev_knowns.push_back(cmp);
-
-    printer << "\t\t\t"
-            << "Updated list comparing " << cmp.lhs_ << " to " << cmp.rhs_ << " + C is [";
-    for (size_t i = 0; i < prev_knowns.size(); i++) {
-      if (i) {
-        printer << ", ";
-      }
-      printer << prev_knowns[i].debug_as_primexpr();
-    }
-    printer << "]" << std::endl;
   };
 
   for (const auto& known : knowns_) {
@@ -802,9 +688,6 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
     }
   }
 
-  printer << "\t"
-          << "After first pass, knowns = " << x_known_str() << std::endl;
-
   while (to_visit.size()) {
     PrimExpr middle_expr = *to_visit.begin();
     to_visit.erase(to_visit.begin());
@@ -813,9 +696,6 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
     ICHECK(compared_to_x.count(middle_expr));
 
     std::vector<Comparison> new_knowns_using_lhs;
-
-    printer << "\t"
-            << "Checking for transitive comparisons involving " << middle_expr << std::endl;
 
     auto attempt_transitive = [&](Comparison cmp) {
       if (!cmp.IsValid()) {
@@ -826,9 +706,6 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
       if (expr_equal(right_expr, lhs)) {
         return;
       }
-
-      printer << "\t\t"
-              << "Found comparison " << cmp.debug_as_primexpr() << std::endl;
 
       for (const auto& prev : prev_knowns_using_middle) {
         CompareResult new_result = CompareResult::kUnknown;
@@ -850,14 +727,7 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
 
         if (new_result != CompareResult::kUnknown) {
           Comparison new_known(lhs, right_expr, new_offset, new_result);
-          printer << "\t\t\t"
-                  << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
-                  << ", found " << new_known.debug_as_primexpr() << std::endl;
           new_knowns_using_lhs.push_back(new_known);
-        } else {
-          printer << "\t\t\t"
-                  << "Using " << prev.debug_as_primexpr() << " and " << cmp.debug_as_primexpr()
-                  << ", couldn't find any additional comparisons" << std::endl;
         }
       }
     };
@@ -872,34 +742,17 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
       attempt_transitive(cmp);
     }
 
-    printer << "\t"
-            << "Found new knowns " << print_vec_compare(new_knowns_using_lhs) << std::endl;
-
     for (const auto& new_known : new_knowns_using_lhs) {
       declare_known(new_known);
     }
-
-    printer << "\t\t"
-            << "After applying new knowns, all known comparisons are " << x_known_str()
-            << std::endl;
   }
-
-  printer << "\t"
-          << "After propagation, all known comparisons are " << x_known_str() << std::endl;
 
   auto it = compared_to_x.find(rhs);
   if (it == compared_to_x.end()) {
-    printer << "\t"
-            << "No paths from " << lhs << " to " << rhs << " using known values" << std::endl;
     return CompareResult::kUnknown;
   }
 
   const std::vector<Comparison>& known_between_lhs_and_rhs = it->second;
-
-  printer << "\t"
-          << "After propagation, found " << known_between_lhs_and_rhs.size()
-          << " comparisons between desired expressions, "
-          << print_vec_compare(known_between_lhs_and_rhs) << std::endl;
 
   CompareResult result = CompareResult::kUnknown;
   for (const auto& known : known_between_lhs_and_rhs) {
@@ -918,43 +771,17 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
 
       case CompareResult::kLE:
         if (known.offset_ < offset) {
-          printer << "\t\t"
-                  << "Known value of " << known.debug_as_primexpr()
-                  << " reduced possibilities from " << result;
           result = result & CompareResult::kLT;
-          printer << " to " << result << std::endl;
         } else if (known.offset_ <= offset) {
-          printer << "\t\t"
-                  << "Known value of " << known.debug_as_primexpr()
-                  << " reduced possibilities from " << result;
           result = result & CompareResult::kLE;
-          printer << " to " << result << std::endl;
-        } else {
-          printer << "\t\t"
-                  << "Known value of " << known.debug_as_primexpr()
-                  << " couldn't be applied to comparison of " << lhs << " and "
-                  << rhs + IntImm(rhs.dtype(), offset) << std::endl;
         }
         break;
 
       case CompareResult::kGE:
         if (known.offset_ > offset) {
-          printer << "\t\t"
-                  << "Known value of " << known.debug_as_primexpr()
-                  << " reduced possibilities from " << result;
           result = result & CompareResult::kGT;
-          printer << " to " << result << std::endl;
         } else if (known.offset_ >= offset) {
-          printer << "\t\t"
-                  << "Known value of " << known.debug_as_primexpr()
-                  << " reduced possibilities from " << result;
           result = result & CompareResult::kGE;
-          printer << " to " << result << std::endl;
-        } else {
-          printer << "\t\t"
-                  << "Known value of " << known.debug_as_primexpr()
-                  << " couldn't be applied to comparison of " << lhs << " and "
-                  << rhs + IntImm(rhs.dtype(), offset) << std::endl;
         }
         break;
 
@@ -977,9 +804,6 @@ CompareResult TransitiveComparisonAnalyzer::Impl::TryCompareFromLHS(
         return CompareResult::kInconsistent;
     }
   }
-
-  printer << "\t"
-          << "Final result: " << result << std::endl;
 
   return result;
 }

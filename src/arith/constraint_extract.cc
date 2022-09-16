@@ -213,24 +213,6 @@ std::vector<PrimExpr> ExtractComponents(const PrimExpr& expr) {
 }
 
 namespace {
-// For debug, from https://stackoverflow.com/a/46455079
-//
-// TODO: Remove this
-class NullStream : public std::ostream {
-  class NullBuffer : public std::streambuf {
-   public:
-    int overflow(int c) { return c; }
-  } m_nb;
-
- public:
-  NullStream() : std::ostream(&m_nb) {}
-};
-
-// std::ostream& printer = std::cout;
-auto printer = NullStream();
-}  // namespace
-
-namespace {
 class AndOfOrs {
  public:
   enum class Rep {
@@ -248,11 +230,6 @@ class AndOfOrs {
   void SimplifyComponents(Analyzer* analyzer);
   void SimplifyWithinChunks(Analyzer* analyzer);
   void SimplifyAcrossChunks(Analyzer* analyzer);
-
-  void Debug_Cleanup() { Cleanup(); }
-  std::vector<std::vector<PrimExpr>> Debug_Extract() const;
-
-  friend std::ostream& operator<<(std::ostream& os, const AndOfOrs& obj);
 
  private:
   void Cleanup();
@@ -349,19 +326,10 @@ void AndOfOrs::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
   PrimExpr joint = GetExpr(a) || GetExpr(b);
   PrimExpr simplified = analyzer->Simplify(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
-    // std::cout << "Can simplify " << joint << " to " << simplified << std::endl;
     if (auto* simplified_or = simplified.as<OrNode>()) {
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(a) << " with " << simplified_or->a << std::endl;
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(b) << " with " << simplified_or->b << std::endl;
       a = GetKey(simplified_or->a);
       b = GetKey(simplified_or->b);
     } else {
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(a) << " with " << GetExpr(key_false) << std::endl;
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(b) << " with " << simplified << std::endl;
       a = key_false;
       b = GetKey(simplified);
     }
@@ -372,53 +340,14 @@ void AndOfOrs::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
   PrimExpr joint = GetExpr(a) && GetExpr(b);
   PrimExpr simplified = analyzer->Simplify(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
-    // std::cout << "Can simplify " << joint << " to " << simplified << std::endl;
     if (auto* simplified_and = simplified.as<AndNode>()) {
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(a) << " with " << simplified_and->a << std::endl;
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(b) << " with " << simplified_and->b << std::endl;
       a = GetKey(simplified_and->a);
       b = GetKey(simplified_and->b);
     } else {
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(a) << " with " << GetExpr(key_true) << std::endl;
-      // std::cout << "\t"
-      //           << "Replacing " << GetExpr(b) << " with " << simplified << std::endl;
       a = key_true;
       b = GetKey(simplified);
     }
   }
-}
-
-std::ostream& operator<<(std::ostream& os, const AndOfOrs& obj) {
-  os << "expr = (";
-  for (size_t i_outer = 0; i_outer < obj.expr_indices.size(); i_outer++) {
-    const auto& chunk_indices = obj.expr_indices[i_outer];
-
-    os << "\n"
-       << "\t";
-    if (i_outer) {
-      os << (obj.rep == AndOfOrs::Rep::AndOfOrs ? " and " : " or  ");
-    } else {
-      os << "     ";
-    }
-    os << "(";
-    for (size_t i_inner = 0; i_inner < chunk_indices.size(); i_inner++) {
-      auto key = chunk_indices[i_inner];
-
-      if (i_inner) {
-        os << (obj.rep == AndOfOrs::Rep::AndOfOrs ? " or " : " and ");
-      }
-      os << obj.GetExpr(key);
-    }
-    os << ")";
-  }
-  if (obj.expr_indices.size()) {
-    os << "\n";
-  }
-  os << ")";
-  return os;
 }
 
 PrimExpr AndOfOrs::ChunkExpr(const std::vector<Key>& chunk) const {
@@ -456,37 +385,9 @@ PrimExpr AndOfOrs::KnownProvidedByComponentToSiblings(Key key) const {
 }
 
 void AndOfOrs::Simplify(Analyzer* analyzer) {
-  printer << *this << std::endl;
-
-  printer << "Starting Step 1 using OR of AND: "
-          << "Local simplifications" << std::endl;
-
   SimplifyComponents(analyzer);
-
-  printer << "Finished Step 1 using OR of AND: "
-          << "Local simplifications" << std::endl;
-
-  printer << *this << std::endl;
-
-  printer << "Starting Step 2 using OR of AND: "
-          << "Simplifications within AND" << std::endl;
-
   SimplifyWithinChunks(analyzer);
-
-  printer << "Finished Step 2 using OR of AND: "
-          << "Simplifications within AND" << std::endl;
-
-  printer << *this << std::endl;
-
-  printer << "Starting Step 3 using OR of AND: "
-          << "Simplifications across AND" << std::endl;
-
   SimplifyAcrossChunks(analyzer);
-
-  printer << "Finished Step 3 using OR of AND: "
-          << "Simplifications across AND" << std::endl;
-
-  printer << *this << std::endl;
 }
 
 void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
@@ -676,18 +577,6 @@ void AndOfOrs::Cleanup() {
   }
 }
 
-std::vector<std::vector<PrimExpr>> AndOfOrs::Debug_Extract() const {
-  std::vector<std::vector<PrimExpr>> out;
-  for (const auto& or_component_indices : expr_indices) {
-    std::vector<PrimExpr> components;
-    for (Key or_component : or_component_indices) {
-      components.push_back(GetExpr(or_component));
-    }
-    out.push_back(std::move(components));
-  }
-  return out;
-}
-
 }  // namespace
 
 PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
@@ -708,20 +597,12 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
   PrimExpr lookback = Bool(false);
   PrimExpr expr = orig;
 
-  int temp_total_rounds = 0;
-
   Optional<PrimExpr> best = NullOpt;
   size_t num_terms_in_best = -1;
   int rounds_since_improvement = 0;
 
   for (int i = 0; i < max_rounds; i++) {
-    temp_total_rounds++;
-    printer << "\t"
-            << "Starting round " << i << ", expr = " << expr << std::endl;
-
     if (as_const_int(expr)) {
-      printer << "\t\t"
-              << "Round " << i << " started with a constant, breaking" << std::endl;
       break;
     }
 
@@ -738,34 +619,19 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
       rounds_since_improvement++;
     }
 
-    printer << "\t\t"
-            << "Round " << i << " simplified from " << expr << "\n"
-            << "\t\t"
-            << "\t"
-            << " to " << simplified << std::endl;
-
     bool converged = expr_equal(simplified, lookback);
     lookback = expr;
     expr = simplified;
     if (converged) {
-      printer << "\t\t"
-              << "Round " << i << " is the same as round " << i - 2 << ", breaking" << std::endl;
       break;
     }
 
     if (rounds_since_improvement >= 4) {
-      printer << "\t\t"
-              << "No improvement found in the past " << rounds_since_improvement
-              << " simplification rounds, breaking" << std::endl;
       break;
     }
   }
 
   PrimExpr result = best.value_or(expr);
-
-  printer << "\t"
-          << "SimplifyUsingCNFAndDNF, simplified " << orig << " to " << result << " after "
-          << temp_total_rounds << " total rounds" << std::endl;
 
   return result;
 }
