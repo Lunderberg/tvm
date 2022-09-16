@@ -312,18 +312,9 @@ class RewriteSimplifier {
  private:
   friend class Analyzer;
   friend class ConstraintContext;
-  friend class EnableExtraSimplificationContext;
   friend class CanonicalSimplifier;
   explicit RewriteSimplifier(Analyzer* parent);
   TVM_DLL ~RewriteSimplifier();
-
-  /* \brief Enter a context in more aggressive simplifications may be used
-   *
-   * Used when trying to prove a conditional.
-   *
-   * \returns A callback to restore the previous state
-   */
-  std::function<void()> EnableExtraSimplifications();
 
   class Impl;
   /*! \brief Internal impl */
@@ -472,43 +463,6 @@ class ConstraintContext {
   Analyzer* analyzer_;
   /*! \brief The constraint */
   PrimExpr constraint_;
-  /*! \brief function to be called in recovery */
-  std::vector<std::function<void()>> recovery_functions_;
-};
-
-/*!
- * \brief Context in which known buffer values may be substituted in
- *
- * \code
- *
- *  arith::Analyzer analyzer;
- *  analyzer.constraint_tracker.KnownBufferValue(buf, {0, 3}, 42);
- *  PrimExpr expr = BufferLoad(buf, {0, 3});
- *
- *  {
- *    With<arith::AllowBufferValueSimplificationContext> scope(&analyzer);
- *    ICHECK(is_const_int(analyzer.Simplify(expr), 42));
- *  }
- *  // simplifications using known buffer values no longer in effect.
- *  ICHECK(!is_const_int(analyzer.Simplify(expr), 42));
- *
- * \endcode
- */
-class EnableExtraSimplificationContext {
- private:
-  // declare friend to enable with.
-  friend class With<EnableExtraSimplificationContext>;
-  /*!
-   * \brief Construct a constraint context.
-   * \param analyzer The analyzer.
-   */
-  EnableExtraSimplificationContext(Analyzer* analyzer) : analyzer_(analyzer) {}
-  // enter the scope.
-  void EnterWithScope();
-  // exit the scope.
-  void ExitWithScope();
-  /*! \brief The analyzer */
-  Analyzer* analyzer_;
   /*! \brief function to be called in recovery */
   std::vector<std::function<void()>> recovery_functions_;
 };

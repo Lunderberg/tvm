@@ -90,28 +90,11 @@ void ConstraintContext::ExitWithScope() {
   }
 }
 
-void EnableExtraSimplificationContext::EnterWithScope() {
-  ICHECK(recovery_functions_.size() == 0);
-  // recovery_functions_.push_back(analyzer_->constraint_tracker.EnableExtraSimplifications());
-  recovery_functions_.push_back(analyzer_->rewrite_simplify.EnableExtraSimplifications());
-}
-
-void EnableExtraSimplificationContext::ExitWithScope() {
-  while (recovery_functions_.size()) {
-    auto& func = recovery_functions_.back();
-    if (func) {
-      func();
-    }
-    recovery_functions_.pop_back();
-  }
-}
-
 bool Analyzer::CanProveGreaterEqual(const PrimExpr& expr, int64_t lower_bound) {
   if (const auto* ptr = expr.as<tir::IntImmNode>()) {
     return ptr->value >= lower_bound;
   }
 
-  With<arith::EnableExtraSimplificationContext> allow(this);
   auto bd = this->const_int_bound(this->rewrite_simplify(expr));
   if (bd->min_value >= lower_bound) return true;
   return false;
@@ -122,14 +105,12 @@ bool Analyzer::CanProveLess(const PrimExpr& expr, int64_t upper_bound) {
     return ptr->value < upper_bound;
   }
 
-  With<arith::EnableExtraSimplificationContext> allow(this);
   auto bd = this->const_int_bound(this->rewrite_simplify(expr));
   if (bd->max_value < upper_bound) return true;
   return false;
 }
 
 bool Analyzer::CanProveEqual(const PrimExpr& lhs, const PrimExpr& rhs) {
-  With<arith::EnableExtraSimplificationContext> allow(this);
   const auto* clhs = lhs.as<IntImmNode>();
   const auto* crhs = rhs.as<IntImmNode>();
   if (clhs && crhs) return clhs->value == crhs->value;
@@ -145,7 +126,6 @@ bool Analyzer::CanProve(const PrimExpr& expr) {
     return ptr->value != 0;
   }
 
-  With<arith::EnableExtraSimplificationContext> allow(this);
   PrimExpr simplified = Simplify(expr);
   const int64_t* as_int = tir::as_const_int(simplified);
   return as_int && *as_int;

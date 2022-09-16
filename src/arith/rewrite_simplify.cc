@@ -366,12 +366,6 @@ RewriteSimplifier::Extension RewriteSimplifier::Impl::GetEnabledExtensions() con
   return enabled_extensions_;
 }
 
-std::function<void()> RewriteSimplifier::Impl::EnableExtraSimplifications() {
-  bool cache_state = enable_extra_simplifications_;
-  enable_extra_simplifications_ = false;
-  return [this, cache_state]() { enable_extra_simplifications_ = cache_state; };
-}
-
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
   PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
   op = ret.as<SubNode>();
@@ -2056,13 +2050,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const VarNode* op) {
     }
   }
 
-  if (enable_extra_simplifications_) {
-    auto const_int_bound = analyzer_->const_int_bound(var);
-    if (const_int_bound->min_value == const_int_bound->max_value) {
-      return IntImm(var->dtype, const_int_bound->min_value);
-    }
-  }
-
   auto it = var_map_.find(var);
   if (it != var_map_.end()) {
     return it->second;
@@ -2132,10 +2119,6 @@ void RewriteSimplifier::SetEnabledExtensions(Extension flags) {
 }
 RewriteSimplifier::Extension RewriteSimplifier::GetEnabledExtensions() const {
   return impl_->GetEnabledExtensions();
-}
-
-std::function<void()> RewriteSimplifier::EnableExtraSimplifications() {
-  return impl_->EnableExtraSimplifications();
 }
 
 RewriteSimplifier::RewriteSimplifier(Analyzer* parent) : impl_(new Impl(parent)) {}

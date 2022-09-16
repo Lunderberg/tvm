@@ -80,10 +80,7 @@ Stmt IRMutatorWithAnalyzer::VisitStmt_(const IfThenElseNode* op) {
   PrimExpr condition = this->VisitExpr(op->condition);
 
   PrimExpr real_condition;
-  {
-    With<arith::EnableExtraSimplificationContext> allow(analyzer_);
-    real_condition = this->VisitExpr(condition);
-  }
+  real_condition = this->VisitExpr(condition);
   static auto op_likely = Op::Get("tir.likely");
 
   if (auto call = condition.as<CallNode>()) {
