@@ -114,15 +114,6 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
   //           << "In RewriteSimplifier, after using const int bounds, comparison between " << x
   //           << " and " << y << " is " << output << std::endl;
 
-  // TODO: Is the VariableIntBounds check required?
-
-  // if (is_finished()) return output;
-  // output = CompareResult(output & TryCompareUsingVariableIntBounds(x, y));
-
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using variable int bounds, comparison between " << x
-  //           << " and " << y << " is " << output << std::endl;
-
   return output;
 }
 
@@ -171,47 +162,6 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, int64_t val
     }
   }
   return CompareResult::kUnknown;
-}
-
-CompareResult RewriteSimplifier::Impl::TryCompareUsingVariableIntBounds(const PrimExpr& x,
-                                                                        const PrimExpr y) {
-  IntSet x_bounds = analyzer_->int_set(x);
-  IntSet y_bounds = analyzer_->int_set(y);
-
-  PrimExpr x_min = x_bounds.min();
-  PrimExpr x_max = x_bounds.max();
-  PrimExpr y_min = y_bounds.min();
-  PrimExpr y_max = y_bounds.max();
-
-  // std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
-  //           << " with bounds " << y_bounds << std::endl;
-
-  if (x_min.same_as(x) && x_max.same_as(x) && y_min.same_as(y) && y_max.same_as(y)) {
-    return CompareResult::kUnknown;
-  }
-
-  CompareResult output = CompareResult::kUnknown;
-
-  if (x_bounds.HasUpperBound() && y_bounds.HasLowerBound()) {
-    CompareResult lt_bound = TryCompare(x_max - y_min, 0);
-    if (lt_bound == CompareResult::kLE || lt_bound == CompareResult::kLT) {
-      output = CompareResult(output & lt_bound);
-    }
-  }
-
-  if (x_bounds.HasLowerBound() && y_bounds.HasUpperBound()) {
-    CompareResult gt_bound = TryCompare(x_min - y_max, 0);
-    if (gt_bound == CompareResult::kGT || gt_bound == CompareResult::kGE) {
-      output = CompareResult(output & gt_bound);
-    }
-  }
-
-  if (output != CompareResult::kUnknown) {
-    // std::cout << "Comparing between " << x << " with bounds " << x_bounds << " and " << y
-    //           << " with bounds " << y_bounds << " results in " << output << std::endl;
-  }
-
-  return output;
 }
 
 void RewriteSimplifier::Impl::Update(const Var& var, const PrimExpr& info, bool can_override) {
