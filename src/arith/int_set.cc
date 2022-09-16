@@ -568,8 +568,6 @@ class IntSetAnalyzer::Impl {
   void Bind(const Var& var, const PrimExpr& expr, bool override_info);
   std::function<void()> EnterConstraint(const PrimExpr& constraint);
 
-  std::function<void()> SuppressConstraints();
-
  private:
   // Utility function to split a boolean condition into the domain
   // bounds implied by that condition.
@@ -587,9 +585,6 @@ class IntSetAnalyzer::Impl {
   // than as a `Map<Var,IntSet>`, to avoid computing an Intersection
   // until required.
   std::vector<std::pair<Var, IntSet>> dom_constraints_;
-
-  // Whether scope-based analysis should be temporarily disabled
-  bool use_scoped_constraints_{true};
 };
 
 IntSetAnalyzer::IntSetAnalyzer(Analyzer* parent) : impl_(new Impl(parent)) {}
@@ -672,8 +667,6 @@ std::function<void()> IntSetAnalyzer::EnterConstraint(const PrimExpr& constraint
   return impl_->EnterConstraint(constraint);
 }
 
-std::function<void()> IntSetAnalyzer::SuppressConstraints() { return impl_->SuppressConstraints(); }
-
 std::function<void()> IntSetAnalyzer::Impl::EnterConstraint(const PrimExpr& constraint) {
   auto bounds = DetectBoundInfo(constraint);
 
@@ -687,12 +680,6 @@ std::function<void()> IntSetAnalyzer::Impl::EnterConstraint(const PrimExpr& cons
     dom_constraints_.resize(old_size);
   };
   return frecover;
-}
-
-std::function<void()> IntSetAnalyzer::Impl::SuppressConstraints() {
-  bool cache_state = use_scoped_constraints_;
-  use_scoped_constraints_ = false;
-  return [this, cache_state]() { use_scoped_constraints_ = cache_state; };
 }
 
 // Quickly adapt to IntSet interface

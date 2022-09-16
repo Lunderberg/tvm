@@ -90,7 +90,6 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   /*! \brief Return the currently enabled extensions */
   Extension GetEnabledExtensions() const;
 
-  std::function<void()> SuppressConstraints();
   std::function<void()> EnableExtraSimplifications();
 
  protected:

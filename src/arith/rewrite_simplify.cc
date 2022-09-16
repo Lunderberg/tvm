@@ -366,12 +366,6 @@ RewriteSimplifier::Extension RewriteSimplifier::Impl::GetEnabledExtensions() con
   return enabled_extensions_;
 }
 
-std::function<void()> RewriteSimplifier::Impl::SuppressConstraints() {
-  bool cache_state = use_scoped_constraints_;
-  use_scoped_constraints_ = false;
-  return [this, cache_state]() { use_scoped_constraints_ = cache_state; };
-}
-
 std::function<void()> RewriteSimplifier::Impl::EnableExtraSimplifications() {
   bool cache_state = enable_extra_simplifications_;
   enable_extra_simplifications_ = false;
@@ -2138,10 +2132,6 @@ void RewriteSimplifier::SetEnabledExtensions(Extension flags) {
 }
 RewriteSimplifier::Extension RewriteSimplifier::GetEnabledExtensions() const {
   return impl_->GetEnabledExtensions();
-}
-
-std::function<void()> RewriteSimplifier::SuppressConstraints() {
-  return impl_->SuppressConstraints();
 }
 
 std::function<void()> RewriteSimplifier::EnableExtraSimplifications() {

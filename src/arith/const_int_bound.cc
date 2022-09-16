@@ -120,12 +120,6 @@ class ConstIntBoundAnalyzer::Impl
     var_map_[var] = info;
   }
 
-  std::function<void()> SuppressConstraints() {
-    bool cache_state = use_scoped_constraints_;
-    use_scoped_constraints_ = false;
-    return [this, cache_state]() { use_scoped_constraints_ = cache_state; };
-  }
-
   Entry VisitExpr_(const LetNode* op) final {
     auto it = var_map_.find(op->var);
     // if the var has not been binded, update the info.
@@ -153,11 +147,9 @@ class ConstIntBoundAnalyzer::Impl
     tir::ExprDeepEqual equal;
     // a linear search over additional info
     // assume we won't have a lot of conditions
-    if (use_scoped_constraints_) {
-      for (const BoundInfo& info : additional_info_) {
-        if (equal(expr, info.expr)) {
-          res = Intersect(res, info.bound);
-        }
+    for (const BoundInfo& info : additional_info_) {
+      if (equal(expr, info.expr)) {
+        res = Intersect(res, info.bound);
       }
     }
     if (bound_) {
@@ -418,8 +410,6 @@ class ConstIntBoundAnalyzer::Impl
   std::unordered_map<Var, Entry, ObjectPtrHash, ObjectPtrEqual> var_map_;
   // additional bound info
   std::vector<BoundInfo> additional_info_;
-  // Whether the additional bound info may be used
-  bool use_scoped_constraints_{true};
   // look up table for memorization
   BoundMapType* bound_{nullptr};
   // constants: the limit value means umlimited
@@ -741,10 +731,6 @@ void ConstIntBoundAnalyzer::Bind(const Var& var, const Range& range, bool allow_
 
 std::function<void()> ConstIntBoundAnalyzer::EnterConstraint(const PrimExpr& constraint) {
   return impl_->EnterConstraint(constraint);
-}
-
-std::function<void()> ConstIntBoundAnalyzer::SuppressConstraints() {
-  return impl_->SuppressConstraints();
 }
 
 ConstIntBoundAnalyzer::ConstIntBoundAnalyzer(Analyzer* parent) : impl_(new Impl()) {}

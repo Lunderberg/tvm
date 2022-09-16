@@ -106,25 +106,6 @@ void EnableExtraSimplificationContext::ExitWithScope() {
   }
 }
 
-void SuppressConstraintContext::EnterWithScope() {
-  ICHECK(recovery_functions_.size() == 0);
-  recovery_functions_.push_back(analyzer_->const_int_bound.SuppressConstraints());
-  recovery_functions_.push_back(analyzer_->modular_set.SuppressConstraints());
-  recovery_functions_.push_back(analyzer_->rewrite_simplify.SuppressConstraints());
-  recovery_functions_.push_back(analyzer_->int_set.SuppressConstraints());
-  // recovery_functions_.push_back(analyzer_->constraint_tracker.SuppressConstraints());
-}
-
-void SuppressConstraintContext::ExitWithScope() {
-  while (recovery_functions_.size()) {
-    auto& func = recovery_functions_.back();
-    if (func) {
-      func();
-    }
-    recovery_functions_.pop_back();
-  }
-}
-
 bool Analyzer::CanProveGreaterEqual(const PrimExpr& expr, int64_t lower_bound) {
   if (const auto* ptr = expr.as<tir::IntImmNode>()) {
     return ptr->value >= lower_bound;
