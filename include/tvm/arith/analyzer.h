@@ -315,7 +315,6 @@ class RewriteSimplifier {
   friend class CanonicalSimplifier;
   explicit RewriteSimplifier(Analyzer* parent);
   TVM_DLL ~RewriteSimplifier();
-
   class Impl;
   /*! \brief Internal impl */
   Impl* impl_;
