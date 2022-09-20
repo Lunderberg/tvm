@@ -22,11 +22,8 @@
  */
 #include <tvm/arith/analyzer.h>
 #include <tvm/runtime/registry.h>
-#include <tvm/tir/analysis.h>
 #include <tvm/tir/expr.h>
 #include <tvm/tir/op.h>
-
-#include "constraint_extract.h"
 
 namespace tvm {
 namespace arith {
