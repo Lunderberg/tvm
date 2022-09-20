@@ -30,7 +30,6 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/stmt_functor.h>
 
-#include "const_fold.h"
 #include "int_operator.h"
 
 namespace tvm {
@@ -433,16 +432,13 @@ IntConstraintsTransform SolveLinearEquations(const IntConstraints& system_to_sol
       const Range& old_range = system_to_solve->ranges.at(old_var);
       PrimExpr express_by_new_vars = old_to_new_map.at(old_var);
       PrimExpr lower_cond = analyzer_solution.Simplify(old_range->min <= express_by_new_vars);
+      PrimExpr upper_cond =
+          analyzer_solution.Simplify(express_by_new_vars < old_range->min + old_range->extent);
       if (!tir::is_const_int(lower_cond, 1)) {
         new_relations.push_back(lower_cond);
       }
-
-      if (!is_pos_inf(old_range->extent)) {
-        PrimExpr upper_cond =
-            analyzer_solution.Simplify(express_by_new_vars < old_range->min + old_range->extent);
-        if (!tir::is_const_int(upper_cond, 1)) {
-          new_relations.push_back(upper_cond);
-        }
+      if (!tir::is_const_int(upper_cond, 1)) {
+        new_relations.push_back(upper_cond);
       }
     }
   }
