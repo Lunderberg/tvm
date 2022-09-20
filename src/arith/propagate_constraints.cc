@@ -117,45 +117,9 @@ CompareResult Negate(CompareResult res) {
   }
 }
 
-// // Result of comparing (x RES_A y) and (y RES_B z) into (x OUT z)
-// CompareResult Transitive(CompareResult a, CompareResult b) {
-//   if (a == CompareResult::kInconsistent || b == CompareResult::kInconsistent) {
-//     return CompareResult::kInconsistent;
-//   }
-
-//   if (a == CompareResult::kEQ) {
-//     return b;
-//   }
-//   if (b == CompareResult::kEQ) {
-//     return a;
-//   }
-
-//   if (a == CompareResult::kLE && b == CompareResult::kLE) {
-//     return CompareResult::kLE;
-//   } else if (a == CompareResult::kLE && b == CompareResult::kLT) {
-//     return CompareResult::kLT;
-//   } else if (a == CompareResult::kLT && b == CompareResult::kLE) {
-//     return CompareResult::kLT;
-//   } else if (a == CompareResult::kLT && b == CompareResult::kLT) {
-//     return CompareResult::kLT;
-//   }
-
-//   if (a == CompareResult::kGE && b == CompareResult::kGE) {
-//     return CompareResult::kGE;
-//   } else if (a == CompareResult::kGE && b == CompareResult::kGT) {
-//     return CompareResult::kGT;
-//   } else if (a == CompareResult::kGT && b == CompareResult::kGE) {
-//     return CompareResult::kGT;
-//   } else if (a == CompareResult::kGT && b == CompareResult::kGT) {
-//     return CompareResult::kGT;
-//   }
-
-//   return CompareResult::kUnknown;
-// }
 }  // namespace
 
 Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
-  // std::cout << "Parsing expression " << expr << std::endl;
   PVar<PrimExpr> x, y;
   if ((x <= y).Match(expr)) {
     lhs_ = x.Eval();
@@ -183,11 +147,6 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
     result_ = CompareResult::kNE;
   }
 
-  // std::cout << "\t"
-  //           << "Parsed as lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", comparison = " <<
-  //           result_
-  //           << std::endl;
-
   if (lhs_.as<IntImmNode>() && rhs_.as<IntImmNode>()) {
     lhs_ = PrimExpr();
     rhs_ = PrimExpr();
@@ -195,11 +154,6 @@ Comparison::Comparison(const PrimExpr& expr) : orig_expr_(expr) {
   }
 
   Normalize();
-
-  // std::cout << "\t"
-  //           << "Normalized to lhs = " << lhs_ << ", rhs_ = " << rhs_ << ", offset = " <<
-  //           offset_
-  //           << ", comparison = " << result_ << std::endl;
 }
 
 Comparison::Comparison(const PrimExpr& lhs, const PrimExpr& rhs, CompareResult result)
@@ -523,10 +477,7 @@ TransitiveComparisonAnalyzer::Impl::Impl(const std::vector<PrimExpr>& knowns) {
   }
 }
 
-void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr) {
-  // std::cout << "ComparisonSet, adding known " << expr << std::endl;
-  AddKnown(expr, knowns_);
-}
+void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr) { AddKnown(expr, knowns_); }
 
 void TransitiveComparisonAnalyzer::Impl::AddKnown(const PrimExpr& expr,
                                                   std::vector<Comparison>& vec) {
@@ -576,25 +527,8 @@ std::function<void()> TransitiveComparisonAnalyzer::Impl::EnterConstraint(const 
   AddKnown(expr, scoped_knowns_);
   size_t new_literal_size = scoped_knowns_.size();
 
-  // std::cout << "Entering constraint that " << expr << " which provided [";
-  // for (size_t i = old_literal_size; i < new_literal_size; i++) {
-  //   if (i > old_literal_size) {
-  //     std::cout << ", ";
-  //   }
-  //   std::cout << scoped_knowns_[i].debug_as_primexpr();
-  // }
-  // std::cout << "]" << std::endl;
-
   PrimExpr temp = expr;
   auto frecover = [old_literal_size, new_literal_size, this, temp]() {
-    // std::cout << "Leaving constraint that " << temp << " which provided [";
-    // for (size_t i = old_literal_size; i < new_literal_size; i++) {
-    //   if (i > old_literal_size) {
-    //     std::cout << ", ";
-    //   }
-    //   std::cout << scoped_knowns_[i].debug_as_primexpr();
-    // }
-    // std::cout << "]" << std::endl;
     ICHECK_EQ(scoped_knowns_.size(), new_literal_size);
     scoped_knowns_.erase(scoped_knowns_.begin() + old_literal_size, scoped_knowns_.end());
   };
