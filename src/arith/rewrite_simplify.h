@@ -33,7 +33,6 @@
 #include "const_fold.h"
 #include "ir_mutator_with_analyzer.h"
 #include "pattern_match.h"
-#include "propagate_constraints.h"
 
 namespace tvm {
 namespace arith {
