@@ -210,8 +210,9 @@ class TVM_DLL ExprVisitor : public ExprFunctor<void(const PrimExpr&)> {
  public:
   using ExprFunctor::operator();
 
- protected:
   using ExprFunctor::VisitExpr;
+
+  void VisitExpr(const PrimExpr& expr) override { expr.Visit(this); }
   // list of functions to override.
   void VisitExpr_(const VarNode* op) override;
   void VisitExpr_(const SizeVarNode* op) override;
