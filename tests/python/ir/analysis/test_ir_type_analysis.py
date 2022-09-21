@@ -22,6 +22,15 @@ def te_module():
 def test_te_module(te_module):
     details = analyze_module_ir(te_module)
     assert details.is_te_derived
+    assert details.contains_te_specific_nodes
+
+
+def test_lowered_te_module(te_module):
+    te_module = tvm.lower(te_module)
+
+    details = analyze_module_ir(te_module)
+    assert details.is_te_derived
+    assert not details.contains_te_specific_nodes
 
 
 if __name__ == "__main__":

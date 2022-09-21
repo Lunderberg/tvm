@@ -33,13 +33,23 @@ namespace tvm {
 namespace ir {
 
 namespace {
-class Visitor : public tir::StmtExprVisitor {};
+
+struct Visitor : tir::StmtExprVisitor {
+  Visitor(AnalysisResultsNode& output) : output(output) {}
+
+  AnalysisResultsNode& output;
+
+  void VisitExpr_(const tir::ProducerLoadNode*) { output.contains_te_specific_nodes = true; }
+  void VisitStmt_(const tir::ProducerStoreNode*) { output.contains_te_specific_nodes = true; }
+  void VisitStmt_(const tir::ProducerRealizeNode*) { output.contains_te_specific_nodes = true; }
+  void VisitStmt_(const tir::BufferRealizeNode*) { output.contains_te_specific_nodes = true; }
+};
 }  // namespace
 
 AnalysisResultsNode AnalyzeModuleIRTypeImpl(const IRModule& mod) {
   AnalysisResultsNode output;
 
-  Visitor visitor;
+  Visitor visitor(output);
 
   for (const auto& pair : mod->functions) {
     const BaseFunc& base_func = pair.second;
@@ -54,7 +64,7 @@ AnalysisResultsNode AnalyzeModuleIRTypeImpl(const IRModule& mod) {
         output.is_te_derived = true;
       }
 
-      // visitor(as_prim_func->body);
+      visitor(as_prim_func->body);
     }
   }
 
