@@ -48,6 +48,16 @@ def logical_2d_physical_2d():
     return tvm.IRModule.from_expr(func)
 
 
+@tvm.testing.fixture
+def internal_allocation():
+    @T.prim_func
+    def func():
+        A = T.alloc_buffer([16, 16], "float32")
+        T.evaluate(A[0, 0])
+
+    return tvm.IRModule.from_expr(func)
+
+
 def test_te_module(te_module):
     mod = te_module
     details = analyze_module_ir(mod)
@@ -93,6 +103,21 @@ def test_flatten_to_2d(logical_2d_physical_2d):
     mod = logical_2d_physical_2d
     details = analyze_module_ir(mod)
     assert not details.requires_buffer_flattening
+
+
+def test_internal_alloc_buffer(internal_allocation):
+    mod = internal_allocation
+    details = analyze_module_ir(mod)
+    assert details.contains_internal_allocations
+    assert details.contains_block_alloc_buffers
+
+
+def test_internal_allocate_node(internal_allocation):
+    mod = internal_allocation
+    mod = tvm.tir.transform.LowerOpaqueBlock()(mod)
+    details = analyze_module_ir(mod)
+    assert details.contains_internal_allocations
+    assert not details.contains_block_alloc_buffers
 
 
 if __name__ == "__main__":

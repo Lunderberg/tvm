@@ -62,7 +62,16 @@ struct Visitor : tir::StmtExprVisitor {
     if (block->iter_vars.size()) {
       output.contains_nonopaque_tir_blocks = true;
     }
+    if (block->alloc_buffers.size()) {
+      output.contains_internal_allocations = true;
+      output.contains_block_alloc_buffers = true;
+    }
     Parent::VisitStmt_(block);
+  }
+
+  void VisitStmt_(const tir::AllocateNode* op) override {
+    output.contains_internal_allocations = true;
+    Parent::VisitStmt_(op);
   }
 
   void VisitExpr_(const tir::BufferLoadNode* op) override {

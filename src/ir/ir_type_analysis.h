@@ -40,6 +40,8 @@ class AnalysisResultsNode : public Object {
   bool contains_tir_primfunc{false};
   bool requires_buffer_flattening{false};
 
+  bool contains_internal_allocations{false};
+  bool contains_block_alloc_buffers{false};
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("is_te_derived", &is_te_derived);
     v->Visit("contains_relay_function", &contains_relay_function);
@@ -48,6 +50,8 @@ class AnalysisResultsNode : public Object {
     v->Visit("contains_tir_blocks", &contains_tir_blocks);
     v->Visit("contains_nonopaque_tir_blocks", &contains_nonopaque_tir_blocks);
     v->Visit("requires_buffer_flattening", &requires_buffer_flattening);
+    v->Visit("contains_internal_allocations", &contains_internal_allocations);
+    v->Visit("contains_block_alloc_buffers", &contains_block_alloc_buffers);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";
