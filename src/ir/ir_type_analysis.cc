@@ -36,13 +36,34 @@ namespace {
 
 struct Visitor : tir::StmtExprVisitor {
   Visitor(AnalysisResultsNode& output) : output(output) {}
-
   AnalysisResultsNode& output;
 
-  void VisitExpr_(const tir::ProducerLoadNode*) { output.contains_te_specific_nodes = true; }
-  void VisitStmt_(const tir::ProducerStoreNode*) { output.contains_te_specific_nodes = true; }
-  void VisitStmt_(const tir::ProducerRealizeNode*) { output.contains_te_specific_nodes = true; }
-  void VisitStmt_(const tir::BufferRealizeNode*) { output.contains_te_specific_nodes = true; }
+  using Parent = tir::StmtExprVisitor;
+
+  void VisitExpr_(const tir::ProducerLoadNode* op) {
+    output.contains_te_specific_nodes = true;
+    Parent::VisitExpr_(op);
+  }
+  void VisitStmt_(const tir::ProducerStoreNode* op) {
+    output.contains_te_specific_nodes = true;
+    Parent::VisitStmt_(op);
+  }
+  void VisitStmt_(const tir::ProducerRealizeNode* op) {
+    output.contains_te_specific_nodes = true;
+    Parent::VisitStmt_(op);
+  }
+  void VisitStmt_(const tir::BufferRealizeNode* op) {
+    output.contains_te_specific_nodes = true;
+    Parent::VisitStmt_(op);
+  }
+
+  void VisitStmt_(const tir::BlockNode* block) {
+    output.contains_tir_blocks = true;
+    if (block->iter_vars.size()) {
+      output.contains_nonopaque_tir_blocks = true;
+    }
+    Parent::VisitStmt_(block);
+  }
 };
 }  // namespace
 

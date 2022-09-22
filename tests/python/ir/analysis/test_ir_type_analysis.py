@@ -19,18 +19,48 @@ def te_module():
     return schedule_to_module(s, [A, B])
 
 
+@tvm.testing.fixture
+def schedulable_tir_module():
+    shape = [1024]
+    A = te.placeholder(shape, name="A")
+    B = te.compute(shape, lambda i: A[i] + tvm.tir.const(1, A.dtype), name="B")
+    func = te.create_prim_func([A, B])
+    return tvm.IRModule.from_expr(func)
+
+
 def test_te_module(te_module):
-    details = analyze_module_ir(te_module)
+    mod = te_module
+    details = analyze_module_ir(mod)
     assert details.is_te_derived
     assert details.contains_te_specific_nodes
 
 
 def test_lowered_te_module(te_module):
-    te_module = tvm.lower(te_module)
+    mod = te_module
+    mod = tvm.lower(mod)
 
-    details = analyze_module_ir(te_module)
+    details = analyze_module_ir(mod)
     assert details.is_te_derived
     assert not details.contains_te_specific_nodes
+
+
+def test_schedulable_tir_blocks(schedulable_tir_module):
+    mod = schedulable_tir_module
+    details = analyze_module_ir(mod)
+    assert not details.is_te_derived
+    assert not details.contains_te_specific_nodes
+    assert details.contains_tir_blocks
+    assert details.contains_nonopaque_tir_blocks
+
+
+def test_opaque_tir_blocks(schedulable_tir_module):
+    mod = schedulable_tir_module
+    mod = tvm.tir.transform.ConvertBlocksToOpaque()(mod)
+    details = analyze_module_ir(mod)
+    assert not details.is_te_derived
+    assert not details.contains_te_specific_nodes
+    assert details.contains_tir_blocks
+    assert not details.contains_nonopaque_tir_blocks
 
 
 if __name__ == "__main__":

@@ -34,8 +34,8 @@ class AnalysisResultsNode : public Object {
  public:
   bool is_te_derived{false};
   bool contains_te_specific_nodes{false};
-  bool contains_schedulable_tir_blocks{false};
-  bool contains_opaque_tir_blocks{false};
+  bool contains_tir_blocks{false};
+  bool contains_nonopaque_tir_blocks{false};
   bool contains_relay_function{false};
   bool contains_tir_primfunc{false};
 
@@ -44,8 +44,8 @@ class AnalysisResultsNode : public Object {
     v->Visit("contains_relay_function", &contains_relay_function);
     v->Visit("contains_tir_primfunc", &contains_tir_primfunc);
     v->Visit("contains_te_specific_nodes", &contains_te_specific_nodes);
-    v->Visit("contains_schedulable_tir_blocks", &contains_schedulable_tir_blocks);
-    v->Visit("contains_opaque_tir_blocks", &contains_opaque_tir_blocks);
+    v->Visit("contains_tir_blocks", &contains_tir_blocks);
+    v->Visit("contains_nonopaque_tir_blocks", &contains_nonopaque_tir_blocks);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";
