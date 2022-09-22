@@ -66,7 +66,17 @@ struct Visitor : tir::StmtExprVisitor {
       output.contains_internal_allocations = true;
       output.contains_block_alloc_buffers = true;
     }
+    if (block->match_buffers.size()) {
+      output.uses_buffer_views_in_block = true;
+    }
     Parent::VisitStmt_(block);
+  }
+
+  void VisitStmt_(const tir::AttrStmtNode* op) override {
+    if (op->attr_key == tir::attr::buffer_bind_scope) {
+      output.uses_buffer_views_by_attribute = true;
+    }
+    Parent::VisitStmt_(op);
   }
 
   void VisitStmt_(const tir::AllocateNode* op) override {

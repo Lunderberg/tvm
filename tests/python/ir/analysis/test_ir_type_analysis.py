@@ -58,6 +58,43 @@ def internal_allocation():
     return tvm.IRModule.from_expr(func)
 
 
+@tvm.testing.fixture
+def block_buffer_view():
+    @T.prim_func
+    def func(A: T.Buffer[(16, 64), "float32"]):
+        with T.block():
+            B = T.match_buffer(A[8:16, 32:64], [8, 32], offset_factor=1)
+            T.evaluate(B[0, 0])
+
+    return tvm.IRModule.from_expr(func)
+
+
+@tvm.testing.fixture
+def attribute_buffer_view():
+    @T.prim_func
+    def func(A: T.Buffer[(16, 64), "float32"]):
+        T.func_attr({"from_legacy_te_schedule": True})
+        stride_i = T.var("int32")
+        stride_j = T.var("int32")
+        B = T.buffer_decl([8, 32], dtype="float32", offset_factor=1, strides=[stride_i, stride_j])
+        T.attr(
+            [B, A],
+            "buffer_bind_scope",
+            T.tvm_tuple(
+                # min/extent on dim1
+                8,
+                8,
+                # min/extent on dim2
+                32,
+                32,
+                dtype="handle",
+            ),
+        )
+        T.evaluate(B[0, 0])
+
+    return tvm.IRModule.from_expr(func)
+
+
 def test_te_module(te_module):
     mod = te_module
     details = analyze_module_ir(mod)
@@ -118,6 +155,36 @@ def test_internal_allocate_node(internal_allocation):
     details = analyze_module_ir(mod)
     assert details.contains_internal_allocations
     assert not details.contains_block_alloc_buffers
+
+
+def test_buffer_view_in_block(block_buffer_view):
+    mod = block_buffer_view
+    details = analyze_module_ir(mod)
+    assert details.uses_buffer_views_in_block
+    assert not details.uses_buffer_views_by_attribute
+
+
+def test_removed_buffer_view_in_block(block_buffer_view):
+    mod = block_buffer_view
+    mod = tvm.tir.transform.LowerMatchBuffer()(mod)
+    details = analyze_module_ir(mod)
+    assert not details.uses_buffer_views_in_block
+    assert not details.uses_buffer_views_by_attribute
+
+
+def test_buffer_view_by_attribute(attribute_buffer_view):
+    mod = attribute_buffer_view
+    details = analyze_module_ir(mod)
+    assert not details.uses_buffer_views_in_block
+    assert details.uses_buffer_views_by_attribute
+
+
+def test_removed_buffer_view_by_attribute(attribute_buffer_view):
+    mod = attribute_buffer_view
+    mod = tvm.tir.transform.StorageFlatten(64)(mod)
+    details = analyze_module_ir(mod)
+    assert not details.uses_buffer_views_in_block
+    assert not details.uses_buffer_views_by_attribute
 
 
 if __name__ == "__main__":

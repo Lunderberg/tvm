@@ -32,16 +32,43 @@ namespace ir {
 
 class AnalysisResultsNode : public Object {
  public:
+  // Contains PrimFuncs generated from TE schedules
   bool is_te_derived{false};
+
+  // Contains TE-specific nodes (e.g. ProducerLoadNode, BufferRealize)
   bool contains_te_specific_nodes{false};
+
+  // Contains tir::Block, used by meta-schedule primitives.
   bool contains_tir_blocks{false};
+
+  // Contains tir::Block/tir::BlockRealize with iter_vars/iter_values
   bool contains_nonopaque_tir_blocks{false};
+
   bool contains_relay_function{false};
+
+  // Contains at least one PrimFunc
   bool contains_tir_primfunc{false};
+
+  // Contains tir::Buffer objects that must be flattened.
   bool requires_buffer_flattening{false};
 
+  // Contains PrimFuncs that perform internal allocations, either
+  // through `tir::Allocate` nodes or through
+  // `tir::BlockNode::alloc_buffers`.
   bool contains_internal_allocations{false};
+
+  // Contains non-empty `tir::BlockNode::alloc_buffers`.  Should be lowered
+  // to Allocate statements as part of `tvm::tir::transform::LowerOpaqueBlock`
   bool contains_block_alloc_buffers{false};
+
+  // Contains a non-empty `BlockNode::match_buffers`, used by TIR
+  // schedules to declare views into another buffer.
+  bool uses_buffer_views_in_block{false};
+
+  // Contains a "buffer_bind_scope" attribute, used by TE schedules to
+  // declare views into another buffer
+  bool uses_buffer_views_by_attribute{false};
+
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("is_te_derived", &is_te_derived);
     v->Visit("contains_relay_function", &contains_relay_function);
@@ -52,6 +79,8 @@ class AnalysisResultsNode : public Object {
     v->Visit("requires_buffer_flattening", &requires_buffer_flattening);
     v->Visit("contains_internal_allocations", &contains_internal_allocations);
     v->Visit("contains_block_alloc_buffers", &contains_block_alloc_buffers);
+    v->Visit("uses_buffer_views_in_block", &uses_buffer_views_in_block);
+    v->Visit("uses_buffer_views_by_attribute", &uses_buffer_views_by_attribute);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";
