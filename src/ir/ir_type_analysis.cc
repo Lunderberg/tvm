@@ -101,6 +101,60 @@ struct Visitor : tir::StmtExprVisitor {
     }
   }
 };
+
+bool MatchesPackedAPIParams(const Array<tir::Var>& params) {
+  if (params.size() < 6) {
+    return false;
+  }
+
+  auto is_untyped_handle = [](const tir::Var& var) {
+    return var.dtype().is_handle() && !var->type_annotation.as<PointerTypeNode>();
+  };
+  auto is_pointer_to = [](const tir::Var& var, DataType dtype) {
+    return var.dtype().is_handle() && tir::IsPointerType(var->type_annotation, dtype);
+  };
+
+  // Var v_packed_args("args", DataType::Handle());
+  const auto& v_packed_args = params[0];
+  // Buffer buf_packed_arg_type_ids = decl_buffer(
+  //     {IntImm(DataType::Int(32), func_ptr->params.size())}, DataType::Int(32), "arg_type_ids");
+  const auto& v_packed_args_type_ids = params[1];
+  // Var v_num_packed_args("num_args", DataType::Int(32));
+  const auto& v_num_packed_args = params[2];
+
+  // TODO: Should it check for any unpacked args between the
+  // input/output?  While there is a "num_unpacked_args" argument to
+  // MakePackedAPI, it looks like it is only used in a single unit
+  // test.
+
+  // Var v_out_ret_value("out_ret_value", PointerType(PrimType(DataType::Void())));
+  const auto& v_out_ret_value = params[params.size() - 3];
+  // Var v_out_ret_tcode("out_ret_tcode", PointerType(PrimType(DataType::Int(32))));
+  const auto& v_out_ret_tcode = params[params.size() - 2];
+  // Var v_resource_handle("resource_handle", DataType::Handle());
+  const auto& v_resource_handle = params[params.size() - 1];
+
+  return is_untyped_handle(v_packed_args) &&
+         is_pointer_to(v_packed_args_type_ids, DataType::Int(32)) &&
+         v_num_packed_args.dtype() == DataType::Int(32) &&
+         is_pointer_to(v_out_ret_value, DataType::Void()) &&
+         is_pointer_to(v_out_ret_tcode, DataType::Int(32)) && is_untyped_handle(v_resource_handle);
+}
+
+bool MatchesUnpackedAPIParams(const Array<tir::Var>& params,
+                              const Map<tir::Var, tir::Buffer>& buffer_map) {
+  for (const auto& param : params) {
+    auto it = buffer_map.find(param);
+    if (it != buffer_map.end()) {
+      const tir::Buffer& buf = (*it).second;
+      if (!param.same_as(buf->data)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 AnalysisResultsNode AnalyzeModuleIRTypeImpl(const IRModule& mod) {
@@ -119,6 +173,16 @@ AnalysisResultsNode AnalyzeModuleIRTypeImpl(const IRModule& mod) {
           as_prim_func->GetAttr("from_legacy_te_schedule", Bool(false)).value();
       if (from_legacy_te_schedule) {
         output.is_te_derived = true;
+      }
+
+      if (as_prim_func->buffer_map.size()) {
+        output.has_tir_buffer_arguments = true;
+      }
+
+      if (MatchesPackedAPIParams(as_prim_func->params)) {
+        output.has_packed_api_buffer_arguments = true;
+      } else if (MatchesUnpackedAPIParams(as_prim_func->params, as_prim_func->buffer_map)) {
+        output.has_unpacked_api_buffer_arguments = true;
       }
 
       visitor(as_prim_func->body);

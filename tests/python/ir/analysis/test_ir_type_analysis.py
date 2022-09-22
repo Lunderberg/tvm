@@ -95,6 +95,16 @@ def attribute_buffer_view():
     return tvm.IRModule.from_expr(func)
 
 
+@tvm.testing.fixture
+def buffer_argument():
+    @T.prim_func
+    def func(A: T.Buffer[1, "float32"]):
+        T.func_attr({"global_symbol": "func", "target": T.target("nvidia/nvidia-a100")})
+        T.evaluate(A[0])
+
+    return tvm.IRModule.from_expr(func)
+
+
 def test_te_module(te_module):
     mod = te_module
     details = analyze_module_ir(mod)
@@ -185,6 +195,37 @@ def test_removed_buffer_view_by_attribute(attribute_buffer_view):
     details = analyze_module_ir(mod)
     assert not details.uses_buffer_views_in_block
     assert not details.uses_buffer_views_by_attribute
+
+
+def test_tir_buffer_argument(buffer_argument):
+    mod = buffer_argument
+    details = analyze_module_ir(mod)
+    assert details.has_tir_buffer_arguments
+    assert not details.has_packed_api_buffer_arguments
+    assert not details.has_unpacked_api_buffer_arguments
+
+
+def test_packed_api_buffer_argument(buffer_argument):
+    mod = buffer_argument
+    mod = tvm.tir.transform.MakePackedAPI()(mod)
+    details = analyze_module_ir(mod)
+    assert not details.has_tir_buffer_arguments
+    assert details.has_packed_api_buffer_arguments
+    assert not details.has_unpacked_api_buffer_arguments
+
+
+def test_unpacked_api_buffer_argument(buffer_argument):
+    mod = buffer_argument
+    mod = tvm.tir.transform.MakeUnpackedAPI()(mod)
+    details = analyze_module_ir(mod)
+    # Probably should remove the buffer_map arguments.  No longer
+    # needed, now that the buffer itself is kept around in
+    # BufferLoad/BufferStore/DeclBuffer.  That would improve API
+    # consistency, that a non-empty buffer_map implies that lowering
+    # is required.
+    assert details.has_tir_buffer_arguments
+    assert not details.has_packed_api_buffer_arguments
+    assert details.has_unpacked_api_buffer_arguments
 
 
 if __name__ == "__main__":

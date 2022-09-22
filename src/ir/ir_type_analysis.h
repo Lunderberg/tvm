@@ -69,6 +69,26 @@ class AnalysisResultsNode : public Object {
   // declare views into another buffer
   bool uses_buffer_views_by_attribute{false};
 
+  // Contains a non-empty `PrimFunc::buffer_map`, which should be
+  // lowered with either `tir::transform::MakePackedAPI` or
+  // `tir::transform::MakeUnpackedAPI`.
+  bool has_tir_buffer_arguments{false};
+
+  // Uses the packed API, with signature (void* args, int* arg_types,
+  // int num_types, void* out, int* out_type, void* resource_handle).
+  // Buffers are represented as DLTensor* arguments in the list of
+  // arguments.  Shape/stride parameters from the DLTensor are either
+  // validated (static shapes) or read out (dynamic shapes).
+  bool has_packed_api_buffer_arguments{false};
+
+  // Uses the unpacked API, with arguments occurring in the same order
+  // as the TIR parameters.  Buffers are represented as void*
+  // arguments, pointing directly to the underlying data.
+  // Shape/stride parameters are assumed to be correct for static
+  // shapes.  Dynamic shapes must be specified by a separate
+  // parameter.
+  bool has_unpacked_api_buffer_arguments{false};
+
   // TODO: Buffer aliasing?
 
   // TODO: Host/device constructs (e.g. call_extern)
@@ -101,6 +121,9 @@ class AnalysisResultsNode : public Object {
     v->Visit("contains_block_alloc_buffers", &contains_block_alloc_buffers);
     v->Visit("uses_buffer_views_in_block", &uses_buffer_views_in_block);
     v->Visit("uses_buffer_views_by_attribute", &uses_buffer_views_by_attribute);
+    v->Visit("has_tir_buffer_arguments", &has_tir_buffer_arguments);
+    v->Visit("has_packed_api_buffer_arguments", &has_packed_api_buffer_arguments);
+    v->Visit("has_unpacked_api_buffer_arguments", &has_unpacked_api_buffer_arguments);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";
