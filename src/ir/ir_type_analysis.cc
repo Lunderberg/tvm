@@ -40,29 +40,46 @@ struct Visitor : tir::StmtExprVisitor {
 
   using Parent = tir::StmtExprVisitor;
 
-  void VisitExpr_(const tir::ProducerLoadNode* op) {
+  void VisitExpr_(const tir::ProducerLoadNode* op) override {
     output.contains_te_specific_nodes = true;
     Parent::VisitExpr_(op);
   }
-  void VisitStmt_(const tir::ProducerStoreNode* op) {
+  void VisitStmt_(const tir::ProducerStoreNode* op) override {
     output.contains_te_specific_nodes = true;
     Parent::VisitStmt_(op);
   }
-  void VisitStmt_(const tir::ProducerRealizeNode* op) {
+  void VisitStmt_(const tir::ProducerRealizeNode* op) override {
     output.contains_te_specific_nodes = true;
     Parent::VisitStmt_(op);
   }
-  void VisitStmt_(const tir::BufferRealizeNode* op) {
+  void VisitStmt_(const tir::BufferRealizeNode* op) override {
     output.contains_te_specific_nodes = true;
     Parent::VisitStmt_(op);
   }
 
-  void VisitStmt_(const tir::BlockNode* block) {
+  void VisitStmt_(const tir::BlockNode* block) override {
     output.contains_tir_blocks = true;
     if (block->iter_vars.size()) {
       output.contains_nonopaque_tir_blocks = true;
     }
     Parent::VisitStmt_(block);
+  }
+
+  void VisitExpr_(const tir::BufferLoadNode* op) override {
+    VisitBuffer(op->buffer);
+    Parent::VisitExpr_(op);
+  }
+
+  void VisitStmt_(const tir::BufferStoreNode* op) override {
+    VisitBuffer(op->buffer);
+    Parent::VisitStmt_(op);
+  }
+
+  void VisitBuffer(const tir::Buffer& buffer) {
+    auto flattened = buffer.GetFlattenedBuffer();
+    if (!flattened.same_as(buffer)) {
+      output.requires_buffer_flattening = true;
+    }
   }
 };
 }  // namespace

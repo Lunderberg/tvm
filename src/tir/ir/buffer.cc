@@ -353,6 +353,11 @@ Buffer Buffer::GetFlattenedBuffer() const {
         << "Last output axis must contain at least one input axis.";
   }
 
+  // Avoid copies if the buffer is already flattened
+  if (self->shape.size() == self->axis_separators.size() + 1) {
+    return *this;
+  }
+
   Array<PrimExpr> output_shape;
   if (self->strides.size()) {
     // If strides are defined, then the extent of each flattened

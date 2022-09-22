@@ -28,6 +28,26 @@ def schedulable_tir_module():
     return tvm.IRModule.from_expr(func)
 
 
+@tvm.testing.fixture
+def logical_2d_physical_1d():
+    @T.prim_func
+    def func(a: T.handle):
+        A = T.match_buffer(a, [16, 64], dtype="float32")
+        T.evaluate(A[0, 0])
+
+    return tvm.IRModule.from_expr(func)
+
+
+@tvm.testing.fixture
+def logical_2d_physical_2d():
+    @T.prim_func
+    def func(a: T.handle):
+        A = T.match_buffer(a, [16, 64], dtype="float32", axis_separators=[1])
+        T.evaluate(A[0, 0])
+
+    return tvm.IRModule.from_expr(func)
+
+
 def test_te_module(te_module):
     mod = te_module
     details = analyze_module_ir(mod)
@@ -61,6 +81,18 @@ def test_opaque_tir_blocks(schedulable_tir_module):
     assert not details.contains_te_specific_nodes
     assert details.contains_tir_blocks
     assert not details.contains_nonopaque_tir_blocks
+
+
+def test_flatten_to_1d(logical_2d_physical_1d):
+    mod = logical_2d_physical_1d
+    details = analyze_module_ir(mod)
+    assert details.requires_buffer_flattening
+
+
+def test_flatten_to_2d(logical_2d_physical_2d):
+    mod = logical_2d_physical_2d
+    details = analyze_module_ir(mod)
+    assert not details.requires_buffer_flattening
 
 
 if __name__ == "__main__":

@@ -38,6 +38,7 @@ class AnalysisResultsNode : public Object {
   bool contains_nonopaque_tir_blocks{false};
   bool contains_relay_function{false};
   bool contains_tir_primfunc{false};
+  bool requires_buffer_flattening{false};
 
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("is_te_derived", &is_te_derived);
@@ -46,6 +47,7 @@ class AnalysisResultsNode : public Object {
     v->Visit("contains_te_specific_nodes", &contains_te_specific_nodes);
     v->Visit("contains_tir_blocks", &contains_tir_blocks);
     v->Visit("contains_nonopaque_tir_blocks", &contains_nonopaque_tir_blocks);
+    v->Visit("requires_buffer_flattening", &requires_buffer_flattening);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";
