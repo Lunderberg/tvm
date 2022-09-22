@@ -69,6 +69,26 @@ class AnalysisResultsNode : public Object {
   // declare views into another buffer
   bool uses_buffer_views_by_attribute{false};
 
+  // TODO: Buffer aliasing?
+
+  // TODO: Host/device constructs (e.g. call_extern)
+
+  // TODO: Target-specific calls
+
+  // TODO: Target-specific datatypes
+
+  // TODO: Existence of Prefetch
+
+  // TODO: Existence of "warp" memory
+
+  // TODO: Existence of "vthread"
+
+  // TODO: Existence of loop unrolling annotations
+
+  // TODO: Existence of double-buffer attribute
+
+  // TODO: Map all of these to the passes required to remove them
+
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("is_te_derived", &is_te_derived);
     v->Visit("contains_relay_function", &contains_relay_function);
