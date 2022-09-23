@@ -97,6 +97,10 @@ class AnalysisResultsNode : public Object {
   // device side.
   bool is_device_only{false};
 
+  // Contains nodes/attributes/constructs that are only allowed while
+  // compiling.
+  bool is_compile_time_only{false};
+
   // TODO: Buffer aliasing?
 
   // TODO: Host/device constructs (e.g. call_extern)
@@ -134,6 +138,7 @@ class AnalysisResultsNode : public Object {
     v->Visit("has_unpacked_api_buffer_arguments", &has_unpacked_api_buffer_arguments);
     v->Visit("is_device_only", &is_device_only);
     v->Visit("is_host_only", &is_host_only);
+    v->Visit("is_compile_time_only", &is_compile_time_only);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";

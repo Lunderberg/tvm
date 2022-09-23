@@ -134,33 +134,33 @@ UsabilityFlags builtin_usability(const tvm::OpNode* builtin) {
       {tir::builtin::call_spirv_pure_glsl450().get(), UsabilityFlags::Vulkan},
 
       // Not yet categorized
-      {tir::builtin::tvm_warp_shuffle().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_warp_shuffle_up().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_warp_shuffle_down().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_warp_activemask().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_global_barrier_kinit().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_thread_allreduce().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_load_matrix_sync().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_mma_sync().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_bmma_sync().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_fill_fragment().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::tvm_store_matrix_sync().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::ptx_mma().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::ptx_mma_sp().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::ptx_ldmatrix().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::ptx_cp_async().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::ptx_commit_group().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::ptx_wait_group().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::mma_store().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::mma_fill().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::vectorhigh().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::vectorlow().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::vectorcombine().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::atomic_add().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::texture2d_store().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::texture2d_load().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::popcount().get(), UsabilityFlags::CompileOnly},
-      {tir::builtin::fma().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_warp_shuffle().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_warp_shuffle_up().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_warp_shuffle_down().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_warp_activemask().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_global_barrier_kinit().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_thread_allreduce().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_load_matrix_sync().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_mma_sync().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_bmma_sync().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_fill_fragment().get(), UsabilityFlags::All},
+      {tir::builtin::tvm_store_matrix_sync().get(), UsabilityFlags::All},
+      {tir::builtin::ptx_mma().get(), UsabilityFlags::All},
+      {tir::builtin::ptx_mma_sp().get(), UsabilityFlags::All},
+      {tir::builtin::ptx_ldmatrix().get(), UsabilityFlags::All},
+      {tir::builtin::ptx_cp_async().get(), UsabilityFlags::All},
+      {tir::builtin::ptx_commit_group().get(), UsabilityFlags::All},
+      {tir::builtin::ptx_wait_group().get(), UsabilityFlags::All},
+      {tir::builtin::mma_store().get(), UsabilityFlags::All},
+      {tir::builtin::mma_fill().get(), UsabilityFlags::All},
+      {tir::builtin::vectorhigh().get(), UsabilityFlags::All},
+      {tir::builtin::vectorlow().get(), UsabilityFlags::All},
+      {tir::builtin::vectorcombine().get(), UsabilityFlags::All},
+      {tir::builtin::atomic_add().get(), UsabilityFlags::All},
+      {tir::builtin::texture2d_store().get(), UsabilityFlags::All},
+      {tir::builtin::texture2d_load().get(), UsabilityFlags::All},
+      {tir::builtin::popcount().get(), UsabilityFlags::All},
+      {tir::builtin::fma().get(), UsabilityFlags::All},
   };
 
   auto it = lookup.find(builtin);
@@ -247,7 +247,7 @@ struct Visitor : tir::StmtExprVisitor {
       } else if (bool(allowed_in & ~UsabilityFlags::Host)) {
         output.is_device_only = true;
       } else if (allowed_in == UsabilityFlags::CompileOnly) {
-        // TODO
+        output.is_compile_time_only = true;
       }
     }
     Parent::VisitExpr_(op);

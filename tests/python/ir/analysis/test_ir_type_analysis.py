@@ -325,6 +325,15 @@ def device_side_mod(request):
     return tvm.IRModule.from_expr(func)
 
 
+@pytest.fixture(
+    params=[value for key, value in CompileOnlyCases.__dict__.items() if not key.startswith("_")]
+)
+def compile_time_only_mod(request):
+    source_code = "@T.prim_func\n" + textwrap.dedent(inspect.getsource(request.param))
+    func = tvm.script.from_source(source_code)
+    return tvm.IRModule.from_expr(func)
+
+
 def test_host_side_only(host_side_mod):
     mod = host_side_mod
     details = analyze_module_ir(mod)
@@ -337,6 +346,12 @@ def test_device_side_only(device_side_mod):
     details = analyze_module_ir(mod)
     assert not details.is_host_only
     assert details.is_device_only
+
+
+def test_compile_time_only(compile_time_only_mod):
+    mod = compile_time_only_mod
+    details = analyze_module_ir(mod)
+    assert details.is_compile_time_only
 
 
 if __name__ == "__main__":
