@@ -103,7 +103,6 @@ class Var : public PrimExpr {
    * \param span The location of this object in the source code.
    */
   TVM_DLL explicit Var(String name_hint, Type type_annotation, Span span = Span());
-  void Visit(tir::ExprVisitor* visitor) const override;
   /*!
    * \brief Make a new copy of var with same type, append suffix
    * \param suffix The suffix to be appended.
@@ -145,7 +144,6 @@ class SizeVarNode : public VarNode {
 class SizeVar : public Var {
  public:
   explicit SizeVar(ObjectPtr<Object> n) : Var(n) {}
-  void Visit(tir::ExprVisitor* visitor) const override;
   /*!
    * \brief constructor
    * \param name_hint variable name

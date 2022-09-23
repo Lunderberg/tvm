@@ -32,7 +32,6 @@
 // Rationale: convert from IterVar and top::Tensor
 #include <tvm/te/tensor.h>
 #include <tvm/tir/expr.h>
-#include <tvm/tir/expr_functor.h>
 
 #include "../support/scalars.h"
 
@@ -42,15 +41,7 @@ PrimExpr::PrimExpr(int32_t value) : PrimExpr(IntImm(DataType::Int(32), value)) {
 
 PrimExpr::PrimExpr(float value) : PrimExpr(FloatImm(DataType::Float(32), value)) {}
 
-void PrimExpr::Visit(tir::ExprVisitor* visitor) const {
-  LOG(FATAL) << "Unhandled type: " << (*this)->GetTypeKey() << "\n"
-             << "As CallNode: " << as<tir::CallNode>() << "\n"
-             << "dynamic_cast to Call: " << dynamic_cast<const tir::Call*>(this);
-}
-
 PrimExpr PrimExpr::FromObject_(ObjectRef ref) {
-  // ICHECK(!ref.as<tir::CallNode>() || dynamic_cast<const tir::Call*>(&ref));
-
   using runtime::ObjectTypeChecker;
   if (auto* ptr = ref.as<tir::IterVarNode>()) {
     return GetRef<tir::IterVar>(ptr)->var;
@@ -109,8 +100,6 @@ IntImm::IntImm(DataType dtype, int64_t value, Span span) {
   data_ = std::move(node);
 }
 
-void IntImm::Visit(tir::ExprVisitor* visitor) const { visitor->VisitExpr_(get()); }
-
 TVM_REGISTER_GLOBAL("ir.IntImm").set_body_typed([](DataType dtype, int64_t value, Span span) {
   return IntImm(dtype, value, span);
 });
@@ -153,8 +142,6 @@ FloatImm::FloatImm(DataType dtype, double value, Span span) {
   node->span = span;
   data_ = std::move(node);
 }
-
-void FloatImm::Visit(tir ::ExprVisitor* visitor) const { visitor->VisitExpr_(get()); }
 
 TVM_REGISTER_GLOBAL("ir.FloatImm").set_body_typed([](DataType dtype, double value, Span span) {
   return FloatImm(dtype, value, span);

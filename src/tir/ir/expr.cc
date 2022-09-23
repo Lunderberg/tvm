@@ -46,9 +46,6 @@ namespace tir {
     data_ = std::move(node);                                                                 \
   }
 
-#define TVM_DEFINE_VISITOR(Name) \
-  void Name::Visit(tir::ExprVisitor* visitor) const { visitor->VisitExpr_(get()); }
-
 #define TVM_DEFINE_CMPOP_CONSTRUCTOR(Name)                                                   \
   Name::Name(PrimExpr a, PrimExpr b, Span span) {                                            \
     using T = Name::ContainerType;                                                           \
@@ -82,8 +79,6 @@ Var::Var(String name_hint, Type type_annotation, Span span) {
   n->span = std::move(span);
   data_ = std::move(n);
 }
-
-TVM_DEFINE_VISITOR(Var)
 
 Var Var::copy_with_suffix(const String& suffix) const {
   const VarNode* node = get();
@@ -138,8 +133,6 @@ SizeVar::SizeVar(String name_hint, DataType dtype, Span span) {
   n->span = std::move(span);
   data_ = std::move(n);
 }
-
-TVM_DEFINE_VISITOR(SizeVar)
 
 TVM_REGISTER_GLOBAL("tir.SizeVar").set_body_typed([](String s, DataType t, Span span) {
   return SizeVar(s, t, span);
@@ -205,8 +198,6 @@ StringImm::StringImm(String value, Span span) {
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(StringImm)
-
 TVM_REGISTER_GLOBAL("tir.StringImm").set_body_typed([](String value, Span span) {
   return StringImm(value, span);
 });
@@ -230,8 +221,6 @@ Cast::Cast(DataType t, PrimExpr value, Span span) {
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(Cast)
-
 TVM_REGISTER_GLOBAL("tir.Cast").set_body_typed([](DataType dtype, PrimExpr value, Span span) {
   return Cast(dtype, value, span);
 });
@@ -248,8 +237,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // Add
 TVM_DEFINE_BINOP_CONSTRUCTOR(Add);
-
-TVM_DEFINE_VISITOR(Add)
 
 TVM_REGISTER_GLOBAL("tir.Add").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Add(a, b, span);
@@ -270,8 +257,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // Sub
 TVM_DEFINE_BINOP_CONSTRUCTOR(Sub);
 
-TVM_DEFINE_VISITOR(Sub)
-
 TVM_REGISTER_GLOBAL("tir.Sub").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Sub(a, b, span);
 });
@@ -290,8 +275,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // Mul
 TVM_DEFINE_BINOP_CONSTRUCTOR(Mul);
-
-TVM_DEFINE_VISITOR(Mul)
 
 TVM_REGISTER_GLOBAL("tir.Mul").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Mul(a, b, span);
@@ -312,8 +295,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // Div
 TVM_DEFINE_BINOP_CONSTRUCTOR(Div);
 
-TVM_DEFINE_VISITOR(Div)
-
 TVM_REGISTER_GLOBAL("tir.Div").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Div(a, b, span);
 });
@@ -332,8 +313,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // Mod
 TVM_DEFINE_BINOP_CONSTRUCTOR(Mod);
-
-TVM_DEFINE_VISITOR(Mod)
 
 TVM_REGISTER_GLOBAL("tir.Mod").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Mod(a, b, span);
@@ -354,8 +333,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // FloorDiv
 TVM_DEFINE_BINOP_CONSTRUCTOR(FloorDiv);
 
-TVM_DEFINE_VISITOR(FloorDiv)
-
 TVM_REGISTER_GLOBAL("tir.FloorDiv").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return FloorDiv(a, b, span);
 });
@@ -371,8 +348,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // FloorMod
 TVM_DEFINE_BINOP_CONSTRUCTOR(FloorMod);
 
-TVM_DEFINE_VISITOR(FloorMod)
-
 TVM_REGISTER_GLOBAL("tir.FloorMod").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return FloorMod(a, b, span);
 });
@@ -387,8 +362,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // Min
 TVM_DEFINE_BINOP_CONSTRUCTOR(Min);
-
-TVM_DEFINE_VISITOR(Min)
 
 TVM_REGISTER_GLOBAL("tir.Min").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Min(a, b, span);
@@ -409,8 +382,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // Max
 TVM_DEFINE_BINOP_CONSTRUCTOR(Max);
 
-TVM_DEFINE_VISITOR(Max)
-
 TVM_REGISTER_GLOBAL("tir.Max").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Max(a, b, span);
 });
@@ -429,8 +400,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // EQ
 TVM_DEFINE_CMPOP_CONSTRUCTOR(EQ);
-
-TVM_DEFINE_VISITOR(EQ)
 
 TVM_REGISTER_GLOBAL("tir.EQ").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return EQ(a, b, span);
@@ -451,8 +420,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // NE
 TVM_DEFINE_CMPOP_CONSTRUCTOR(NE);
 
-TVM_DEFINE_VISITOR(NE)
-
 TVM_REGISTER_GLOBAL("tir.NE").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return NE(a, b, span);
 });
@@ -471,8 +438,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // LT
 TVM_DEFINE_CMPOP_CONSTRUCTOR(LT);
-
-TVM_DEFINE_VISITOR(LT)
 
 TVM_REGISTER_GLOBAL("tir.LT").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return LT(a, b, span);
@@ -493,8 +458,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // LE
 TVM_DEFINE_CMPOP_CONSTRUCTOR(LE);
 
-TVM_DEFINE_VISITOR(LE)
-
 TVM_REGISTER_GLOBAL("tir.LE").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return LE(a, b, span);
 });
@@ -514,8 +477,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 // GT
 TVM_DEFINE_CMPOP_CONSTRUCTOR(GT);
 
-TVM_DEFINE_VISITOR(GT)
-
 TVM_REGISTER_GLOBAL("tir.GT").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return GT(a, b, span);
 });
@@ -534,8 +495,6 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
 
 // GE
 TVM_DEFINE_CMPOP_CONSTRUCTOR(GE);
-
-TVM_DEFINE_VISITOR(GE)
 
 TVM_REGISTER_GLOBAL("tir.GE").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return GE(a, b, span);
@@ -569,8 +528,6 @@ And::And(PrimExpr a, PrimExpr b, Span span) {
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(And)
-
 TVM_REGISTER_GLOBAL("tir.And").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return And(a, b, span);
 });
@@ -603,8 +560,6 @@ Or::Or(PrimExpr a, PrimExpr b, Span span) {
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(Or)
-
 TVM_REGISTER_GLOBAL("tir.Or").set_body_typed([](PrimExpr a, PrimExpr b, Span span) {
   return Or(a, b, span);
 });
@@ -632,8 +587,6 @@ Not::Not(PrimExpr a, Span span) {
   node->span = std::move(span);
   data_ = std::move(node);
 }
-
-TVM_DEFINE_VISITOR(Not)
 
 TVM_REGISTER_GLOBAL("tir.Not").set_body_typed([](PrimExpr a, Span span) { return Not(a, span); });
 
@@ -663,8 +616,6 @@ Select::Select(PrimExpr condition, PrimExpr true_value, PrimExpr false_value, Sp
   node->span = std::move(span);
   data_ = std::move(node);
 }
-
-TVM_DEFINE_VISITOR(Select)
 
 TVM_REGISTER_GLOBAL("tir.Select")
     .set_body_typed([](PrimExpr condition, PrimExpr true_value, PrimExpr false_value, Span span) {
@@ -739,8 +690,6 @@ Load::Load(DataType dtype, Var buffer_var, PrimExpr index, PrimExpr predicate, S
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(Load)
-
 TVM_REGISTER_GLOBAL("tir.Load").set_body([](TVMArgs args, TVMRetValue* ret) {
   DataType t = args[0];
   if (args.size() == 3) {
@@ -784,8 +733,6 @@ Ramp::Ramp(PrimExpr base, PrimExpr stride, int lanes, Span span) {
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(Ramp)
-
 TVM_REGISTER_GLOBAL("tir.Ramp")
     .set_body_typed([](PrimExpr base, PrimExpr stride, int lanes, Span span) {
       return Ramp(base, stride, lanes, span);
@@ -817,8 +764,6 @@ Broadcast::Broadcast(PrimExpr value, int lanes, Span span) {
   data_ = node;
 }
 
-TVM_DEFINE_VISITOR(Broadcast)
-
 TVM_REGISTER_GLOBAL("tir.Broadcast").set_body_typed([](PrimExpr value, int lanes, Span span) {
   return Broadcast(value, lanes, span);
 });
@@ -847,8 +792,6 @@ Let::Let(Var var, PrimExpr value, PrimExpr body, Span span) {
   node->span = std::move(span);
   data_ = std::move(node);
 }
-
-TVM_DEFINE_VISITOR(Let)
 
 TVM_REGISTER_GLOBAL("tir.Let").set_body_typed([](Var var, PrimExpr value, PrimExpr body,
                                                  Span span) {
@@ -880,8 +823,6 @@ Call::Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Span span) {
   node->span = std::move(span);
   data_ = std::move(node);
 }
-
-TVM_DEFINE_VISITOR(Call)
 
 TVM_REGISTER_GLOBAL("tir.Call")
     .set_body_typed([](DataType type, RelayExpr op, Array<ObjectRef> args, Span span) {
@@ -956,8 +897,6 @@ Shuffle::Shuffle(Array<PrimExpr> vectors, Array<PrimExpr> indices, Span span) {
   node->span = std::move(span);
   data_ = node;
 }
-
-TVM_DEFINE_VISITOR(Shuffle)
 
 PrimExpr Shuffle::Concat(Array<PrimExpr> vectors, Span span) {
   ICHECK_NE(vectors.size(), 0);
@@ -1110,8 +1049,6 @@ Reduce::Reduce(CommReducer combiner, Array<PrimExpr> source, Array<IterVar> axis
   data_ = std::move(n);
 }
 
-TVM_DEFINE_VISITOR(Reduce)
-
 TVM_REGISTER_GLOBAL("tir.Reduce")
     .set_body_typed([](CommReducer combiner, Array<PrimExpr> source, Array<IterVar> axis,
                        PrimExpr condition, int value_index, Array<PrimExpr> init, Span span) {
@@ -1139,8 +1076,6 @@ Any::Any(Span span) {
   n->span = std::move(span);
   data_ = std::move(n);
 }
-
-TVM_DEFINE_VISITOR(Any)
 
 TVM_REGISTER_GLOBAL("tir.Any").set_body_typed([](Span span) { return Any(span); });
 
@@ -1176,8 +1111,6 @@ BufferLoad::BufferLoad(Buffer buffer, Array<PrimExpr> indices, Span span) {
   data_ = std::move(node);
 }
 
-TVM_DEFINE_VISITOR(BufferLoad)
-
 TVM_REGISTER_GLOBAL("tir.BufferLoad")
     .set_body_typed([](Buffer buffer, Array<PrimExpr> indices, Span span) {
       return BufferLoad(buffer, indices, span);
@@ -1207,8 +1140,6 @@ ProducerLoad::ProducerLoad(DataProducer producer, Array<PrimExpr> indices, Span 
   node->span = std::move(span);
   data_ = std::move(node);
 }
-
-TVM_DEFINE_VISITOR(ProducerLoad)
 
 TVM_REGISTER_GLOBAL("tir.ProducerLoad")
     .set_body_typed([](DataProducer producer, Array<PrimExpr> indices, Span span) {

@@ -105,17 +105,12 @@ class PrimExprNode : public BaseExprNode {
   TVM_DECLARE_BASE_OBJECT_INFO(PrimExprNode, BaseExprNode);
 };
 
-namespace tir {
-class ExprVisitor;
-}
-
 /*!
  * \brief Reference to PrimExprNode.
  * \sa PrimExprNode
  */
 class PrimExpr : public BaseExpr {
  public:
-  virtual void Visit(tir::ExprVisitor* visitor) const;
   /*!
    * \brief construct from integer.
    * \param value The value to be constructed.
@@ -529,7 +524,6 @@ class IntImm : public PrimExpr {
    * \param span The location of this object in the source code.
    */
   TVM_DLL IntImm(DataType dtype, int64_t value, Span span = Span());
-  void Visit(tir::ExprVisitor* visitor) const override;
 
   TVM_DEFINE_OBJECT_REF_METHODS(IntImm, PrimExpr, IntImmNode);
 };
@@ -576,7 +570,6 @@ class FloatImm : public PrimExpr {
    * \param span The location in the source code.
    */
   TVM_DLL FloatImm(DataType dtype, double value, Span span = Span());
-  void Visit(tir::ExprVisitor* visitor) const override;
 
   TVM_DEFINE_OBJECT_REF_METHODS(FloatImm, PrimExpr, FloatImmNode);
 };
