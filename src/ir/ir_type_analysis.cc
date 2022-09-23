@@ -26,13 +26,150 @@
 
 #include <tvm/relay/function.h>
 #include <tvm/runtime/registry.h>
+#include <tvm/tir/builtin.h>
 #include <tvm/tir/op.h>
 #include <tvm/tir/stmt_functor.h>
+
+#include <unordered_map>
 
 namespace tvm {
 namespace ir {
 
 namespace {
+
+enum class UsabilityFlags : int {
+  // At time of codegen, which sections are allowed to have the function
+  CompileOnly = 0,
+
+  // Which targets are allowed
+  CPU = (1 << 1),
+  C = (1 << 2),
+  Host = CPU | C,
+  LLVMDevice = (1 << 3),
+  LLVM = LLVMDevice | CPU,
+  Cuda = (1 << 4),
+  Vulkan = (1 << 5),
+  Hexagon = (1 << 6),
+  AnyDevice = LLVMDevice | C | Cuda | Vulkan | Hexagon,
+
+  //
+  All = (1 << 7) - 1,
+};
+UsabilityFlags operator|(UsabilityFlags a, UsabilityFlags b) {
+  return UsabilityFlags(static_cast<int>(a) | static_cast<int>(b));
+}
+UsabilityFlags operator&(UsabilityFlags a, UsabilityFlags b) {
+  return UsabilityFlags(static_cast<int>(a) & static_cast<int>(b));
+}
+UsabilityFlags operator~(UsabilityFlags a) {
+  return UsabilityFlags(~static_cast<int>(a)) & UsabilityFlags::All;
+}
+
+UsabilityFlags builtin_usability(const tvm::OpNode* builtin) {
+  // Can't use tvm::OpNode* elements, because tvm::Op doesn't define a
+  // `T::ContainerType get()` method, and we instead have the
+  // `tvm::RelayExprNode*` returned.
+  static std::unordered_map<const tvm::RelayExprNode*, UsabilityFlags> lookup{
+      // Compile-only constructs
+      // Removed in tir.transform.RemoveAssume
+      {tir::builtin::assume().get(), UsabilityFlags::CompileOnly},
+      // Removed in tir.transform.RemoveStoreUndef
+      {tir::builtin::undef().get(), UsabilityFlags::CompileOnly},
+      // Removed in tir.transform.LowerDeviceStorageAccessInfo
+      {tir::builtin::tvm_access_ptr().get(), UsabilityFlags::CompileOnly},
+      // Removed in tir.transform.LowerTVMBuiltin, replaced with
+      // stack-based allocation of PackedFunc arguments.
+      {tir::builtin::tvm_call_packed().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_call_cpacked().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_call_trace_packed().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_stack_make_shape().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_stack_make_array().get(), UsabilityFlags::CompileOnly},
+      // Removed in tir.transform.LowerTVMBuiltin
+      {tir::builtin::nd_mem_alloc_with_scope().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::mem_copy().get(), UsabilityFlags::CompileOnly},
+      // Removed in tir.transform.LowerTVMBuiltin.  Represents
+      // distinct access in vthread.
+      {tir::builtin::tvm_context_id().get(), UsabilityFlags::CompileOnly},
+      // Used when Call nodes require lists of lists.  Removed in
+      // various passes, typically when consuming an AttrStmtNode.
+      {tir::builtin::tvm_tuple().get(), UsabilityFlags::CompileOnly},
+      // Removed in tir.transform.CombineContextCall
+      {tir::builtin::tvm_thread_context().get(), UsabilityFlags::CompileOnly},
+
+      // Host interactions with TVM structures
+      {tir::builtin::tvm_static_handle().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_call_packed_lowered().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_call_cpacked_lowered().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_call_trace_packed_lowered().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_struct_get().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_struct_set().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_throw_last_error().get(), UsabilityFlags::Host},
+      {tir::builtin::tvm_stack_alloca().get(), UsabilityFlags::Host},
+      {tir::builtin::lookup_param().get(), UsabilityFlags::Host},
+      // Host interactions non-TVM code
+      {tir::builtin::call_extern().get(), UsabilityFlags::Host},
+      {tir::builtin::call_pure_extern().get(), UsabilityFlags::Host},
+
+      // Supported at codegen, for some backends
+      {tir::builtin::tvm_storage_sync().get(),
+       UsabilityFlags::LLVM | UsabilityFlags::C | UsabilityFlags::Vulkan | UsabilityFlags::Cuda},
+
+      // TensorCore specific
+      {tir::builtin::tvm_fill_fragment().get(), UsabilityFlags::Cuda},
+      {tir::builtin::tvm_load_matrix_sync().get(), UsabilityFlags::Cuda},
+      {tir::builtin::tvm_store_matrix_sync().get(), UsabilityFlags::Cuda},
+      // CUDA only
+      {tir::builtin::tvm_mma_sync().get(), UsabilityFlags::Cuda},
+      {tir::builtin::tvm_bmma_sync().get(), UsabilityFlags::Cuda},
+      {tir::builtin::ptx_mma().get(), UsabilityFlags::Cuda},
+      {tir::builtin::ptx_mma_sp().get(), UsabilityFlags::Cuda},
+
+      // LLVM-only
+      {tir::builtin::call_llvm_intrin().get(), UsabilityFlags::LLVM},
+      {tir::builtin::call_llvm_pure_intrin().get(), UsabilityFlags::LLVM},
+      // Only inserted in TE-only, from Prefetch node
+      {tir::builtin::prefetch().get(), UsabilityFlags::LLVM},
+
+      // Vulkan-only
+      {tir::builtin::call_spirv_pure_glsl450().get(), UsabilityFlags::Vulkan},
+
+      // Not yet categorized
+      {tir::builtin::tvm_warp_shuffle().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_warp_shuffle_up().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_warp_shuffle_down().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_warp_activemask().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_global_barrier_kinit().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_thread_allreduce().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_load_matrix_sync().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_mma_sync().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_bmma_sync().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_fill_fragment().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::tvm_store_matrix_sync().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::ptx_mma().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::ptx_mma_sp().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::ptx_ldmatrix().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::ptx_cp_async().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::ptx_commit_group().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::ptx_wait_group().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::mma_store().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::mma_fill().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::vectorhigh().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::vectorlow().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::vectorcombine().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::atomic_add().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::texture2d_store().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::texture2d_load().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::popcount().get(), UsabilityFlags::CompileOnly},
+      {tir::builtin::fma().get(), UsabilityFlags::CompileOnly},
+  };
+
+  auto it = lookup.find(builtin);
+  if (it != lookup.end()) {
+    return it->second;
+  } else {
+    return UsabilityFlags::All;
+  }
+}
 
 struct Visitor : tir::StmtExprVisitor {
   Visitor(AnalysisResultsNode& output) : output(output) {}
@@ -99,6 +236,21 @@ struct Visitor : tir::StmtExprVisitor {
     if (!flattened.same_as(buffer)) {
       output.requires_buffer_flattening = true;
     }
+  }
+
+  void VisitExpr_(const tir::CallNode* op) override {
+    if (auto builtin = op->op.as<OpNode>()) {
+      UsabilityFlags allowed_in = builtin_usability(builtin);
+
+      if (bool(allowed_in & ~UsabilityFlags::AnyDevice)) {
+        output.is_host_only = true;
+      } else if (bool(allowed_in & ~UsabilityFlags::Host)) {
+        output.is_device_only = true;
+      } else if (allowed_in == UsabilityFlags::CompileOnly) {
+        // TODO
+      }
+    }
+    Parent::VisitExpr_(op);
   }
 };
 

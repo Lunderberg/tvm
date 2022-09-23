@@ -89,6 +89,14 @@ class AnalysisResultsNode : public Object {
   // parameter.
   bool has_unpacked_api_buffer_arguments{false};
 
+  // Contains nodes/attributes/constructs that are only allowed on the
+  // host side.
+  bool is_host_only{false};
+
+  // Contains nodes/attributes/constructs that are only allowed on the
+  // device side.
+  bool is_device_only{false};
+
   // TODO: Buffer aliasing?
 
   // TODO: Host/device constructs (e.g. call_extern)
@@ -124,6 +132,8 @@ class AnalysisResultsNode : public Object {
     v->Visit("has_tir_buffer_arguments", &has_tir_buffer_arguments);
     v->Visit("has_packed_api_buffer_arguments", &has_packed_api_buffer_arguments);
     v->Visit("has_unpacked_api_buffer_arguments", &has_unpacked_api_buffer_arguments);
+    v->Visit("is_device_only", &is_device_only);
+    v->Visit("is_host_only", &is_host_only);
   }
 
   static constexpr const char* _type_key = "ir.AnalysisResults";
