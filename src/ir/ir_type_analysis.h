@@ -32,6 +32,9 @@ namespace ir {
 
 class AnalysisResultsNode : public Object {
  public:
+  // Contains at least one relay function
+  bool contains_relay_function{false};
+
   // Contains PrimFuncs generated from TE schedules
   bool is_te_derived{false};
 
@@ -43,8 +46,6 @@ class AnalysisResultsNode : public Object {
 
   // Contains tir::Block/tir::BlockRealize with iter_vars/iter_values
   bool contains_nonopaque_tir_blocks{false};
-
-  bool contains_relay_function{false};
 
   // Contains at least one PrimFunc
   bool contains_tir_primfunc{false};

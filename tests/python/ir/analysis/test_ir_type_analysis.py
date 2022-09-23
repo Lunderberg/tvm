@@ -8,11 +8,20 @@ import pytest
 import tvm
 import tvm.testing
 
-from tvm import te, tir
+from tvm import te, tir, relay
 from tvm.script import tir as T
 
 from tvm.driver.build_module import schedule_to_module
 from tvm.ir.ir_type_analysis import analyze_module_ir
+
+
+@tvm.testing.fixture
+def relay_module():
+    dtype = "float32"
+    arg = relay.var("arg", shape=(relay.Any(),), dtype=dtype)
+    func = relay.Function([arg], relay.sqrt(arg))
+    mod = tvm.IRModule.from_expr(func)
+    return mod
 
 
 @tvm.testing.fixture
@@ -108,6 +117,12 @@ def buffer_argument():
         T.evaluate(A[0])
 
     return tvm.IRModule.from_expr(func)
+
+
+def test_relay_module(relay_module):
+    mod = relay_module
+    details = analyze_module_ir(mod)
+    assert details.contains_relay_function
 
 
 def test_te_module(te_module):

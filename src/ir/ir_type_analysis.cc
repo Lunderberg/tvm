@@ -316,7 +316,7 @@ AnalysisResultsNode AnalyzeModuleIRTypeImpl(const IRModule& mod) {
 
   for (const auto& pair : mod->functions) {
     const BaseFunc& base_func = pair.second;
-    if (auto* as_relay_func = base_func.as<relay::FunctionNode>()) {
+    if (/*auto* as_relay_func = */ base_func.as<relay::FunctionNode>()) {
       output.contains_relay_function = true;
     } else if (auto* as_prim_func = base_func.as<tir::PrimFuncNode>()) {
       output.contains_tir_primfunc = true;
