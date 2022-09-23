@@ -369,5 +369,11 @@ def test_compile_time_only(compile_time_only_mod):
     assert details.is_compile_time_only
 
 
+def test_error_if_codegen_compile_time_only(compile_time_only_mod):
+    target = tvm.target.Target("llvm")
+    with pytest.raises(tvm.TVMError):
+        tvm.target._ffi_api.Build(compile_time_only_mod, target)
+
+
 if __name__ == "__main__":
     tvm.testing.main()

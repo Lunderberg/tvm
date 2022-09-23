@@ -348,6 +348,11 @@ AnalysisResults AnalyzeModuleIRType(const IRModule& mod) {
   return AnalysisResults(make_object<AnalysisResultsNode>(AnalyzeModuleIRTypeImpl(mod)));
 }
 
+void ValidateCodegenIRModule(const IRModule& mod) {
+  ICHECK(!ir::AnalyzeModuleIRType(mod)->is_compile_time_only)
+      << "Module contains compile-time only constructs";
+}
+
 TVM_REGISTER_GLOBAL("ir.AnalyzeModuleIRType").set_body_typed(AnalyzeModuleIRType);
 TVM_REGISTER_NODE_TYPE(AnalysisResultsNode);
 

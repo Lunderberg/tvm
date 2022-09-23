@@ -37,10 +37,14 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../ir/ir_type_analysis.h"
+
 namespace tvm {
 namespace codegen {
 
 runtime::Module Build(IRModule mod, Target target) {
+  ir::ValidateCodegenIRModule(mod);
+
   if (transform::PassContext::Current()
           ->GetConfig<Bool>("tir.disable_assert", Bool(false))
           .value()) {

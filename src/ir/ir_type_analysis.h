@@ -162,6 +162,11 @@ class AnalysisResults : public ObjectRef {
  */
 AnalysisResults AnalyzeModuleIRType(const IRModule& mod);
 
+/*! \brief Analyze the contents of an IRModule
+ *
+ */
+void ValidateCodegenIRModule(const IRModule& mod);
+
 }  // namespace ir
 }  // namespace tvm
 #endif  // TVM_IR_IR_TYPE_ANALYSIS_H_
