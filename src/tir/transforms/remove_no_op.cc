@@ -28,6 +28,7 @@
 #include <tvm/tir/stmt.h>
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
+#include <tvm/tir/universal_visitor.h>
 
 #include <unordered_map>
 
@@ -181,6 +182,8 @@ namespace transform {
 
 Pass RemoveNoOp() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
+    UniversalVisitor<VisitorFlag::None> a;
+    UniversalVisitor<VisitorFlag::Mutate> b;
     auto* n = f.CopyOnWrite();
     n->body = NoOpRemover()(std::move(n->body));
     return f;
