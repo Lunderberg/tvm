@@ -1573,11 +1573,7 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
   // inputs.
   Analyzer analyzer;
 
-  std::vector<With<ConstraintContext>> contexts;
-  contexts.reserve(1);
-  if (a_condition) {
-    contexts.emplace_back(&analyzer, a_condition.value());
-  }
+  With<ConstraintContext> context(analyzer, a_condition.value_or(Bool(true)));
 
   std::vector<BufferTouchPattern::BufferConstraint> consistent_constraints;
   for (const auto& ai : a) {
@@ -1600,10 +1596,6 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
         }
       }
     }
-  }
-
-  while (contexts.size()) {
-    contexts.pop_back();
   }
 
   return MergeDisjointConstraints(std::move(consistent_constraints));
