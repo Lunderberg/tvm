@@ -509,6 +509,17 @@ def LowerTVMBuiltin():
     return _ffi_api.LowerTVMBuiltin()  # type: ignore
 
 
+def LowerTVMStackParameters():
+    """Lower tvm_stack_make_array and tvm_stack_make_shape
+
+    Returns
+    -------
+    fpass : tvm.transform.Pass
+        The result pass
+    """
+    return _ffi_api.LowerTVMStackParameters()  # type: ignore
+
+
 def LegalizePackedCalls():
     """Legalize packed calls to have its arguments wrapped in TVMValues
 

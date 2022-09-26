@@ -301,6 +301,12 @@ static constexpr const char* kDisableLowerTVMBuiltin = "disable_lower_builtin";
 TVM_DLL Pass LowerTVMBuiltin();
 
 /*!
+ * \brief Lower tvm_stack_make_array and tvm_stack_make_shape
+ * \return The pass.
+ */
+TVM_DLL Pass LowerTVMStackParameters();
+
+/*!
  * \brief Lower the target specific function intrinsics in each of the function.
  *
  * \return The pass.

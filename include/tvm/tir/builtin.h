@@ -314,6 +314,10 @@ TVM_DLL const Op& tvm_stack_alloca();
 /*!
  * \brief Allocate a shape tuple on stack, return the handle.
  *
+ * This is a compile-time only construct that will be lowered to
+ * appropriate writes to a stack, and `builtin::address_of` as part of
+ * `tir.transform.LowerTVMStackParameters`.
+ *
  *  Handle tvm_stack_make_shape(list args) {
  *     ret = alloca stack int64_t[len(args)];
  *     for i in range(len(args)):
@@ -325,6 +329,11 @@ TVM_DLL const Op& tvm_stack_make_shape();
 
 /*!
  * \brief Allocate a NDArray(DLTensor) on stack, return the handle.
+ *
+ * This is a compile-time only construct that will be lowered to
+ * appropriate calls to `builtin::tvm_struct_set` and
+ * `builtin::tvm_struct_get` as part of
+ * `tir.transform.LowerTVMStackParameters`.
  *
  *  Type tvm_stack_make_array(Expr data,
  *                            Expr shape,
