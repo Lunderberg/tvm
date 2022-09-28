@@ -33,175 +33,6 @@ namespace tvm {
 namespace arith {
 
 namespace {
-template <typename F>
-void CollectConstraints(const PrimExpr& expr, F callback, bool keep_composite_constraints) {
-  if (keep_composite_constraints) {
-    callback(expr);
-  }
-
-  PVar<PrimExpr> x, y;
-  if ((x && y).Match(expr)) {
-    CollectConstraints(x.Eval(), callback, keep_composite_constraints);
-    CollectConstraints(y.Eval(), callback, keep_composite_constraints);
-  } else if ((!(x || y)).Match(expr)) {
-    CollectConstraints(RewriteBooleanOperators(tir::Not(x.Eval())), callback,
-                       keep_composite_constraints);
-    CollectConstraints(RewriteBooleanOperators(tir::Not(y.Eval())), callback,
-                       keep_composite_constraints);
-  } else if (!keep_composite_constraints) {
-    callback(expr);
-  }
-}
-
-std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr, bool keep_composite_constraints) {
-  std::vector<PrimExpr> out;
-  CollectConstraints(
-      expr, [&](const PrimExpr& part) { out.push_back(part); }, keep_composite_constraints);
-  return out;
-}
-
-void CollectConstraints2(const PrimExpr& expr, std::function<void(const PrimExpr&)> callback) {
-  PVar<PrimExpr> x, y, z;
-  if ((x && y).Match(expr)) {
-    CollectConstraints2(x.Eval(), callback);
-    CollectConstraints2(y.Eval(), callback);
-  } else if ((x || y).Match(expr)) {
-    CollectConstraints2(x.Eval(), [&](const PrimExpr& x_part) {
-      CollectConstraints2(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part || y_part); });
-    });
-    // } else if ((x - 1 == y).Match(expr) || (y == x - 1).Match(expr)) {
-    //   callback(x.Eval() - 1 == y.Eval());
-    //   callback(x.Eval() - 1 <= y.Eval());
-    //   callback(x.Eval() > y.Eval());
-    // } else if ((x + 1 == y).Match(expr) || (y == x + 1).Match(expr)) {
-    //   callback(x.Eval() - 1 >= y.Eval());
-    //   callback(x.Eval() < y.Eval());
-    // } else if ((x <= y).Match(expr)) {
-    //   callback(x.Eval() == y.Eval() || x.Eval() < y.Eval());
-    // } else if ((y != x).Match(expr)) {
-    //   callback(x.Eval() < y.Eval() || y.Eval() < x.Eval());
-    //   callback(x.Eval() <= y.Eval());
-    //   callback(y.Eval() <= x.Eval());
-  } else {
-    callback(expr);
-  }
-}
-
-std::vector<PrimExpr> ExtractConstraints2(const PrimExpr& expr) {
-  std::vector<PrimExpr> out;
-  PrimExpr normalized = RewriteBooleanOperators(expr);
-  CollectConstraints2(normalized, [&](const PrimExpr& part) { out.push_back(part); });
-  return out;
-}
-
-std::vector<std::vector<PrimExpr>> DedupExprList(
-    const std::vector<std::vector<PrimExpr>>& vec_vec) {
-  std::unordered_map<size_t, PrimExpr, StructuralHash, StructuralEqual> index_to_expr;
-  std::unordered_map<PrimExpr, size_t, StructuralHash, StructuralEqual> expr_to_index;
-
-  std::vector<std::vector<size_t>> collected;
-
-  auto expr_to_key = [&](const PrimExpr& expr) -> size_t {
-    auto it = expr_to_index.find(expr);
-    if (it != expr_to_index.end()) {
-      return it->second;
-    }
-
-    size_t index = expr_to_index.size();
-    expr_to_index[expr] = index;
-    index_to_expr[index] = expr;
-    return index;
-  };
-
-  // Could throw everything into a set from the start, but that would
-  // remove any ordering that is already present.
-  auto vector_same_contents = [&](const std::vector<size_t>& a,
-                                  const std::vector<size_t>& b) -> bool {
-    if (a.size() != b.size()) {
-      return false;
-    }
-
-    return std::is_permutation(a.begin(), a.end(), b.begin());
-  };
-
-  // Intermediate map of indices, to avoid repeated walking of each
-  // expression.
-  std::vector<std::vector<size_t>> indices;
-  for (const auto& vec : vec_vec) {
-    // Map from PrimExpr to size_t, de-duplicating
-    std::vector<size_t> inner;
-    for (const auto& expr : vec) {
-      size_t index = expr_to_key(expr);
-      if (std::all_of(inner.begin(), inner.end(), [&](size_t prev) { return prev != index; })) {
-        inner.push_back(index);
-      }
-    }
-
-    // Add to list of indices, de-duplicating
-    if (std::all_of(indices.begin(), indices.end(), [&](const std::vector<size_t>& prev) {
-          return !vector_same_contents(prev, inner);
-        })) {
-      indices.push_back(inner);
-    }
-  }
-
-  std::vector<std::vector<PrimExpr>> out;
-  for (const auto& vec : indices) {
-    std::vector<PrimExpr> expr_vec;
-    for (const auto& i : vec) {
-      auto it = index_to_expr.find(i);
-      ICHECK(it != index_to_expr.end());
-      expr_vec.push_back(it->second);
-    }
-    out.push_back(std::move(expr_vec));
-  }
-
-  return out;
-}
-
-void CollectComponents2(const PrimExpr& expr, std::function<void(const PrimExpr&)> callback) {
-  PVar<PrimExpr> x, y, z;
-  if ((x || y).Match(expr)) {
-    CollectComponents2(x.Eval(), callback);
-    CollectComponents2(y.Eval(), callback);
-  } else if ((x && y).Match(expr)) {
-    CollectComponents2(x.Eval(), [&](const PrimExpr& x_part) {
-      CollectComponents2(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part && y_part); });
-    });
-  } else {
-    callback(expr);
-  }
-}
-
-std::vector<std::vector<PrimExpr>> ExtractOrOfAnds(const PrimExpr& expr) {
-  std::vector<std::vector<PrimExpr>> out;
-  CollectComponents2(expr,
-                     [&](const PrimExpr& part) { out.push_back(ExtractConstraints(part, false)); });
-  return DedupExprList(out);
-}
-
-template <typename F>
-void CollectComponents(const PrimExpr& expr, F callback) {
-  PVar<PrimExpr> x, y;
-  if ((x || y).Match(expr)) {
-    CollectComponents(x.Eval(), callback);
-    CollectComponents(y.Eval(), callback);
-  } else if ((!(x && y)).Match(expr)) {
-    CollectComponents(RewriteBooleanOperators(tir::Not(x.Eval())), callback);
-    CollectComponents(RewriteBooleanOperators(tir::Not(y.Eval())), callback);
-  } else {
-    callback(expr);
-  }
-}
-
-std::vector<PrimExpr> ExtractComponents(const PrimExpr& expr) {
-  std::vector<PrimExpr> out;
-  CollectComponents(expr, [&](const PrimExpr& part) { out.push_back(part); });
-  return out;
-}
-}  // namespace
-
-namespace {
 /* \brief A utility for simplifying expressions using conjunctive/disjuctive normal forms */
 class BooleanSimplifier {
  public:
@@ -214,16 +45,17 @@ class BooleanSimplifier {
 
   PrimExpr AsPrimExpr() const;
 
-  size_t NumTerms() const;
-  bool IsOneLayer() const;
-
   void Simplify(Analyzer* analyzer);
 
  private:
-  void SimplifyComponents(Analyzer* analyzer);
   void SimplifyWithinChunks(Analyzer* analyzer);
   void SimplifyAcrossChunks(Analyzer* analyzer);
   void Cleanup();
+
+  static void VisitAndExpressions(const PrimExpr& expr,
+                                  std::function<void(const PrimExpr&)> callback);
+  static void VisitOrExpressions(const PrimExpr& expr,
+                                 std::function<void(const PrimExpr&)> callback);
 
   // Utility class to avoid mixing up indices and lookup keys.
   enum class Key : size_t {};
@@ -235,8 +67,6 @@ class BooleanSimplifier {
   PrimExpr GetExpr(Key key) const;
 
   PrimExpr ChunkExpr(const std::vector<Key>& chunk) const;
-  PrimExpr KnownProvidedWhileInChunk(const std::vector<Key>& chunk) const;
-  PrimExpr KnownProvidedByComponentToSiblings(Key key) const;
 
   std::vector<std::vector<Key>> expr_indices;
   std::unordered_map<Key, PrimExpr, StructuralHash, StructuralEqual> key_to_expr;
@@ -249,8 +79,8 @@ class BooleanSimplifier {
 
 BooleanSimplifier::BooleanSimplifier(const PrimExpr& expr, Rep rep)
     : key_true(GetKey(Bool(true))), key_false(GetKey(Bool(false))), rep(rep) {
-  auto collect_outer = (rep == Rep::AndOfOrs) ? CollectConstraints2 : CollectComponents2;
-  auto collect_inner = (rep == Rep::AndOfOrs) ? CollectComponents2 : CollectConstraints2;
+  auto collect_outer = (rep == Rep::AndOfOrs) ? VisitAndExpressions : VisitOrExpressions;
+  auto collect_inner = (rep == Rep::AndOfOrs) ? VisitOrExpressions : VisitAndExpressions;
 
   collect_outer(expr, [&](const PrimExpr& outer_expr) {
     std::vector<Key> or_components;
@@ -273,6 +103,36 @@ BooleanSimplifier::BooleanSimplifier(const PrimExpr& expr, Rep rep)
       expr_indices.push_back(std::move(or_components));
     }
   });
+}
+
+void BooleanSimplifier::VisitAndExpressions(const PrimExpr& expr,
+                                            std::function<void(const PrimExpr&)> callback) {
+  PVar<PrimExpr> x, y, z;
+  if ((x && y).Match(expr)) {
+    VisitAndExpressions(x.Eval(), callback);
+    VisitAndExpressions(y.Eval(), callback);
+  } else if ((x || y).Match(expr)) {
+    VisitAndExpressions(x.Eval(), [&](const PrimExpr& x_part) {
+      VisitAndExpressions(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part || y_part); });
+    });
+  } else {
+    callback(expr);
+  }
+}
+
+void BooleanSimplifier::VisitOrExpressions(const PrimExpr& expr,
+                                           std::function<void(const PrimExpr&)> callback) {
+  PVar<PrimExpr> x, y, z;
+  if ((x || y).Match(expr)) {
+    VisitOrExpressions(x.Eval(), callback);
+    VisitOrExpressions(y.Eval(), callback);
+  } else if ((x && y).Match(expr)) {
+    VisitOrExpressions(x.Eval(), [&](const PrimExpr& x_part) {
+      VisitOrExpressions(y.Eval(), [&](const PrimExpr& y_part) { callback(x_part && y_part); });
+    });
+  } else {
+    callback(expr);
+  }
 }
 
 BooleanSimplifier::Key BooleanSimplifier::GetKey(const PrimExpr& expr) {
@@ -303,27 +163,6 @@ PrimExpr BooleanSimplifier::AsPrimExpr() const {
     }
   }
   return expr;
-}
-
-bool BooleanSimplifier::IsOneLayer() const {
-  if (expr_indices.size() <= 1) {
-    return true;
-  }
-
-  for (const auto& chunk : expr_indices) {
-    if (chunk.size() > 1) {
-      return false;
-    }
-  }
-  return true;
-}
-
-size_t BooleanSimplifier::NumTerms() const {
-  size_t total = 0;
-  for (const auto& chunk : expr_indices) {
-    total += chunk.size();
-  }
-  return total;
 }
 
 void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
@@ -366,65 +205,9 @@ PrimExpr BooleanSimplifier::ChunkExpr(const std::vector<Key>& chunk) const {
   return expr;
 }
 
-PrimExpr BooleanSimplifier::KnownProvidedWhileInChunk(const std::vector<Key>& chunk) const {
-  PrimExpr known = Bool(true);
-  for (const auto& other_chunk : expr_indices) {
-    if (&chunk != &other_chunk) {
-      PrimExpr provides = ChunkExpr(other_chunk);
-      if (rep == Rep::OrOfAnds) {
-        provides = RewriteBooleanOperators(!provides);
-      }
-      known = known && provides;
-    }
-  }
-  return known;
-}
-
-PrimExpr BooleanSimplifier::KnownProvidedByComponentToSiblings(Key key) const {
-  PrimExpr provides = GetExpr(key);
-  if (rep == Rep::AndOfOrs) {
-    provides = RewriteBooleanOperators(!provides);
-  }
-  return provides;
-}
-
 void BooleanSimplifier::Simplify(Analyzer* analyzer) {
-  // SimplifyComponents(analyzer);
   SimplifyWithinChunks(analyzer);
   SimplifyAcrossChunks(analyzer);
-}
-
-void BooleanSimplifier::SimplifyComponents(Analyzer* analyzer) {
-  std::vector<PrimExpr> known_from_other_chunks(expr_indices.size(), Bool(true));
-
-  while (true) {
-    bool updated = false;
-    for (auto& chunk : expr_indices) {
-      With<ConstraintContext> chunk_context(analyzer, KnownProvidedWhileInChunk(chunk));
-
-      for (auto& key : chunk) {
-        PrimExpr known = Bool(true);
-        for (const auto& other_key : chunk) {
-          if (&key != &other_key) {
-            known = known && KnownProvidedByComponentToSiblings(other_key);
-          }
-        }
-        With<ConstraintContext> component_context(analyzer, known);
-
-        PrimExpr before = GetExpr(key);
-        PrimExpr after = analyzer->Simplify(before);
-        if (!ExprDeepEqual()(before, after)) {
-          key = GetKey(after);
-          updated = true;
-        }
-      }
-    }
-    if (!updated) {
-      break;
-    }
-  }
-
-  Cleanup();
 }
 
 void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
