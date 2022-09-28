@@ -32,8 +32,26 @@ namespace tvm {
 namespace arith {
 
 class Analyzer;
-PrimExpr SimplifyAsAndOfOrs(const PrimExpr& orig, Analyzer* analyzer);
-PrimExpr SimplifyAsOrOfAnds(const PrimExpr& orig, Analyzer* analyzer);
+
+/*! \brief Convert boolean expression to AND of ORs and simplify
+ *
+ * \param expr The PrimExpr to be simplified
+ *
+ * \param analyzer The analyzer with which to simplify
+ *
+ * \return The simplified expression
+ */
+PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer);
+
+/*! \brief Convert boolean expression to OR of ANDs and simplify
+ *
+ * \param expr The PrimExpr to be simplified
+ *
+ * \param analyzer The analyzer with which to simplify
+ *
+ * \return The simplified expression
+ */
+PrimExpr SimplifyAsOrOfAnds(const PrimExpr& expr, Analyzer* analyzer);
 
 }  // namespace arith
 }  // namespace tvm

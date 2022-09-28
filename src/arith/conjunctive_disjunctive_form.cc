@@ -446,13 +446,13 @@ void BooleanSimplifier::Cleanup() {
 
 }  // namespace
 
-PrimExpr SimplifyAsAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
-  BooleanSimplifier repr(analyzer->Simplify(orig), BooleanSimplifier::Rep::AndOfOrs);
+PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer) {
+  BooleanSimplifier repr(analyzer->Simplify(expr), BooleanSimplifier::Rep::AndOfOrs);
   repr.Simplify(analyzer);
   return repr.AsPrimExpr();
 }
-PrimExpr SimplifyAsOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
-  BooleanSimplifier repr(analyzer->Simplify(orig), BooleanSimplifier::Rep::AndOfOrs);
+PrimExpr SimplifyAsOrOfAnds(const PrimExpr& expr, Analyzer* analyzer) {
+  BooleanSimplifier repr(analyzer->Simplify(expr), BooleanSimplifier::Rep::AndOfOrs);
   repr.Simplify(analyzer);
   return repr.AsPrimExpr();
 }
