@@ -134,9 +134,6 @@ class BooleanSimplifier {
    */
   void TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer);
 
-  /*! \brief Internal utility used in `AsPrimExpr` */
-  PrimExpr ChunkExpr(const std::vector<Key>& chunk) const;
-
   /*! \brief The internal representation
    *
    * When using AndOfOrs, `chunks[i][j]` is the j-th expression in the i-th OR-group.
@@ -237,27 +234,27 @@ PrimExpr BooleanSimplifier::GetExpr(BooleanSimplifier::Key key) const {
 }
 
 PrimExpr BooleanSimplifier::AsPrimExpr() const {
-  PrimExpr expr = Bool(rep == Rep::AndOfOrs);
-  for (const auto& chunk : chunks) {
-    if (rep == Rep::AndOfOrs) {
-      expr = expr && ChunkExpr(chunk);
-    } else {
-      expr = expr || ChunkExpr(chunk);
+  if (rep == Rep::AndOfOrs) {
+    PrimExpr expr = Bool(true);
+    for (const auto& chunk : chunks) {
+      PrimExpr chunk_expr = Bool(false);
+      for (Key j : chunk) {
+        chunk_expr = chunk_expr || GetExpr(j);
+      }
+      expr = expr && chunk_expr;
     }
-  }
-  return expr;
-}
-
-PrimExpr BooleanSimplifier::ChunkExpr(const std::vector<Key>& chunk) const {
-  PrimExpr expr = Bool(rep != Rep::AndOfOrs);
-  for (Key j : chunk) {
-    if (rep == Rep::AndOfOrs) {
-      expr = expr || GetExpr(j);
-    } else {
-      expr = expr && GetExpr(j);
+    return expr;
+  } else {
+    PrimExpr expr = Bool(false);
+    for (const auto& chunk : chunks) {
+      PrimExpr chunk_expr = Bool(true);
+      for (Key j : chunk) {
+        chunk_expr = chunk_expr && GetExpr(j);
+      }
+      expr = expr || chunk_expr;
     }
+    return expr;
   }
-  return expr;
 }
 
 void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
