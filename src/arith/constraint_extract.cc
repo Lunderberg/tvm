@@ -93,12 +93,6 @@ std::vector<PrimExpr> ExtractConstraints2(const PrimExpr& expr) {
   return out;
 }
 
-PrimExpr ConvertToAndOfOrs(const PrimExpr& expr) {
-  PrimExpr output = Bool(true);
-  CollectConstraints2(expr, [&](const PrimExpr& part) { output = output && part; });
-  return output;
-}
-
 std::vector<std::vector<PrimExpr>> DedupExprList(
     const std::vector<std::vector<PrimExpr>>& vec_vec) {
   std::unordered_map<size_t, PrimExpr, StructuralHash, StructuralEqual> index_to_expr;
@@ -164,13 +158,6 @@ std::vector<std::vector<PrimExpr>> DedupExprList(
   return out;
 }
 
-std::vector<std::vector<PrimExpr>> ExtractAndOfOrs(const PrimExpr& expr) {
-  std::vector<std::vector<PrimExpr>> out;
-  CollectConstraints2(expr, [&](const PrimExpr& part) { out.push_back(ExtractComponents(part)); });
-
-  return DedupExprList(out);
-}
-
 void CollectComponents2(const PrimExpr& expr, std::function<void(const PrimExpr&)> callback) {
   PVar<PrimExpr> x, y, z;
   if ((x || y).Match(expr)) {
@@ -213,6 +200,10 @@ std::vector<PrimExpr> ExtractComponents(const PrimExpr& expr) {
 }
 
 namespace {
+/* \brief A utility for simplifying expressions using conjunctive/disjuctive normal forms
+ *
+ *
+ */
 class AndOfOrs {
  public:
   enum class Rep {
@@ -225,6 +216,7 @@ class AndOfOrs {
   PrimExpr AsPrimExpr() const;
 
   size_t NumTerms() const;
+  bool IsOneLayer() const;
 
   void Simplify(Analyzer* analyzer);
   void SimplifyComponents(Analyzer* analyzer);
@@ -312,6 +304,19 @@ PrimExpr AndOfOrs::AsPrimExpr() const {
     }
   }
   return expr;
+}
+
+bool AndOfOrs::IsOneLayer() const {
+  if (expr_indices.size() <= 1) {
+    return true;
+  }
+
+  for (const auto& chunk : expr_indices) {
+    if (chunk.size() > 1) {
+      return false;
+    }
+  }
+  return true;
 }
 
 size_t AndOfOrs::NumTerms() const {
@@ -420,7 +425,7 @@ void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
     }
   }
 
-  // Cleanup();
+  Cleanup();
 }
 
 void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
@@ -579,18 +584,6 @@ void AndOfOrs::Cleanup() {
 
 }  // namespace
 
-PrimExpr SimplifyUsingAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
-  AndOfOrs and_of_ors(orig, AndOfOrs::Rep::AndOfOrs);
-  and_of_ors.Simplify(analyzer);
-  return and_of_ors.AsPrimExpr();
-}
-
-PrimExpr SimplifyUsingOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
-  AndOfOrs or_of_ands(orig, AndOfOrs::Rep::OrOfAnds);
-  or_of_ands.Simplify(analyzer);
-  return or_of_ands.AsPrimExpr();
-}
-
 PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int max_rounds) {
   ExprDeepEqual expr_equal;
 
@@ -617,6 +610,10 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
       rounds_since_improvement = 0;
     } else {
       rounds_since_improvement++;
+    }
+
+    if (repr.IsOneLayer()) {
+      break;
     }
 
     bool converged = expr_equal(simplified, lookback);
