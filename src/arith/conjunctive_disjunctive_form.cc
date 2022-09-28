@@ -68,7 +68,7 @@ class BooleanSimplifier {
 
   PrimExpr ChunkExpr(const std::vector<Key>& chunk) const;
 
-  std::vector<std::vector<Key>> expr_indices;
+  std::vector<std::vector<Key>> chunks;
   std::unordered_map<Key, PrimExpr, StructuralHash, StructuralEqual> key_to_expr;
   std::unordered_map<PrimExpr, Key, StructuralHash, StructuralEqual> expr_to_key;
   Key key_true;
@@ -93,14 +93,14 @@ BooleanSimplifier::BooleanSimplifier(const PrimExpr& expr, Rep rep)
       }
     });
 
-    bool is_permutation = std::any_of(
-        expr_indices.begin(), expr_indices.end(), [&](const std::vector<Key>& prev_components) {
+    bool is_permutation =
+        std::any_of(chunks.begin(), chunks.end(), [&](const std::vector<Key>& prev_components) {
           return or_components.size() == prev_components.size() &&
                  std::is_permutation(prev_components.begin(), prev_components.end(),
                                      or_components.begin());
         });
     if (!is_permutation) {
-      expr_indices.push_back(std::move(or_components));
+      chunks.push_back(std::move(or_components));
     }
   });
 }
@@ -155,7 +155,7 @@ PrimExpr BooleanSimplifier::GetExpr(BooleanSimplifier::Key key) const {
 
 PrimExpr BooleanSimplifier::AsPrimExpr() const {
   PrimExpr expr = Bool(rep == Rep::AndOfOrs);
-  for (const auto& chunk : expr_indices) {
+  for (const auto& chunk : chunks) {
     if (rep == Rep::AndOfOrs) {
       expr = expr && ChunkExpr(chunk);
     } else {
@@ -211,7 +211,7 @@ void BooleanSimplifier::Simplify(Analyzer* analyzer) {
 }
 
 void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
-  for (auto& chunk : expr_indices) {
+  for (auto& chunk : chunks) {
     for (size_t expr_i = 0; expr_i < chunk.size(); expr_i++) {
       for (size_t expr_j = expr_i + 1; expr_j < chunk.size(); expr_j++) {
         Key& key_i = chunk[expr_i];
@@ -229,10 +229,10 @@ void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
 }
 
 void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
-  for (size_t i_and = 0; i_and < expr_indices.size(); i_and++) {
-    for (size_t j_and = i_and + 1; j_and < expr_indices.size(); j_and++) {
-      auto& i_chunk = expr_indices[i_and];
-      auto& j_chunk = expr_indices[j_and];
+  for (size_t i_and = 0; i_and < chunks.size(); i_and++) {
+    for (size_t j_and = i_and + 1; j_and < chunks.size(); j_and++) {
+      auto& i_chunk = chunks[i_and];
+      auto& j_chunk = chunks[j_and];
 
       if (i_chunk.size() == 1 && j_chunk.size() == 1) {
         auto& key_i = i_chunk[0];
@@ -338,7 +338,7 @@ void BooleanSimplifier::Cleanup() {
   Key outer_identity = (rep == Rep::AndOfOrs) ? key_true : key_false;
   Key inner_identity = (rep == Rep::AndOfOrs) ? key_false : key_true;
 
-  for (auto& chunk : expr_indices) {
+  for (auto& chunk : chunks) {
     // Any occurrence of True inside an OR makes the entire expression True.
     if (std::any_of(chunk.begin(), chunk.end(), [&](Key key) { return key == outer_identity; })) {
       chunk = {outer_identity};
@@ -351,16 +351,16 @@ void BooleanSimplifier::Cleanup() {
   }
 
   // Any occurence of False inside an AND makes the entire expression False.
-  if (std::any_of(expr_indices.begin(), expr_indices.end(),
+  if (std::any_of(chunks.begin(), chunks.end(),
                   [&](const std::vector<Key>& chunk) { return chunk.size() == 0; })) {
-    expr_indices = {{}};
+    chunks = {{}};
   } else {
     // Any occurrence of True inside an AND can be removed.
-    expr_indices.erase(std::remove_if(expr_indices.begin(), expr_indices.end(),
-                                      [&](const std::vector<Key>& chunk) {
-                                        return chunk.size() == 1 && chunk[0] == outer_identity;
-                                      }),
-                       expr_indices.end());
+    chunks.erase(std::remove_if(chunks.begin(), chunks.end(),
+                                [&](const std::vector<Key>& chunk) {
+                                  return chunk.size() == 1 && chunk[0] == outer_identity;
+                                }),
+                 chunks.end());
   }
 }
 
