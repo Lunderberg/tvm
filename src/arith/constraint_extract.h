@@ -62,10 +62,6 @@ namespace arith {
 std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr,
                                          bool keep_composite_constraints = true);
 
-class Analyzer;
-PrimExpr SimplifyAsAndOfOrs(const PrimExpr& orig, Analyzer* analyzer);
-PrimExpr SimplifyAsOrOfAnds(const PrimExpr& orig, Analyzer* analyzer);
-
 /* \brief Returns components, at least one of which must be true if the expression is true.
  *
  * Utility to break up a boolean expression into independent

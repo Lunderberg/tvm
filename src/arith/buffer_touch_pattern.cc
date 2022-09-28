@@ -35,6 +35,7 @@
 #include <sstream>
 #include <vector>
 
+#include "conjunctive_disjunctive_form.h"
 #include "constraint_extract.h"
 #include "ir_mutator_with_analyzer.h"
 #include "ir_visitor_with_analyzer.h"
