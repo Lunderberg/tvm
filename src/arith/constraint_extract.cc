@@ -200,18 +200,15 @@ std::vector<PrimExpr> ExtractComponents(const PrimExpr& expr) {
 }
 
 namespace {
-/* \brief A utility for simplifying expressions using conjunctive/disjuctive normal forms
- *
- *
- */
-class AndOfOrs {
+/* \brief A utility for simplifying expressions using conjunctive/disjuctive normal forms */
+class BooleanSimplifier {
  public:
   enum class Rep {
     AndOfOrs,
     OrOfAnds,
   };
 
-  AndOfOrs(const PrimExpr& expr, Rep rep);
+  BooleanSimplifier(const PrimExpr& expr, Rep rep);
 
   PrimExpr AsPrimExpr() const;
 
@@ -219,11 +216,11 @@ class AndOfOrs {
   bool IsOneLayer() const;
 
   void Simplify(Analyzer* analyzer);
+
+ private:
   void SimplifyComponents(Analyzer* analyzer);
   void SimplifyWithinChunks(Analyzer* analyzer);
   void SimplifyAcrossChunks(Analyzer* analyzer);
-
- private:
   void Cleanup();
 
   // Utility class to avoid mixing up indices and lookup keys.
@@ -248,7 +245,7 @@ class AndOfOrs {
   Rep rep;
 };
 
-AndOfOrs::AndOfOrs(const PrimExpr& expr, Rep rep)
+BooleanSimplifier::BooleanSimplifier(const PrimExpr& expr, Rep rep)
     : key_true(GetKey(Bool(true))), key_false(GetKey(Bool(false))), rep(rep) {
   auto collect_outer = (rep == Rep::AndOfOrs) ? CollectConstraints2 : CollectComponents2;
   auto collect_inner = (rep == Rep::AndOfOrs) ? CollectComponents2 : CollectConstraints2;
@@ -276,7 +273,7 @@ AndOfOrs::AndOfOrs(const PrimExpr& expr, Rep rep)
   });
 }
 
-AndOfOrs::Key AndOfOrs::GetKey(const PrimExpr& expr) {
+BooleanSimplifier::Key BooleanSimplifier::GetKey(const PrimExpr& expr) {
   auto it = expr_to_key.find(expr);
   if (it != expr_to_key.end()) {
     return it->second;
@@ -288,13 +285,13 @@ AndOfOrs::Key AndOfOrs::GetKey(const PrimExpr& expr) {
   return key;
 }
 
-PrimExpr AndOfOrs::GetExpr(AndOfOrs::Key key) const {
+PrimExpr BooleanSimplifier::GetExpr(BooleanSimplifier::Key key) const {
   auto it = key_to_expr.find(key);
   ICHECK(it != key_to_expr.end());
   return it->second;
 }
 
-PrimExpr AndOfOrs::AsPrimExpr() const {
+PrimExpr BooleanSimplifier::AsPrimExpr() const {
   PrimExpr expr = Bool(rep == Rep::AndOfOrs);
   for (const auto& chunk : expr_indices) {
     if (rep == Rep::AndOfOrs) {
@@ -306,7 +303,7 @@ PrimExpr AndOfOrs::AsPrimExpr() const {
   return expr;
 }
 
-bool AndOfOrs::IsOneLayer() const {
+bool BooleanSimplifier::IsOneLayer() const {
   if (expr_indices.size() <= 1) {
     return true;
   }
@@ -319,7 +316,7 @@ bool AndOfOrs::IsOneLayer() const {
   return true;
 }
 
-size_t AndOfOrs::NumTerms() const {
+size_t BooleanSimplifier::NumTerms() const {
   size_t total = 0;
   for (const auto& chunk : expr_indices) {
     total += chunk.size();
@@ -327,7 +324,7 @@ size_t AndOfOrs::NumTerms() const {
   return total;
 }
 
-void AndOfOrs::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
+void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
   PrimExpr joint = GetExpr(a) || GetExpr(b);
   PrimExpr simplified = analyzer->Simplify(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
@@ -341,7 +338,7 @@ void AndOfOrs::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
   }
 }
 
-void AndOfOrs::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
+void BooleanSimplifier::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
   PrimExpr joint = GetExpr(a) && GetExpr(b);
   PrimExpr simplified = analyzer->Simplify(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
@@ -355,7 +352,7 @@ void AndOfOrs::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
   }
 }
 
-PrimExpr AndOfOrs::ChunkExpr(const std::vector<Key>& chunk) const {
+PrimExpr BooleanSimplifier::ChunkExpr(const std::vector<Key>& chunk) const {
   PrimExpr expr = Bool(rep != Rep::AndOfOrs);
   for (Key j : chunk) {
     if (rep == Rep::AndOfOrs) {
@@ -367,7 +364,7 @@ PrimExpr AndOfOrs::ChunkExpr(const std::vector<Key>& chunk) const {
   return expr;
 }
 
-PrimExpr AndOfOrs::KnownProvidedWhileInChunk(const std::vector<Key>& chunk) const {
+PrimExpr BooleanSimplifier::KnownProvidedWhileInChunk(const std::vector<Key>& chunk) const {
   PrimExpr known = Bool(true);
   for (const auto& other_chunk : expr_indices) {
     if (&chunk != &other_chunk) {
@@ -381,7 +378,7 @@ PrimExpr AndOfOrs::KnownProvidedWhileInChunk(const std::vector<Key>& chunk) cons
   return known;
 }
 
-PrimExpr AndOfOrs::KnownProvidedByComponentToSiblings(Key key) const {
+PrimExpr BooleanSimplifier::KnownProvidedByComponentToSiblings(Key key) const {
   PrimExpr provides = GetExpr(key);
   if (rep == Rep::AndOfOrs) {
     provides = RewriteBooleanOperators(!provides);
@@ -389,13 +386,13 @@ PrimExpr AndOfOrs::KnownProvidedByComponentToSiblings(Key key) const {
   return provides;
 }
 
-void AndOfOrs::Simplify(Analyzer* analyzer) {
+void BooleanSimplifier::Simplify(Analyzer* analyzer) {
   SimplifyComponents(analyzer);
   SimplifyWithinChunks(analyzer);
   SimplifyAcrossChunks(analyzer);
 }
 
-void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
+void BooleanSimplifier::SimplifyComponents(Analyzer* analyzer) {
   std::vector<PrimExpr> known_from_other_chunks(expr_indices.size(), Bool(true));
 
   while (true) {
@@ -428,7 +425,7 @@ void AndOfOrs::SimplifyComponents(Analyzer* analyzer) {
   Cleanup();
 }
 
-void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
+void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
   for (auto& chunk : expr_indices) {
     for (size_t expr_i = 0; expr_i < chunk.size(); expr_i++) {
       for (size_t expr_j = expr_i + 1; expr_j < chunk.size(); expr_j++) {
@@ -446,7 +443,7 @@ void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
   Cleanup();
 }
 
-void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
+void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
   for (size_t i_and = 0; i_and < expr_indices.size(); i_and++) {
     for (size_t j_and = i_and + 1; j_and < expr_indices.size(); j_and++) {
       auto& i_chunk = expr_indices[i_and];
@@ -552,7 +549,7 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
   Cleanup();
 }
 
-void AndOfOrs::Cleanup() {
+void BooleanSimplifier::Cleanup() {
   Key outer_identity = (rep == Rep::AndOfOrs) ? key_true : key_false;
   Key inner_identity = (rep == Rep::AndOfOrs) ? key_false : key_true;
 
@@ -599,8 +596,9 @@ PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int ma
       break;
     }
 
-    auto representation = (i % 2 == 0) ? AndOfOrs::Rep::AndOfOrs : AndOfOrs::Rep::OrOfAnds;
-    AndOfOrs repr(orig, representation);
+    auto representation =
+        (i % 2 == 0) ? BooleanSimplifier::Rep::AndOfOrs : BooleanSimplifier::Rep::OrOfAnds;
+    BooleanSimplifier repr(orig, representation);
     repr.Simplify(analyzer);
     PrimExpr simplified = repr.AsPrimExpr();
 
