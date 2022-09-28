@@ -172,7 +172,7 @@ Predicate Predicate::Difference(const Predicate& other, Analyzer* analyzer) cons
   // new_predicate_expr = analyzer.Simplify(new_predicate_expr);
 
   PrimExpr new_predicate_expr =
-      SimplifyUsingCNFAndDNF(expression_.value() && !other_predicate, analyzer);
+      SimplifyAsAndOfOrs(expression_.value() && !other_predicate, analyzer);
 
   Map<tir::Var, Range> new_free_params = free_parameters_;
   for (const auto& pair : other.free_parameters_) {
@@ -232,7 +232,7 @@ Predicate Predicate::Union(const Predicate& other, Analyzer* analyzer) const {
 
   // PrimExpr new_predicate_expr = analyzer->Simplify(expression_.value() || other_predicate);
   PrimExpr new_predicate_expr =
-      SimplifyUsingCNFAndDNF(expression_.value() || other_predicate, analyzer);
+      SimplifyAsAndOfOrs(expression_.value() || other_predicate, analyzer);
 
   Map<tir::Var, Range> new_free_params;
 
@@ -1489,7 +1489,7 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
         }();
 
         if (provably_equal_value) {
-          union_predicate = SimplifyUsingCNFAndDNF(union_predicate, analyzer);
+          union_predicate = SimplifyAsAndOfOrs(union_predicate, analyzer);
 
           BufferTouchPattern::BufferConstraint new_constraint{
               a.buffer, Predicate(axis_vars, union_predicate, free_parameters),
@@ -1710,14 +1710,14 @@ class BufferRegionCollector : public ExprVisitor {
 
       PrimExpr touch_predicate = constraint.predicate(op->indices).value();
       // touch_predicate = analyzer_->Simplify(touch_predicate;)
-      touch_predicate = SimplifyUsingCNFAndDNF(touch_predicate, analyzer_);
+      touch_predicate = SimplifyAsAndOfOrs(touch_predicate, analyzer_);
 
       if (!is_const_false(touch_predicate)) {
         Optional<PrimExpr> known_value = constraint.known_value(op->indices);
         new_regions.push_back(Known{touch_predicate, known_value});
 
         unknown_region = unknown_region && !touch_predicate;
-        unknown_region = SimplifyUsingCNFAndDNF(unknown_region, analyzer_);
+        unknown_region = SimplifyAsAndOfOrs(unknown_region, analyzer_);
       }
     }
 
@@ -1731,8 +1731,8 @@ class BufferRegionCollector : public ExprVisitor {
       std::vector<Region> updated_regions;
       for (const auto& prev_region : regions_) {
         for (const auto& new_region : new_regions) {
-          PrimExpr intersection = SimplifyUsingCNFAndDNF(
-              prev_region.region_predicate && new_region.predicate, analyzer_);
+          PrimExpr intersection =
+              SimplifyAsAndOfOrs(prev_region.region_predicate && new_region.predicate, analyzer_);
 
           if (!is_const_false(intersection)) {
             Region merged{intersection, prev_region.known_values};
@@ -1853,7 +1853,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     auto normalize_simplify = [&](std::vector<BufferTouchPattern::BufferConstraint> priors) {
       for (auto& prior : priors) {
         prior.predicate.expression_ =
-            SimplifyUsingCNFAndDNF(prior.predicate.expression_.value(), &analyzer);
+            SimplifyAsAndOfOrs(prior.predicate.expression_.value(), &analyzer);
       }
       return priors;
     };
@@ -1868,7 +1868,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
             PrimExpr before_remap = prior.predicate.expression_.value();
             PrimExpr after_remap = Substitute(before_remap, var_remap);
             if (!before_remap.same_as(after_remap)) {
-              prior.predicate.expression_ = SimplifyUsingCNFAndDNF(after_remap, &analyzer);
+              prior.predicate.expression_ = SimplifyAsAndOfOrs(after_remap, &analyzer);
             }
           }
         }
@@ -1968,7 +1968,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         PrimExpr updated_predicate = BufferRegionValueReplacer::Apply(
             region.known_values, region.region_predicate && predicate, &analyzer);
 
-        updated_predicate = SimplifyUsingCNFAndDNF(updated_predicate, &analyzer);
+        updated_predicate = SimplifyAsAndOfOrs(updated_predicate, &analyzer);
         PrimExpr updated_value =
             BufferRegionValueReplacer::Apply(region.known_values, known_value, &analyzer);
 
@@ -2017,7 +2017,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     for (auto& known : post_knowns) {
       known.predicate = known.predicate.WithoutFreeParameters();
       known.predicate.expression_ =
-          SimplifyUsingCNFAndDNF(known.predicate.expression_.value(), &analyzer);
+          SimplifyAsAndOfOrs(known.predicate.expression_.value(), &analyzer);
     }
 
     // Step 4: If any changes are made to the pre- values of the

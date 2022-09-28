@@ -387,7 +387,7 @@ PrimExpr BooleanSimplifier::KnownProvidedByComponentToSiblings(Key key) const {
 }
 
 void BooleanSimplifier::Simplify(Analyzer* analyzer) {
-  SimplifyComponents(analyzer);
+  // SimplifyComponents(analyzer);
   SimplifyWithinChunks(analyzer);
   SimplifyAcrossChunks(analyzer);
 }
@@ -581,54 +581,15 @@ void BooleanSimplifier::Cleanup() {
 
 }  // namespace
 
-PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int max_rounds) {
-  ExprDeepEqual expr_equal;
-
-  PrimExpr lookback = Bool(false);
-  PrimExpr expr = orig;
-
-  Optional<PrimExpr> best = NullOpt;
-  size_t num_terms_in_best = -1;
-  int rounds_since_improvement = 0;
-
-  for (int i = 0; i < max_rounds; i++) {
-    if (as_const_int(expr)) {
-      break;
-    }
-
-    auto representation =
-        (i % 2 == 0) ? BooleanSimplifier::Rep::AndOfOrs : BooleanSimplifier::Rep::OrOfAnds;
-    BooleanSimplifier repr(orig, representation);
-    repr.Simplify(analyzer);
-    PrimExpr simplified = repr.AsPrimExpr();
-
-    if (repr.NumTerms() < num_terms_in_best) {
-      best = repr.AsPrimExpr();
-      num_terms_in_best = repr.NumTerms();
-      rounds_since_improvement = 0;
-    } else {
-      rounds_since_improvement++;
-    }
-
-    if (repr.IsOneLayer()) {
-      break;
-    }
-
-    bool converged = expr_equal(simplified, lookback);
-    lookback = expr;
-    expr = simplified;
-    if (converged) {
-      break;
-    }
-
-    if (rounds_since_improvement >= 4) {
-      break;
-    }
-  }
-
-  PrimExpr result = best.value_or(expr);
-
-  return result;
+PrimExpr SimplifyAsAndOfOrs(const PrimExpr& orig, Analyzer* analyzer) {
+  BooleanSimplifier repr(analyzer->Simplify(orig), BooleanSimplifier::Rep::AndOfOrs);
+  repr.Simplify(analyzer);
+  return repr.AsPrimExpr();
+}
+PrimExpr SimplifyAsOrOfAnds(const PrimExpr& orig, Analyzer* analyzer) {
+  BooleanSimplifier repr(analyzer->Simplify(orig), BooleanSimplifier::Rep::AndOfOrs);
+  repr.Simplify(analyzer);
+  return repr.AsPrimExpr();
 }
 
 }  // namespace arith

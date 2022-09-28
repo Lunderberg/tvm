@@ -63,7 +63,8 @@ std::vector<PrimExpr> ExtractConstraints(const PrimExpr& expr,
                                          bool keep_composite_constraints = true);
 
 class Analyzer;
-PrimExpr SimplifyUsingCNFAndDNF(const PrimExpr& orig, Analyzer* analyzer, int max_rounds = 10);
+PrimExpr SimplifyAsAndOfOrs(const PrimExpr& orig, Analyzer* analyzer);
+PrimExpr SimplifyAsOrOfAnds(const PrimExpr& orig, Analyzer* analyzer);
 
 /* \brief Returns components, at least one of which must be true if the expression is true.
  *
