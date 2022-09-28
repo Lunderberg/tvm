@@ -36,44 +36,127 @@ namespace {
 /* \brief A utility for simplifying expressions using conjunctive/disjuctive normal forms */
 class BooleanSimplifier {
  public:
+  /* \brief Specify the representation being used.
+   *
+   * The simplifications for AndOfOr (conjunctive normal form) and
+   * OrOfAnd (disjunctive normal form) are very similar.  Instead of
+   * having separate routines for each, using an enum to select the
+   * differences when required.
+   */
   enum class Rep {
     AndOfOrs,
     OrOfAnds,
   };
 
+  /*! \brief Construct the simplifier
+   *
+   * Convert a PrimExpr to the internal representation.
+   *
+   * \param expr The PrimExpr to be simplified.
+   *
+   * \param rep The representation to be used, either as an AndOfOrs
+   * or as an OrOfAnds.
+   */
   BooleanSimplifier(const PrimExpr& expr, Rep rep);
 
+  /*! \brief Convert internal representation to PrimExpr */
   PrimExpr AsPrimExpr() const;
 
+  /*! \brief Simplify the internal representation */
   void Simplify(Analyzer* analyzer);
 
  private:
+  /*! \brief Internal utility, simplify within each group of expressions
+   *
+   * For each pair of values within a chunk, attempt to simplify them into
+   * a single expression.
+   *
+   * For example, when using the AndOfOrs representation:
+   *    before = (a == 5) && ((b < 10) || (b > 10))
+   *    after  = (a == 5) && ((b != 10) || false)
+   */
   void SimplifyWithinChunks(Analyzer* analyzer);
+
+  /*! \brief Internal utility, simplify across groups of expressions
+   *
+   * For each pair of chunks, if the two chunks differ by only a single
+   * term, attempt to simplify those differing terms.
+   *
+   * For example, when using the AndOfOrs representation:
+   *    before = ((a == 5) || (b <= 10)) && ((a == 5) || (b >= 10))
+   *    after  = ((a == 5) || (b == 10)) && ((a == 5) || true)
+   */
   void SimplifyAcrossChunks(Analyzer* analyzer);
+
+  /*! \brief Remove instances of true/false from internal representation
+   *
+   * To avoid invalidating iterators, `SimplifyWithinChunks` and
+   * `SimplifyAcrossChunks` may replace keys, but may not remove keys from
+   * the internal representation.  For example, `(a < 5) && (a < 10)`
+   * would be simplified to `(a < 5) && true`.  The `Cleanup` function
+   * removes these leftover instances of true/false.
+   */
   void Cleanup();
 
+  /*! \brief Internal utility function used to convert to internal form */
   static void VisitAndExpressions(const PrimExpr& expr,
                                   std::function<void(const PrimExpr&)> callback);
+  /*! \brief Internal utility function used to convert to internal form */
   static void VisitOrExpressions(const PrimExpr& expr,
                                  std::function<void(const PrimExpr&)> callback);
 
-  // Utility class to avoid mixing up indices and lookup keys.
+  /* \brief Type-safe wrapper class that represents an PrimExpr
+   *
+   * Because integer indices are used frequently through this class,
+   * maintaining a separation between integer indices used to access
+   * specific elements of the internal representation, and unique
+   * identifiers used to represent expressions PrimExpr, is useful.
+   */
   enum class Key : size_t {};
+
+  /*! \brief Convert a PrimExpr to a Key */
   Key GetKey(const PrimExpr& expr);
 
-  void TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer);
-  void TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer);
-
+  /*! \brief Convert a Key to a PrimExpr */
   PrimExpr GetExpr(Key key) const;
 
+  /*! \brief Attempt to simplify (a && b)
+   *
+   * If successful, will overwrite the parameters `a` and `b` with the
+   * simplified form.
+   */
+  void TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer);
+
+  /*! \brief Attempt to simplify (a || b)
+   *
+   * If successful, will overwrite the parameters `a` and `b` with the
+   * simplified form.
+   */
+  void TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer);
+
+  /*! \brief Internal utility used in `AsPrimExpr` */
   PrimExpr ChunkExpr(const std::vector<Key>& chunk) const;
 
+  /*! \brief The internal representation
+   *
+   * When using AndOfOrs, `chunks[i][j]` is the j-th expression in the i-th OR-group.
+   * When using OrOfAnds, `chunks[i][j]` is the j-th expression in the i-th AND-group.
+   */
   std::vector<std::vector<Key>> chunks;
+
+  /*! \brief Mapping from internal Key to PrimExpr */
   std::unordered_map<Key, PrimExpr, StructuralHash, StructuralEqual> key_to_expr;
+
+  /*! \brief Mapping from PrimExpr to internal Key */
   std::unordered_map<PrimExpr, Key, StructuralHash, StructuralEqual> expr_to_key;
+
+  /*! \brief Cached key representing tir::Bool(true) */
   Key key_true;
+
+  /*! \brief Cached key representing tir::Bool(false) */
   Key key_false;
 
+  /*! \brief The representation used, either AndOfOrs or OrOfAnds */
   Rep rep;
 };
 
@@ -165,6 +248,18 @@ PrimExpr BooleanSimplifier::AsPrimExpr() const {
   return expr;
 }
 
+PrimExpr BooleanSimplifier::ChunkExpr(const std::vector<Key>& chunk) const {
+  PrimExpr expr = Bool(rep != Rep::AndOfOrs);
+  for (Key j : chunk) {
+    if (rep == Rep::AndOfOrs) {
+      expr = expr || GetExpr(j);
+    } else {
+      expr = expr && GetExpr(j);
+    }
+  }
+  return expr;
+}
+
 void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
   PrimExpr joint = GetExpr(a) || GetExpr(b);
   PrimExpr simplified = analyzer->Simplify(joint);
@@ -193,21 +288,11 @@ void BooleanSimplifier::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
   }
 }
 
-PrimExpr BooleanSimplifier::ChunkExpr(const std::vector<Key>& chunk) const {
-  PrimExpr expr = Bool(rep != Rep::AndOfOrs);
-  for (Key j : chunk) {
-    if (rep == Rep::AndOfOrs) {
-      expr = expr || GetExpr(j);
-    } else {
-      expr = expr && GetExpr(j);
-    }
-  }
-  return expr;
-}
-
 void BooleanSimplifier::Simplify(Analyzer* analyzer) {
   SimplifyWithinChunks(analyzer);
+  Cleanup();
   SimplifyAcrossChunks(analyzer);
+  Cleanup();
 }
 
 void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
@@ -225,7 +310,6 @@ void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
       }
     }
   }
-  Cleanup();
 }
 
 void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
@@ -331,7 +415,6 @@ void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
       }
     }
   }
-  Cleanup();
 }
 
 void BooleanSimplifier::Cleanup() {
