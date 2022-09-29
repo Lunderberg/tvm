@@ -47,10 +47,12 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
         .describe(
             "If true, simplify conditionals with transitive combinations of scoped constraints")
         .set_default(false);
+
     TVM_ATTR_FIELD(propagate_knowns_to_prove_conditional)
         .describe(
             "If true, known buffer values are propagated and used to statically prove conditionals")
         .set_default(false);
+
     TVM_ATTR_FIELD(propagate_knowns_to_simplify_expressions)
         .describe(
             "If true, known buffer values are propagated and used to replace BufferLoad wherever "

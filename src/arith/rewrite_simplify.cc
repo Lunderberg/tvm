@@ -94,25 +94,13 @@ CompareResult RewriteSimplifier::Impl::TryCompare(const PrimExpr& x, const PrimE
            output == CompareResult::kGT;
   };
 
-  // std::cout << "In RewriteSimplifier, attempting to compare between " << x << " and " << y
-  //           << std::endl;
-
-  output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
-
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using inequalities, comparison between " << x << "
-  //           and "
-  //           << y << " is " << output << std::endl;
+  output = CompareResult(output & TryCompareUsingConstIntBounds(x, y));
 
   if (is_finished()) return output;
 
   if (enabled_extensions_ & kTransitivelyProveInequalities) {
     output = CompareResult(output & TryCompareUsingKnownInequalities(x, y));
   }
-
-  // std::cout << "\t"
-  //           << "In RewriteSimplifier, after using const int bounds, comparison between " << x
-  //           << " and " << y << " is " << output << std::endl;
 
   return output;
 }

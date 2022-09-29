@@ -1840,6 +1840,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   std::unordered_map<size_t, std::vector<BufferTouchPattern::BufferConstraint>> known_after_block;
 
   Analyzer analyzer;
+  analyzer.rewrite_simplify.SetEnabledFeatures(
+      arith::RewriteSimplifier::kTransitivelyProveInequalities);
 
   Map<Var, Range> all_free_parameters = GetAllFreeParameters();
   analyzer.Bind(iterator_ranges_);

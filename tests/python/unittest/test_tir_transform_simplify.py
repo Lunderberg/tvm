@@ -140,6 +140,8 @@ def test_complex_likely_elimination():
 
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     transitively_prove_inequalities = False
+    propagate_knowns_to_prove_conditional = True
+    propagate_knowns_to_simplify_expressions = False
 
     def transform(self):
         def inner(mod):
