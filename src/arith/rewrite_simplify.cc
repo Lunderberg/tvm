@@ -1923,12 +1923,14 @@ class BooleanRewriter : public ExprMutator {
   PrimExpr VisitExpr_(const AndNode* op) override {
     And ret = GetRef<And>(op);
     if (allow_recursion_) {
+      allow_recursion_ = false;
       PrimExpr a = VisitExpr(ret->a);
       PrimExpr b = VisitExpr(ret->b);
       bool is_same = a.same_as(ret->a) && b.same_as(b);
       if (!is_same) {
         ret = And(a, b);
       }
+      allow_recursion_ = true;
     }
     op = ret.get();
 
@@ -2019,12 +2021,14 @@ class BooleanRewriter : public ExprMutator {
   PrimExpr VisitExpr_(const OrNode* op) override {
     Or ret = GetRef<Or>(op);
     if (allow_recursion_) {
+      allow_recursion_ = false;
       PrimExpr a = VisitExpr(ret->a);
       PrimExpr b = VisitExpr(ret->b);
       bool is_same = a.same_as(ret->a) && b.same_as(b);
       if (!is_same) {
         ret = Or(a, b);
       }
+      allow_recursion_ = true;
     }
     op = ret.get();
 
