@@ -63,7 +63,7 @@ class BooleanSimplifier {
   PrimExpr AsPrimExpr() const;
 
   /*! \brief Simplify the internal representation */
-  void Simplify(Analyzer* analyzer);
+  void Simplify();
 
  private:
   /*! \brief Internal utility, simplify within each group of expressions
@@ -75,7 +75,7 @@ class BooleanSimplifier {
    *    before = (a == 5) && ((b < 10) || (b > 10))
    *    after  = (a == 5) && ((b != 10) || false)
    */
-  void SimplifyWithinChunks(Analyzer* analyzer);
+  void SimplifyWithinChunks();
 
   /*! \brief Internal utility, simplify across groups of expressions
    *
@@ -86,7 +86,7 @@ class BooleanSimplifier {
    *    before = ((a == 5) || (b <= 10)) && ((a == 5) || (b >= 10))
    *    after  = ((a == 5) || (b == 10)) && ((a == 5) || true)
    */
-  void SimplifyAcrossChunks(Analyzer* analyzer);
+  void SimplifyAcrossChunks();
 
   /*! \brief Remove instances of true/false from internal representation
    *
@@ -125,14 +125,14 @@ class BooleanSimplifier {
    * If successful, will overwrite the parameters `a` and `b` with the
    * simplified form.
    */
-  void TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer);
+  void TrySimplifyOr(Key& a, Key& b);
 
   /*! \brief Attempt to simplify (a || b)
    *
    * If successful, will overwrite the parameters `a` and `b` with the
    * simplified form.
    */
-  void TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer);
+  void TrySimplifyAnd(Key& a, Key& b);
 
   /*! \brief The internal representation
    *
@@ -257,9 +257,9 @@ PrimExpr BooleanSimplifier::AsPrimExpr() const {
   }
 }
 
-void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
+void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b) {
   PrimExpr joint = GetExpr(a) || GetExpr(b);
-  PrimExpr simplified = analyzer->Simplify(joint);
+  PrimExpr simplified = RewriteBooleanOperators(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
     if (auto* simplified_or = simplified.as<OrNode>()) {
       a = GetKey(simplified_or->a);
@@ -271,9 +271,9 @@ void BooleanSimplifier::TrySimplifyOr(Key& a, Key& b, Analyzer* analyzer) {
   }
 }
 
-void BooleanSimplifier::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
+void BooleanSimplifier::TrySimplifyAnd(Key& a, Key& b) {
   PrimExpr joint = GetExpr(a) && GetExpr(b);
-  PrimExpr simplified = analyzer->Simplify(joint);
+  PrimExpr simplified = RewriteBooleanOperators(joint);
   if (!ExprDeepEqual()(simplified, joint)) {
     if (auto* simplified_and = simplified.as<AndNode>()) {
       a = GetKey(simplified_and->a);
@@ -285,14 +285,14 @@ void BooleanSimplifier::TrySimplifyAnd(Key& a, Key& b, Analyzer* analyzer) {
   }
 }
 
-void BooleanSimplifier::Simplify(Analyzer* analyzer) {
-  SimplifyWithinChunks(analyzer);
+void BooleanSimplifier::Simplify() {
+  SimplifyWithinChunks();
   Cleanup();
-  SimplifyAcrossChunks(analyzer);
+  SimplifyAcrossChunks();
   Cleanup();
 }
 
-void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
+void BooleanSimplifier::SimplifyWithinChunks() {
   for (auto& chunk : chunks) {
     for (size_t expr_i = 0; expr_i < chunk.size(); expr_i++) {
       for (size_t expr_j = expr_i + 1; expr_j < chunk.size(); expr_j++) {
@@ -300,16 +300,16 @@ void BooleanSimplifier::SimplifyWithinChunks(Analyzer* analyzer) {
         Key& key_j = chunk[expr_j];
 
         if (rep == Rep::AndOfOrs) {
-          TrySimplifyOr(key_i, key_j, analyzer);
+          TrySimplifyOr(key_i, key_j);
         } else {
-          TrySimplifyAnd(key_i, key_j, analyzer);
+          TrySimplifyAnd(key_i, key_j);
         }
       }
     }
   }
 }
 
-void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
+void BooleanSimplifier::SimplifyAcrossChunks() {
   for (size_t i_and = 0; i_and < chunks.size(); i_and++) {
     for (size_t j_and = i_and + 1; j_and < chunks.size(); j_and++) {
       auto& i_chunk = chunks[i_and];
@@ -319,9 +319,9 @@ void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
         auto& key_i = i_chunk[0];
         auto& key_j = j_chunk[0];
         if (rep == Rep::AndOfOrs) {
-          TrySimplifyAnd(key_i, key_j, analyzer);
+          TrySimplifyAnd(key_i, key_j);
         } else {
-          TrySimplifyOr(key_i, key_j, analyzer);
+          TrySimplifyOr(key_i, key_j);
         }
         continue;
       }
@@ -404,9 +404,9 @@ void BooleanSimplifier::SimplifyAcrossChunks(Analyzer* analyzer) {
           auto& key_i = i_chunk[i_distinct_index.value()];
           auto& key_j = j_chunk[j_distinct_index.value()];
           if (rep == Rep::AndOfOrs) {
-            TrySimplifyAnd(key_i, key_j, analyzer);
+            TrySimplifyAnd(key_i, key_j);
           } else {
-            TrySimplifyOr(key_i, key_j, analyzer);
+            TrySimplifyOr(key_i, key_j);
           }
         }
       }
@@ -448,12 +448,12 @@ void BooleanSimplifier::Cleanup() {
 
 PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer) {
   BooleanSimplifier repr(analyzer->Simplify(expr), BooleanSimplifier::Rep::AndOfOrs);
-  repr.Simplify(analyzer);
+  repr.Simplify();
   return repr.AsPrimExpr();
 }
 PrimExpr SimplifyAsOrOfAnds(const PrimExpr& expr, Analyzer* analyzer) {
   BooleanSimplifier repr(analyzer->Simplify(expr), BooleanSimplifier::Rep::AndOfOrs);
-  repr.Simplify(analyzer);
+  repr.Simplify();
   return repr.AsPrimExpr();
 }
 
