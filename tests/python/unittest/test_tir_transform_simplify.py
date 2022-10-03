@@ -1488,10 +1488,12 @@ class TestSimplifyRampIndexRampValue(BaseBeforeAfter):
 
 
 class TestSimplifyUsingPartiallyProvenBufferValueGather(BaseBeforeAfter):
-    """Propagate known buffer values in part
+    """Propagate known buffer values in part of buffer.
 
     Even if a constraint can't be solved for all values in an
-    assignment, it may be provable in part of a buffer.  Here,
+    assignment, it may be provable in part of a buffer.  Here, the
+    known 0 values in the padding of A produces known 0 values in the
+    padding of B.
     """
 
     def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
@@ -1531,11 +1533,11 @@ class TestSimplifyUsingPartiallyProvenBufferValueGather(BaseBeforeAfter):
 
 
 class TestSimplifyUsingPartiallyProvenBufferValueScatter(BaseBeforeAfter):
-    """Propagate known buffer values in part
+    """Propagate known buffer values in part of buffer.
 
-    Even if a constraint can't be solved for all values in an
-    assignment, it may be provable in part of a buffer.  Here,
-
+    Like TestSimplifyUsingPartiallyProvenBufferValueGather, but the
+    compute loop is over the input buffer A, rather than the output
+    buffer B.
     """
 
     def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
