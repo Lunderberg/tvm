@@ -1580,5 +1580,19 @@ class TestSimplifyUsingPartiallyProvenBufferValueScatter(BaseBeforeAfter):
                 T.evaluate(0)
 
 
+class TestSimplifyBufferStore(BaseBeforeAfter):
+    """Simplification using prior known"""
+
+    propagate_knowns_to_simplify_expressions = True
+
+    def before(A: T.Buffer[1, "int32"]):
+        A[0] = 5
+        A[0] = A[0] + 7
+
+    def expected(A: T.Buffer[1, "int32"]):
+        A[0] = 5
+        A[0] = 12
+
+
 if __name__ == "__main__":
     tvm.testing.main()

@@ -405,6 +405,9 @@ class BufferTouchPattern {
   };
 
   struct ControlFlowBlock {
+    std::vector<BufferConstraint> known_at_block_start;
+    std::vector<BufferConstraint> known_at_block_end;
+
     /* \brief Buffer touches that occur within the block
      *
      * All buffer touches within a block can be treated as occurring

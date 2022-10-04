@@ -616,19 +616,14 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
  public:
   using Parent = IRMutatorWithAnalyzer;
 
-  BufferConstraintApply(const BufferTouchPattern& touch_pattern, size_t context_index,
+  BufferConstraintApply(const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
                         Analyzer* analyzer)
-      : Parent(analyzer), touch_pattern_(touch_pattern), context_index_(context_index) {}
+      : Parent(analyzer), knowns_(knowns) {}
 
   using Parent::VisitExpr_;
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) override {
-    auto it = touch_pattern_.constraint_lookup_.find(context_index_);
-    ICHECK(it != touch_pattern_.constraint_lookup_.end())
-        << "Cannot find constraints for context " << context_index_;
-    const auto& knowns = it->second;
-
-    for (const auto& known : knowns) {
+    for (const auto& known : knowns_) {
       if (!op->buffer.same_as(known.buffer)) {
         continue;
       }
@@ -643,8 +638,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
   }
 
  private:
-  const BufferTouchPattern& touch_pattern_;
-  size_t context_index_;
+  const std::vector<BufferTouchPattern::BufferConstraint>& knowns_;
 };
 
 // Find Read region of the tensor in the stmt.
@@ -1950,6 +1944,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       return output;
     }();
 
+    block.known_at_block_start = prior_knowns;
+
     // Step 1: Propagate the known values from before the control
     // block into known values for the control block.
 
@@ -2052,6 +2048,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     // TODO: Have a maximum number of times that blocks may be
     // visited, to guard against infinite loops.
     if (has_updated_post) {
+      block.known_at_block_end = post_knowns;
       known_after_block[visiting] = post_knowns;
       for (size_t successor : block.successors) {
         to_visit.insert(successor);
@@ -2092,6 +2089,7 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& stor
 
 bool BufferTouchPattern::IsOverwrittenWithoutEffect(
     std::vector<BufferTouch>::const_iterator write_iter, Analyzer* analyzer) const {
+  // TODO: Walk through control flow graph
   for (auto it = write_iter + 1; it != touch_points_.end(); it++) {
     // If the write_iter was a subset of another write, then it was entirely overwritten.
     if (it->touch_type == BufferTouch::AccessType::Write && write_iter->IsSubsetOf(*it, analyzer)) {
@@ -2121,7 +2119,9 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
   }
   With<ConstraintContext> constraint_context(analyzer, constraint);
 
-  BufferConstraintApply mutator(*this, context_index, analyzer);
+  const auto& knowns = control_flow_[context_index].known_at_block_start;
+
+  BufferConstraintApply mutator(knowns, analyzer);
   expr = mutator(expr);
   expr = analyzer->Simplify(expr);
   return expr;
