@@ -224,8 +224,6 @@ class BufferTouchPattern {
    */
   explicit BufferTouchPattern(const tir::Stmt& stmt);
 
-  const std::vector<BufferTouch>& GetTouches() const { return touch_points_; }
-
   /* \brief Check if a write is overwritten without impacting final results
    *
    * \param store The store to be examined
@@ -394,15 +392,6 @@ class BufferTouchPattern {
 
   /* \brief The control flow that occurs within the analyzed statement */
   std::vector<ControlFlowBlock> control_flow_;
-
-  /* \brief An ordered list of buffer touches
-   *
-   * For all indices i and j, if i<j, then either buffer touch i
-   * occurs sequentially before buffer touch j (e.g. for sequential
-   * writes of a buffer), or buffer touch i and j have mutually
-   * exclusive predicates (e.g. for writes within an if/else).
-   */
-  std::vector<BufferTouch> touch_points_;
 
   /* \brief A lookup into control_flow_
    *

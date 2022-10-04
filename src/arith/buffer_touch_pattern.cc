@@ -1095,7 +1095,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node->indices,
                              loop_var_to_axis_var, node);
 
-    out_->touch_points_.push_back(buffer_touch);
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
   }
 
@@ -1352,13 +1351,6 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlow
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
-  os << "Touch pattern contains " << pattern.touch_points_.size() << " touches."
-     << (pattern.touch_points_.size() ? "\n" : "");
-  for (size_t i = 0; i < pattern.touch_points_.size(); i++) {
-    os << "\t"
-       << "Touch[" << i << "] = " << pattern.touch_points_[i] << "\n";
-  }
-
   os << "Touch pattern contains " << pattern.control_flow_.size() << " control blocks."
      << (pattern.control_flow_.size() ? "\n" : "");
   for (size_t i = 0; i < pattern.control_flow_.size(); i++) {
@@ -2102,9 +2094,7 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
 }
 
 void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
-  touch_points_.erase(std::remove_if(touch_points_.begin(), touch_points_.end(),
-                                     [&](const auto& touch) { return touch.node.same_as(store); }));
-  // TODO: Update context_lookup_
+  // TODO: Update control_flow_
 }
 
 }  // namespace arith
