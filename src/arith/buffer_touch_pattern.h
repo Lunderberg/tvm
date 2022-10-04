@@ -423,13 +423,6 @@ class BufferTouchPattern {
    */
   std::vector<BufferTouch> touch_points_;
 
-  /* \brief A lookup into touches_
-   *
-   * A map to look up the first buffer touch that is at or after a
-   * given Stmt.
-   */
-  std::unordered_map<const tir::StmtNode*, size_t> context_lookup_;
-
   /* \brief A lookup into control_flow_
    *
    * A map to look up the control flow block that contains the

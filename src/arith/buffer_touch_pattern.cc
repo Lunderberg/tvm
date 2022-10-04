@@ -682,7 +682,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   void VisitStmt(const Stmt& stmt) override {
     // Point from the statement to the first touch point that occurs
     // at or after the statement.
-    out_->context_lookup_[stmt.get()] = out_->touch_points_.size();
     out_->control_flow_lookup_[stmt.get()] = CurrentControlBlock();
     Stmt prev_stmt = current_stmt_;
     current_stmt_ = stmt;
