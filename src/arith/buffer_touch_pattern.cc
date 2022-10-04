@@ -366,10 +366,18 @@ BufferTouch::BufferTouch(Buffer buffer, Predicate predicate, AccessType touch_ty
       node(node) {}
 
 bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const {
-  if (!this->buffer.same_as(other.buffer)) {
-    return false;
-  } else {
+  if (this->buffer.same_as(other.buffer)) {
     return this->predicate.IsSubsetOf(other.predicate, analyzer);
+  } else {
+    return false;
+  }
+}
+
+bool BufferTouch::IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) const {
+  if (this->buffer.same_as(other.buffer)) {
+    return this->predicate.IsDistinctFrom(other.predicate, analyzer);
+  } else {
+    return true;
   }
 }
 
@@ -2029,33 +2037,41 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
 bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
                                                     Analyzer* analyzer) const {
-  bool write_occurred = false;
+  auto it = control_flow_lookup_.find(store.get());
+  ICHECK(it != control_flow_lookup_.end()) << "BufferStore did not occur within analyzed statement";
 
-  for (auto it = touch_points_.begin(); it != touch_points_.end(); it++) {
-    if (it->node.same_as(store)) {
-      write_occurred = true;
-      if (!IsOverwrittenWithoutEffect(it, analyzer)) {
+  const auto& store_block = control_flow_[it->second];
+  ICHECK_GE(store_block.touch_points.size(), 1);
+
+  const auto& store_touch = store_block.touch_points.back();
+
+  std::unordered_set<size_t> seen;
+  std::vector<size_t> to_visit = store_block.successors;
+
+  while (to_visit.size()) {
+    size_t visiting = to_visit.back();
+    to_visit.pop_back();
+
+    const auto& block = control_flow_[visiting];
+
+    for (auto& touch : block.touch_points) {
+      if (touch.touch_type == BufferTouch::AccessType::Read &&
+          !store_touch.IsDistinctFrom(touch, analyzer)) {
+        // The buffer location is being read out, has an effect.
         return false;
+      } else if (touch.touch_type == BufferTouch::AccessType::Write &&
+                 store_touch.IsSubsetOf(touch, analyzer)) {
+        // The buffer is entirely overwritten, so the earlier store
+        // has no effect.
+        return true;
+      } else {
+        // Pass along to next block to visit.
+        for (size_t next_index : block.successors) {
+          if (!seen.count(next_index)) {
+            to_visit.push_back(next_index);
+          }
+        }
       }
-    }
-  }
-
-  ICHECK(write_occurred) << "BufferStore did not occur within analyzed statement";
-
-  return true;
-}
-
-bool BufferTouchPattern::IsOverwrittenWithoutEffect(
-    std::vector<BufferTouch>::const_iterator write_iter, Analyzer* analyzer) const {
-  // TODO: Walk through control flow graph
-  for (auto it = write_iter + 1; it != touch_points_.end(); it++) {
-    // If the write_iter was a subset of another write, then it was entirely overwritten.
-    if (it->touch_type == BufferTouch::AccessType::Write && write_iter->IsSubsetOf(*it, analyzer)) {
-      return true;
-    }
-    // If the written values are later read out, then this write had an effect.
-    if (it->touch_type == BufferTouch::AccessType::Read && it->IsSubsetOf(*write_iter, analyzer)) {
-      return false;
     }
   }
 

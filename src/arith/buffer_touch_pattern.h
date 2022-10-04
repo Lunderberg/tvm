@@ -168,6 +168,14 @@ class BufferTouch {
    */
   bool IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const;
 
+  /* \brief Checks if this Predicate is distinct of another predicate
+   *
+   * Returns true if it can be proven that the two predicates cannot
+   * be simultaneously true.  Returns false if it cannot be proven
+   * that the two predicates are distinct.
+   */
+  bool IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) const;
+
   /* \brief Checks if this BufferTouch is a subset of another predicate
    *
    * Returns true if this is a buffer write that alters the value of
@@ -256,22 +264,6 @@ class BufferTouchPattern {
   void RemoveTouches(const tir::BufferStore& store);
 
  private:
-  /* \brief Internal utility, checks if a specific write was overwritten
-   *
-   * \param write_iter An iterator into `touches_`, pointing to the
-   * buffer touch to be examined.
-   */
-  bool IsOverwrittenWithoutEffect(std::vector<BufferTouch>::const_iterator write_iter,
-                                  Analyzer* analyzer) const;
-
-  /* \brief Internal utility, checks if a specific access was overwritten
-   *
-   * \param write_iter An iterator into `touches_`, pointing to the
-   * buffer touch to be examined.
-   */
-  // Optional<PrimExpr> KnownValue(std::vector<BufferTouch>::const_reverse_iterator access_iter,
-  //                               const Array<PrimExpr>& indices) const;
-
   friend std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern);
 
   // private:
