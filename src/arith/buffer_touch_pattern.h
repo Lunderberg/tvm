@@ -404,10 +404,6 @@ class BufferTouchPattern {
 
     /* \brief The blocks that occur before this block */
     std::vector<ControlFlowPredecessor> predecessors;
-
-    // TODO: Remove index after done debugging.
-    int index;
-    std::string name;
   };
   friend std::ostream& operator<<(std::ostream& os, const ControlFlowBlock& pattern);
 

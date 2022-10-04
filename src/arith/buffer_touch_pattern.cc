@@ -1191,8 +1191,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   size_t AppendControlBlock(std::string name) {
     size_t index = out_->control_flow_.size();
     out_->control_flow_.emplace_back();
-    out_->control_flow_.back().index = index;
-    out_->control_flow_.back().name = name;
     return index;
   }
 
@@ -1358,8 +1356,7 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
      << (pattern.control_flow_.size() ? "\n" : "");
   for (size_t i = 0; i < pattern.control_flow_.size(); i++) {
     os << "\t"
-       << "ControlBlock[" << i << "] (name = '" << pattern.control_flow_[i].name
-       << "') = " << pattern.control_flow_[i] << "\n";
+       << "ControlBlock[" << i << "] = " << pattern.control_flow_[i] << "\n";
   }
 
   return os;
