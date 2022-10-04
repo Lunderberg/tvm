@@ -473,12 +473,9 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
 
   Optional<PrimExpr> FollowPredecessorBlock(const BufferTouchPattern::ControlFlowBlock& block,
                                             const BufferLoadNode* op, PrimExpr access_predicate) {
-    IncreaseDepth temp(this);
-
     Optional<PrimExpr> result = NullOpt;
     for (const auto& predecessor_edge : block.predecessors) {
       size_t predecessor_index = predecessor_edge.from_index;
-      IncreaseDepth temp2(this);
       const auto& predecessor = touch_pattern_.control_flow_[predecessor_index];
       auto opt_value = ApplyKnownValue(predecessor, op, access_predicate);
       if (!opt_value) {
@@ -495,8 +492,6 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
 
   Optional<PrimExpr> ApplyKnownValue(const BufferTouchPattern::ControlFlowBlock& block,
                                      const BufferLoadNode* op, PrimExpr access_predicate) {
-    IncreaseDepth temp(this);
-
     auto implies = [this](const PrimExpr& known, const PrimExpr& conjecture) -> bool {
       With<ConstraintContext> constraint(analyzer_, known);
       return analyzer_->CanProve(conjecture);
@@ -607,17 +602,6 @@ class BufferConstraintSubstituter : public IRMutatorWithAnalyzer {
   const BufferTouchPattern& touch_pattern_;
   size_t context_index_;
   bool all_buffer_loads_removed_{true};
-
-  int depth{-1};
-  struct IncreaseDepth {
-    IncreaseDepth(BufferConstraintSubstituter* self) : self(self) { self->depth++; }
-    ~IncreaseDepth() { self->depth--; }
-    IncreaseDepth(const IncreaseDepth& other) = delete;
-    IncreaseDepth(IncreaseDepth&& other) = delete;
-    IncreaseDepth& operator=(const IncreaseDepth& other) = delete;
-    IncreaseDepth& operator=(IncreaseDepth&& other) = delete;
-    BufferConstraintSubstituter* self;
-  };
 };
 
 class BufferConstraintApply : public IRMutatorWithAnalyzer {
