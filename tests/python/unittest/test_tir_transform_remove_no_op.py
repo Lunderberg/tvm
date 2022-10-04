@@ -446,7 +446,6 @@ class TestRemoveReadWriteSameIndexUsingConstraint(BaseBeforeAfter):
                 A[i] = A[i - 1]
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveWritingOfKnownValue(BaseBeforeAfter):
     """Writing a value that already exists at that index is a no-op"""
 
