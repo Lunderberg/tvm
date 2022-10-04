@@ -1181,27 +1181,6 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
 }
 
 std::vector<BufferTouchPattern::BufferConstraint>
-BufferTouchPattern::BufferConstraint::SimplifyOverwrittenConstraints(
-    std::vector<BufferTouchPattern::BufferConstraint> constraints, Analyzer* analyzer) {
-  for (size_t i = 0; i < constraints.size(); i++) {
-    for (size_t j = i + 1; j < constraints.size(); j++) {
-      constraints[i].OverwriteBy(constraints[j], analyzer);
-    }
-  }
-
-  constraints.erase(std::remove_if(constraints.begin(), constraints.end(),
-                                   [](const auto& constraint) -> bool {
-                                     return constraint.predicate.IsAlwaysFalse() ||
-                                            !constraint.known_value.IsDefined();
-                                   }),
-                    constraints.end());
-
-  constraints = MergeDisjointConstraints(constraints, analyzer);
-
-  return constraints;
-}
-
-std::vector<BufferTouchPattern::BufferConstraint>
 BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
     std::vector<BufferTouchPattern::BufferConstraint> constraints, Analyzer* analyzer) {
   for (size_t i = 0; i < constraints.size(); i++) {

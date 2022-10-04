@@ -273,20 +273,6 @@ class BufferTouchPattern {
         const std::vector<BufferConstraint>& before, const std::vector<BufferConstraint>& after,
         Analyzer* analyzer);
 
-    /*! \brief Simplify and remove overwritten constraints
-     *
-     * Given a vector of constraints, where later constraints may
-     * overwrite earlier constraints, produce a set of disjoint
-     * constraints representing the final state after all constraints
-     * have been applied.
-     *
-     * \param constraints The vector of constraints, from oldest to newest.
-     *
-     * \return A set of disjoint constraints
-     */
-    static std::vector<BufferConstraint> SimplifyOverwrittenConstraints(
-        std::vector<BufferConstraint> constraints, Analyzer* analyzer);
-
     /*! \brief Simplify disjoint
      *
      * Given a vector of disjoint constraints, merge any constraints
