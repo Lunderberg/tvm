@@ -1603,12 +1603,9 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostconditi
 std::vector<BufferTouchPattern::BufferConstraint>
 BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
     const std::vector<BufferTouchPattern::BufferConstraint>& a,
-    const std::vector<BufferTouchPattern::BufferConstraint>& b, Optional<PrimExpr> a_condition,
-    Analyzer* analyzer) {
+    const std::vector<BufferTouchPattern::BufferConstraint>& b, Analyzer* analyzer) {
   // For a constraint to be in the output, it must be present in both
   // inputs.
-
-  With<ConstraintContext> context(analyzer, a_condition.value_or(Bool(true)));
 
   std::vector<BufferTouchPattern::BufferConstraint> consistent_constraints;
   for (const auto& ai : a) {
@@ -1789,13 +1786,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   // preferentially visit nodes near the start of the control flow.
   std::set<size_t> to_visit;
 
-  // If a control block has not yet been visited, then an empty
-  // constraints vector just means that we haven't filled it yet.  If
-  // a control block has been visited, an empty constraints vector
-  // means that we don't know anything about any vector.
-  //
-  // TODO: See if this is cleaner if written as an
-  // Optional<Array<Constraint>>
+  // Track whether a buffer has been visited at least once.
   std::unordered_set<size_t> visited_once;
 
   // Initiatize the locations to search from, propagating values
@@ -1910,15 +1901,13 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       if (pred_a.predicate && pred_b.predicate) {
         output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostcondition(
             priors_a, priors_b, pred_a.predicate.value(), pred_b.predicate.value(), &analyzer);
-      } else if (pred_a.predicate) {
+      } else if (!pred_a.predicate && !pred_b.predicate) {
         output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
-            priors_a, priors_b, pred_a.predicate, &analyzer);
-      } else if (pred_b.predicate) {
-        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
-            priors_b, priors_a, pred_b.predicate, &analyzer);
+            priors_a, priors_b, &analyzer);
       } else {
-        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
-            priors_a, priors_b, NullOpt, &analyzer);
+        LOG(FATAL) << "In control flow graph, "
+                   << "either both predecessors must have predicates, "
+                   << "or neither may have a predicate";
       }
 
       return output;

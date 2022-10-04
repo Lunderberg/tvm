@@ -321,12 +321,10 @@ class BufferTouchPattern {
      * If a constraint applies to the same indices in the same buffer,
      * but cannot be shown to be the same value, it will be tracked as
      * a NullOpt, with no additional information tracked.
-     *
-     * \param a_condition Condition that is known to be true when
      */
     static std::vector<BufferConstraint> MergePredecessorConstraints(
         const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
-        Optional<PrimExpr> a_condition, Analyzer* analyzer);
+        Analyzer* analyzer);
 
     /* \brief Merge constraints that jointly apply
      *
