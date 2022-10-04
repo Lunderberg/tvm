@@ -430,9 +430,6 @@ class BufferTouchPattern {
   };
   friend std::ostream& operator<<(std::ostream& os, const ControlFlowBlock& pattern);
 
-  // TODO: Merge this into ControlFlowBlock
-  std::unordered_map<size_t, std::vector<BufferConstraint>> constraint_lookup_;
-
   /* \brief The control flow that occurs within the analyzed statement */
   std::vector<ControlFlowBlock> control_flow_;
 
