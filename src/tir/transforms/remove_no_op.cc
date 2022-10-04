@@ -153,33 +153,27 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   }
 
   Stmt VisitStmt_(const SeqStmtNode* op) final {
-    Stmt ret = StmtMutator::VisitSeqStmt_(op, true);
-    op = ret.as<SeqStmtNode>();
-    ICHECK(op != nullptr);
-    bool need_compact = false;
-    for (size_t i = 0; i < op->size(); ++i) {
-      if (is_no_op(op->seq[i])) need_compact = true;
-    }
+    auto ret = Downcast<SeqStmt>(StmtMutator::VisitSeqStmt_(op, true));
+
+    bool need_compact = std::any_of(ret->seq.begin(), ret->seq.end(),
+                                    [](const auto& stmt) { return is_no_op(stmt); });
+
     if (need_compact) {
-      auto n = CopyOnWrite(op);
-      size_t top = 0;
-      for (size_t i = 0; i < n->seq.size(); ++i) {
-        if (!is_no_op(n->seq[i])) {
-          n->seq.Set(top++, n->seq[i]);
+      Array<Stmt> filtered;
+      for (Stmt stmt : ret->seq) {
+        if (!is_no_op(stmt)) {
+          filtered.push_back(std::move(stmt));
         }
       }
-      if (top == 1) {
-        return n->seq[0];
-      } else {
-        n->seq.resize(top);
-        return Stmt(n);
-      }
+      ret = SeqStmt(filtered);
+    }
+
+    if (ret->size() == 0) {
+      return Evaluate(0);
+    } else if (ret->size() == 1) {
+      return ret->seq[0];
     } else {
-      if (op->size() == 1) {
-        return op->seq[0];
-      } else {
-        return ret;
-      }
+      return std::move(ret);
     }
   }
 
@@ -206,14 +200,12 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
 
     // A write whose destination is known to already contain the
     // values to be written is a no-op.
-    if (auto opt = touch_pattern_.KnownValue(store)) {
-      PrimExpr known_value = opt.value();
-      if (analyzer_->CanProveEqual(store->value, known_value)) {
-        return only_side_effects();
-      }
-    }
+    PrimExpr stores_existing_value = store->value == BufferLoad(store->buffer, store->indices);
 
-    store = Downcast<BufferStore>(Parent::VisitStmt_(store.get()));
+    PrimExpr simplified = touch_pattern_.SimplifyInContext(stores_existing_value, store, analyzer_);
+    if (auto* as_int = as_const_int(simplified); as_int && *as_int) {
+      return only_side_effects();
+    }
 
     if (const BufferLoadNode* load = store->value.as<BufferLoadNode>()) {
       if (load->buffer->data.same_as(store->buffer->data) &&
@@ -221,7 +213,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
           ArrayValueEqual(load->buffer->shape, store->buffer->shape) &&
           ArrayValueEqual(load->buffer->strides, store->buffer->strides) &&
           ArrayValueEqual(load->indices, store->indices)) {
-        return Evaluate(0);
+        return only_side_effects();
       }
     }
 

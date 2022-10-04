@@ -628,7 +628,29 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
         continue;
       }
 
-      PrimExpr predicate = known.predicate(op->indices).value();
+      // TODO: De-dup this lane-handling section with similar code in
+      // VisitBufferAccess.
+      Optional<Var> lane_var = NullOpt;
+      IntImm num_lanes;
+
+      Array<PrimExpr> indices = op->indices.Map([&](const auto& index) {
+        if (index.dtype().lanes() == 1) {
+          return index;
+        } else {
+          ICHECK(!lane_var) << "Multiple indices found with non-scalar values";
+          lane_var = Var("lane", index.dtype().element_of());
+          num_lanes = IntImm(index.dtype().element_of(), index.dtype().lanes());
+          return UnwrapVectorExpr(index, lane_var.value());
+        }
+      });
+
+      PrimExpr predicate = known.predicate(indices).value();
+      std::optional<With<ConstraintContext>> context;
+      if (lane_var.defined()) {
+        Var lanes = lane_var.value();
+        PrimExpr known = (IntImm(lanes.dtype(), 0) <= lanes) && (lanes < num_lanes);
+        context.emplace(analyzer_, known);
+      }
       if (analyzer_->CanProve(predicate)) {
         return known.known_value(op->indices).value();
       }
