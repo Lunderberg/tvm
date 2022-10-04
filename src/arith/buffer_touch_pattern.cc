@@ -381,42 +381,6 @@ bool BufferTouch::IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) c
   }
 }
 
-bool BufferTouch::ProvablyCrossLoopIndependent(const BufferTouch& preceding_in_body,
-                                               const Var& loop_var, Analyzer* analyzer) const {
-  return false;
-  if (touch_type != AccessType::Write ||
-      (preceding_in_body.touch_type != AccessType::Read &&
-       preceding_in_body.touch_type != AccessType::Assume) ||
-      !buffer.same_as(preceding_in_body.buffer) ||
-      predicate.IsDistinctFrom(preceding_in_body.predicate, analyzer)) {
-    return true;
-  }
-
-  ICHECK_EQ(original_indices.size(), preceding_in_body.original_indices.size());
-
-  Var delta("delta", loop_var.dtype());
-  PrimExpr prev_iter = loop_var - delta;
-  With<ConstraintContext> context(analyzer, 0 < delta);
-
-  for (size_t i = 0; i < original_indices.size(); i++) {
-    const PrimExpr& write_index = original_indices[i];
-    PrimExpr read_index =
-        Substitute(preceding_in_body.original_indices[i], [&](const Var& var) -> PrimExpr {
-          if (var.same_as(loop_var)) {
-            return prev_iter;
-          } else {
-            return var;
-          }
-        });
-
-    if (!analyzer->CanProve(read_index != write_index)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
   auto touch_type = (tp.touch_type == BufferTouch::AccessType::Read)     ? "read"
                     : (tp.touch_type == BufferTouch::AccessType::Write)  ? "write"
@@ -673,35 +637,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       }
     }
 
-    bool depends_on_other_iterations = false;
-
-    for (size_t i = 0; i < touches.size(); i++) {
-      for (size_t j = 0; j < i; j++) {
-        const auto* read = touches[i];
-        const auto* write = touches[j];
-
-        if (!write->ProvablyCrossLoopIndependent(*read, op->loop_var, &analyzer_)) {
-          depends_on_other_iterations = true;
-          break;
-        }
-      }
-      if (depends_on_other_iterations) {
-        break;
-      }
-    }
+    bool depends_on_other_iterations = touches.size() > 1;
 
     if (depends_on_other_iterations) {
       std::stringstream d_name;
       d_name << op->loop_var->name_hint << "_delta";
       Var delta(d_name.str(), op->loop_var.dtype());
-      // PrimExpr predicate = op->loop_var > op->min;
-      // MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}}, {},
-      //                 op->loop_var > op->min && op->loop_var < op->min + op->extent);
-
       MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}},
                       op->loop_var > op->min);
-
-      // MarkControlFlow(loop_end, loop_start, {}, {}, op->loop_var > op->min);
     }
   }
 
