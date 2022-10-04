@@ -245,25 +245,6 @@ class BufferTouchPattern {
    */
   PrimExpr SimplifyInContext(PrimExpr expr, const tir::Stmt& context, Analyzer* analyzer) const;
 
-  /* \brief Tests if a loaded value has a known value at the point of the load.
-   *
-   * \param load The load to be examined
-   *
-   * \return An expression for the value being loaded, if it can be
-   * determined from previous writes.  Otherwise, return nullopt.
-   */
-  Optional<PrimExpr> KnownValue(const tir::BufferLoad& load) const;
-
-  /* \brief Attempt to determine the value about to be overwritten.
-   *
-   * \param store The store to be examined
-   *
-   * \return An expression for the value located in the location about
-   * to be written, if it can be determined from previous writes.
-   * Otherwise, return nullopt.
-   */
-  Optional<PrimExpr> KnownValue(const tir::BufferStore& store) const;
-
   /* \brief Remove all touches associated with a specific write
    *
    * If a pass removes a write from the statement being examined, then

@@ -1657,9 +1657,8 @@ class BufferRegionCollector : public ExprVisitor {
 
   static std::vector<Region> Collect(
       const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
-      const std::vector<Optional<PrimExpr>>& exprs, const Map<Var, Range>& all_free_parameters,
-      Analyzer* analyzer) {
-    BufferRegionCollector collector(knowns, all_free_parameters, analyzer);
+      const std::vector<Optional<PrimExpr>>& exprs, Analyzer* analyzer) {
+    BufferRegionCollector collector(knowns, analyzer);
     for (const auto& expr : exprs) {
       if (expr) {
         collector(expr.value());
@@ -1673,8 +1672,8 @@ class BufferRegionCollector : public ExprVisitor {
   using Parent = ExprVisitor;
 
   BufferRegionCollector(const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
-                        const Map<Var, Range>& all_free_parameters, Analyzer* analyzer)
-      : analyzer_(analyzer), knowns_(knowns), all_free_parameters_(all_free_parameters) {
+                        Analyzer* analyzer)
+      : analyzer_(analyzer), knowns_(knowns) {
     regions_.push_back(Region{Bool(true), {}});
   }
 
@@ -1739,7 +1738,6 @@ class BufferRegionCollector : public ExprVisitor {
   Analyzer* analyzer_;
   std::vector<Region> regions_;
   const std::vector<BufferTouchPattern::BufferConstraint>& knowns_;
-  const Map<Var, Range>& all_free_parameters_;
 };
 
 class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
@@ -1951,8 +1949,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         PrimExpr predicate = touch.predicate(axis_vars).value();
 
         PrimExpr known_value = touch.known_value(axis_vars).value();
-        auto regions = BufferRegionCollector::Collect(prior_knowns, {predicate, known_value},
-                                                      all_free_parameters, &analyzer);
+        auto regions =
+            BufferRegionCollector::Collect(prior_knowns, {predicate, known_value}, &analyzer);
 
         for (const auto& region : regions) {
           PrimExpr updated_predicate = BufferRegionValueReplacer::Apply(
@@ -2097,57 +2095,6 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
   expr = analyzer->Simplify(expr);
   return expr;
 }
-
-Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferStore& store) const {
-  // TODO: Replace calls with SimplifyInContext
-  return NullOpt;
-
-  // Array<PrimExpr> values;
-
-  // for (auto it = touch_points_.rbegin(); it != touch_points_.rend(); it++) {
-  //   if (it->node.same_as(store)) {
-  //     if (auto opt = KnownValue(it, store->indices)) {
-  //       values.push_back(opt.value());
-  //     } else {
-  //       // If a store based on this statement doesn't have a known
-  //       // value, then the store overall doesn't have a known value.
-  //       return NullOpt;
-  //     }
-  //   }
-  // }
-
-  // // For the store to have a known value, all touches resulting from
-  // // this statement must result in the same value.
-  // //
-  // // TODO: Handle multiple access from a single statement
-  // // (e.g. start/finish of while loop) that may have the same result.
-  // // Should attempt to prove that each touch was preceded by the same
-  // // known value.
-  // if (values.size() == 1) {
-  //   return values[0];
-  // } else {
-  //   return NullOpt;
-  // }
-}
-
-Optional<PrimExpr> BufferTouchPattern::KnownValue(const tir::BufferLoad& load) const {
-  return NullOpt;
-}
-
-// Optional<PrimExpr> BufferTouchPattern::KnownValue(
-//     std::vector<BufferTouch>::const_reverse_iterator access_iter,
-//     const Array<PrimExpr>& indices) const {
-//   for (auto it = access_iter + 1; it != touch_points_.rend(); it++) {
-//     // If a previous write touched the same indices, then we can use
-//     // the recorded values at those indices.
-//     if ((it->touch_type == BufferTouch::AccessType::Write ||
-//          it->touch_type == BufferTouch::AccessType::Assume) &&
-//         access_iter->IsSubsetOf(*it)) {
-//       return it->known_value(indices);
-//     }
-//   }
-//   return NullOpt;
-// }
 
 void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
   touch_points_.erase(std::remove_if(touch_points_.begin(), touch_points_.end(),
