@@ -355,7 +355,7 @@ class BufferTouchPattern {
         PrimExpr a_condition, PrimExpr b_condition, Analyzer* analyzer);
   };
 
-  struct ControlFlowPredecessor {
+  struct ControlFlowEdge {
     /* \brief The source block of the control flow edge
      *
      * Lookup index into `control_flow_`
@@ -368,13 +368,6 @@ class BufferTouchPattern {
      * edge from the end of a loop to the beginning of the loop.
      */
     Map<Var, PrimExpr> var_remap;
-
-    /*! Range of variables introduced by var_remap
-     *
-     * For example, when replacing `i` with `i-delta`, the new
-     * variable `delta` has bounds `[1, i-1]`.
-     */
-    Map<Var, Range> remap_var_ranges;
 
     /*! \brief Predicate that must to true when following this edge
      *
@@ -403,7 +396,7 @@ class BufferTouchPattern {
     std::vector<size_t> successors;
 
     /* \brief The blocks that occur before this block */
-    std::vector<ControlFlowPredecessor> predecessors;
+    std::vector<ControlFlowEdge> predecessors;
   };
   friend std::ostream& operator<<(std::ostream& os, const ControlFlowBlock& pattern);
 

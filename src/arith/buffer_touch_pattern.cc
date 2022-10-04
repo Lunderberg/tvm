@@ -821,7 +821,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     auto before_loop = CurrentControlBlock();
     auto loop_start = AppendControlBlock("start of loop over " + op->loop_var->name_hint);
-    MarkControlFlow(before_loop, loop_start, {}, {}, op->loop_var == op->min);
+    MarkControlFlow(before_loop, loop_start, {}, op->loop_var == op->min);
 
     BindActiveLoopVar binding(this, op->loop_var, op->min, op->extent);
     Parent::VisitStmt_(op);
@@ -879,7 +879,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       // MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}}, {},
       //                 op->loop_var > op->min && op->loop_var < op->min + op->extent);
 
-      MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}}, {},
+      MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}},
                       op->loop_var > op->min);
 
       // MarkControlFlow(loop_end, loop_start, {}, {}, op->loop_var > op->min);
@@ -1199,14 +1199,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   /* \brief Mark a possible control from one block to another */
   void MarkControlFlow(size_t from_block, size_t to_block, Map<Var, PrimExpr> var_remap = {},
-                       Map<Var, Range> remap_var_ranges = {},
                        Optional<PrimExpr> predicate = NullOpt) {
     ICHECK_LE(from_block, out_->control_flow_.size());
     ICHECK_LE(to_block, out_->control_flow_.size());
 
     out_->control_flow_[from_block].successors.push_back(to_block);
-    out_->control_flow_[to_block].predecessors.push_back(BufferTouchPattern::ControlFlowPredecessor{
-        from_block, var_remap, remap_var_ranges, predicate});
+    out_->control_flow_[to_block].predecessors.push_back(
+        BufferTouchPattern::ControlFlowEdge{from_block, var_remap, predicate});
   }
 
   struct BindActiveLoopVar {
@@ -1778,12 +1777,6 @@ Map<Var, Range> BufferTouchPattern::GetAllFreeParameters() const {
   for (const auto& block : control_flow_) {
     for (const auto& touch : block.touch_points) {
       for (const auto& pair : touch.predicate.free_parameters_) {
-        ret.Set(pair.first, pair.second);
-      }
-    }
-
-    for (const auto& pred : block.predecessors) {
-      for (const auto& pair : pred.remap_var_ranges) {
         ret.Set(pair.first, pair.second);
       }
     }
