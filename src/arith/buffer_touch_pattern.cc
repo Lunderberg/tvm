@@ -1271,13 +1271,6 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
   return MergeDisjointConstraints(std::move(consistent_constraints), analyzer);
 }
 
-namespace {
-
-bool is_const_false(const PrimExpr& expr) {
-  auto* as_int = as_const_int(expr);
-  return as_int && !(*as_int);
-}
-
 class BufferRegionCollector : public ExprVisitor {
  public:
   struct Region {
@@ -1331,7 +1324,7 @@ class BufferRegionCollector : public ExprVisitor {
       PrimExpr touch_predicate = constraint.predicate(op->indices).value();
       touch_predicate = SimplifyAsAndOfOrs(touch_predicate, analyzer_);
 
-      if (!is_const_false(touch_predicate)) {
+      if (!is_zero(touch_predicate)) {
         Optional<PrimExpr> known_value = constraint.known_value(op->indices);
         new_regions.push_back(Known{touch_predicate, known_value});
 
@@ -1343,7 +1336,7 @@ class BufferRegionCollector : public ExprVisitor {
     if (new_regions.size()) {
       Analyzer local_analyzer;
 
-      if (!is_const_false(unknown_region)) {
+      if (!is_zero(unknown_region)) {
         new_regions.insert(new_regions.begin(), Known{unknown_region, NullOpt});
       }
 
@@ -1353,7 +1346,7 @@ class BufferRegionCollector : public ExprVisitor {
           PrimExpr intersection =
               SimplifyAsAndOfOrs(prev_region.region_predicate && new_region.predicate, analyzer_);
 
-          if (!is_const_false(intersection)) {
+          if (!is_zero(intersection)) {
             Region merged{intersection, prev_region.known_values};
             merged.known_values[op] = new_region.value;
             updated_regions.push_back(std::move(merged));
@@ -1404,7 +1397,6 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
 
   const std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>>& known_values_;
 };
-}  // namespace
 
 Map<Var, Range> BufferTouchPattern::GetAllFreeParameters() const {
   Map<Var, Range> ret;
@@ -1574,7 +1566,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
           PrimExpr updated_value =
               BufferRegionValueReplacer::Apply(region.known_values, known_value, &analyzer);
 
-          if (!is_const_false(updated_predicate)) {
+          if (!is_zero(updated_predicate)) {
             if (HasBufferLoad(updated_value)) {
               BufferTouchPattern::BufferConstraint overwrite{
                   touch.buffer, Predicate(axis_vars, updated_predicate),
