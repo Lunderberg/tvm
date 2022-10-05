@@ -171,7 +171,6 @@ class BufferTouch {
 
  private:
   void CheckSameAxisVars(const BufferTouch& other) const;
-  PrimExpr FreeParameterConstraints() const;
 
   tir::Buffer buffer;
   Array<tir::Var> axis_vars;
@@ -352,9 +351,6 @@ class BufferTouchPattern {
 
   Map<Var, Range> free_predicate_parameters_;
   Map<Var, Range> iterator_ranges_;
-
-  /*! \brief All free parameters across all constraint predicates */
-  Map<Var, Range> GetAllFreeParameters() const;
 
   /* \brief Assumptions that do not depend on buffer values */
   std::vector<PrimExpr> non_buffer_assumptions_;

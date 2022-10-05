@@ -274,8 +274,6 @@ BufferTouch::BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr pred
 bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
     CheckSameAxisVars(other);
-    With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-    With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
     With<ConstraintContext> constraint(analyzer, predicate);
 
     return analyzer->CanProve(other.predicate);
@@ -287,8 +285,6 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const
 bool BufferTouch::IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
     CheckSameAxisVars(other);
-    With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-    With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
     With<ConstraintContext> constraint(analyzer, predicate);
 
     return analyzer->CanProve(!other.predicate);
@@ -302,21 +298,6 @@ void BufferTouch::CheckSameAxisVars(const BufferTouch& other) const {
   for (size_t i = 0; i < axis_vars.size(); i++) {
     ICHECK(axis_vars[i].same_as(other.axis_vars[i]));
   }
-}
-
-PrimExpr BufferTouch::FreeParameterConstraints() const {
-  PrimExpr constraint = Bool(true);
-  for (const auto& pair : free_predicate_parameters) {
-    const Var& var = pair.first;
-    const Range& range = pair.second;
-    if (is_const_int(range->extent, 1)) {
-      constraint = constraint && (var == range->min);
-    } else {
-      constraint = constraint && (var >= range->min);
-      constraint = constraint && (var < range->min + range->extent);
-    }
-  }
-  return constraint;
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
@@ -1397,18 +1378,6 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
 
   const std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>>& known_values_;
 };
-
-Map<Var, Range> BufferTouchPattern::GetAllFreeParameters() const {
-  Map<Var, Range> ret;
-  for (const auto& block : control_flow_) {
-    for (const auto& touch : block.touch_points) {
-      for (const auto& pair : touch.free_predicate_parameters) {
-        ret.Set(pair.first, pair.second);
-      }
-    }
-  }
-  return ret;
-}
 
 void BufferTouchPattern::ForwardPropagateKnownValues() {
   // Values to visit when searching.  Using a std::set to
