@@ -651,10 +651,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }());
     MarkControlFlow(branch_start, then_start);
     {
-      With<ConstraintContext> constraint(&analyzer_, real_condition);
-      auto func = EnterConstraint(real_condition);
+      InternalConstraintContext context(this, real_condition);
       this->VisitStmt(op->then_case);
-      func();
     }
     auto then_end = CurrentControlBlock();
 
@@ -669,10 +667,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       MarkControlFlow(branch_start, else_start);
 
       auto negation = analyzer_.rewrite_simplify(Not(real_condition));
-      With<ConstraintContext> constraint(&analyzer_, negation);
-      auto func = EnterConstraint(negation);
+      InternalConstraintContext context(this, real_condition);
       this->VisitStmt(op->else_case);
-      func();
 
       else_end = CurrentControlBlock();
     }
@@ -887,33 +883,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return predicate;
   }
 
-  PrimExpr IndexRangePredicate(const Array<Var>& index_variables,
-                               const Array<PrimExpr>& index_expressions) {
-    ICHECK_EQ(index_variables.size(), index_expressions.size());
-
-    PrimExpr predicate = Bool(true);
-
-    for (size_t i = 0; i < index_expressions.size(); i++) {
-      PrimExpr index = index_expressions[i];
-      Var var = index_variables[i];
-
-      IntSet interval = analyzer_.int_set(index);
-
-      if (interval.IsSinglePoint()) {
-        predicate = predicate && (var == analyzer_.Simplify(interval.PointValue()));
-      } else {
-        if (interval.HasLowerBound()) {
-          predicate = predicate && (var >= analyzer_.Simplify(interval.min()));
-        }
-        if (interval.HasUpperBound()) {
-          predicate = predicate && (var <= analyzer_.Simplify(interval.max()));
-        }
-      }
-    }
-
-    return predicate;
-  }
-
   /* \brief Add a new control block, returning its index */
   size_t AppendControlBlock(std::string name) {
     size_t index = out_->control_flow_.size();
@@ -934,6 +903,40 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     out_->control_flow_[to_block].predecessors.push_back(
         BufferTouchPattern::ControlFlowEdge{from_block, var_remap, predicate});
   }
+
+  // Internal utility, context manager for entering/leaving a scoped constraint
+  struct InternalConstraintContext {
+    InternalConstraintContext(BufferTouchExtractor* self, PrimExpr constraint)
+        : self(self), analyzer_context(&self->analyzer_, constraint) {
+      old_num_constraints = self->conditions_.size();
+
+      auto side_effect = tir::SideEffect(constraint);
+      if (side_effect <= tir::CallEffectKind::kPure) {
+        self->conditions_.push_back(constraint);
+      } else if (side_effect <= tir::CallEffectKind::kReadState) {
+        self->Assume(constraint, false);
+      }
+
+      new_num_constraints = self->conditions_.size();
+    }
+    ~InternalConstraintContext() {
+      ICHECK_EQ(self->conditions_.size(), new_num_constraints)
+          << "Internal error: Each condition should only be popped once.";
+      self->conditions_.erase(self->conditions_.begin() + old_num_constraints,
+                              self->conditions_.end());
+    }
+
+    BufferTouchExtractor* self{nullptr};
+    With<ConstraintContext> analyzer_context;
+    size_t old_num_constraints{0};
+    size_t new_num_constraints{0};
+
+    // Disable default-generated copy/move assignment and constructors
+    InternalConstraintContext(const InternalConstraintContext&) = delete;
+    InternalConstraintContext& operator=(const InternalConstraintContext&) = delete;
+    InternalConstraintContext(InternalConstraintContext&&) = delete;
+    InternalConstraintContext& operator=(InternalConstraintContext&&) = delete;
+  };
 
   // Internal utility, context manager for tracking a loop
   struct BindActiveLoopVar {
