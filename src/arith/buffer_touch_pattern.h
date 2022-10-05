@@ -58,7 +58,6 @@ class ParametrizedExpression {
   Optional<PrimExpr> expression_;
 
   // TODO: Avoid having this as a friend class everywhere.
-  friend class BufferConstraintSubstituter;
   friend class BufferTouchPattern;
 };
 
@@ -190,7 +189,6 @@ class BufferTouch {
   AccessType touch_type;
 
   friend class BufferTouchPattern;
-  friend class BufferConstraintSubstituter;
 };
 
 class BufferTouchPattern {
@@ -367,7 +365,6 @@ class BufferTouchPattern {
   /* \brief Assumptions that do not depend on buffer values */
   std::vector<PrimExpr> non_buffer_assumptions_;
 
-  friend class BufferConstraintSubstituter;
   friend class BufferTouchExtractor;
 };
 
