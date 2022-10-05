@@ -168,10 +168,6 @@ Predicate Predicate::Difference(const Predicate& other, Analyzer* analyzer) cons
   With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
   With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
 
-  // PrimExpr new_predicate_expr = analyzer.Simplify(expression_.value() && !other_predicate);
-  // new_predicate_expr = ConvertToAndOfOrs(new_predicate_expr);
-  // new_predicate_expr = analyzer.Simplify(new_predicate_expr);
-
   PrimExpr new_predicate_expr =
       SimplifyAsAndOfOrs(expression_.value() && !other_predicate, analyzer);
 
@@ -220,18 +216,11 @@ Predicate Predicate::Union(const Predicate& other, Analyzer* analyzer) const {
     return Predicate(parameter_vars_, NullOpt, {});
   }
 
-  // if (this->IsSubsetOf(other, analyzer)) {
-  //   return (*this);
-  // } else if (other.IsSubsetOf(*this, analyzer)) {
-  //   return other;
-  // }
-
   PrimExpr other_predicate = other(parameter_vars_).value();
 
   With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
   With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
 
-  // PrimExpr new_predicate_expr = analyzer->Simplify(expression_.value() || other_predicate);
   PrimExpr new_predicate_expr =
       SimplifyAsAndOfOrs(expression_.value() || other_predicate, analyzer);
 
@@ -796,14 +785,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       }
       expr = Substitute(expr, loop_var_to_axis_var);
 
-      // if (Optional<PrimExpr> without_buffer_load =
-      //         BufferConstraintSubstituter(out_->touch_points_, -1, &analyzer_)
-      //             .WithoutBufferLoad(expr)) {
-      //   expr = without_buffer_load.value();
-      // } else {
-      //   return NullOpt;
-      // }
-
       expr = arg_analyzer->Simplify(expr);
 
       return expr;
@@ -882,8 +863,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       Var var = index_variables[i];
 
       relations.push_back(var == Substitute(index, let_bindings_using_loop_));
-
-      // IntSet interval = analyzer_.int_set(index);
     }
 
     Array<Var> loop_vars;
@@ -892,11 +871,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     for (const auto& loop_entry : active_loop_iterators_) {
       loop_vars.push_back(loop_entry.loop_var);
       ranges.Set(loop_entry.loop_var, loop_entry.loop_range);
-
-      // IntSet loop_set = analyzer_.int_set(loop_entry.loop_var);
-      // auto max = loop_set.HasUpperBound() ? loop_set.max() + 1 : loop_set.max();
-      // Range loop_range = Range(loop_set.min(), max);
-      // ranges.Set(loop_entry.loop_var, loop_range);
     }
 
     IntConstraints system(loop_vars, ranges, relations);
@@ -1416,7 +1390,6 @@ class BufferRegionCollector : public ExprVisitor {
       }
 
       PrimExpr touch_predicate = constraint.predicate(op->indices).value();
-      // touch_predicate = analyzer_->Simplify(touch_predicate;)
       touch_predicate = SimplifyAsAndOfOrs(touch_predicate, analyzer_);
 
       if (!is_const_false(touch_predicate)) {
