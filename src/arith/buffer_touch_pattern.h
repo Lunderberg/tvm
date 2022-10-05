@@ -156,8 +156,7 @@ class BufferTouch {
   };
 
   BufferTouch(tir::Buffer buffer, Predicate predicate, AccessType touch_type,
-              ParametrizedExpression known_value, Array<PrimExpr> original_indices,
-              Map<Var, PrimExpr> loop_var_to_axis_var, ObjectRef node);
+              ParametrizedExpression known_value);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -185,17 +184,6 @@ class BufferTouch {
   Predicate predicate;
   AccessType touch_type;
   ParametrizedExpression known_value;
-  Array<PrimExpr> original_indices;
-
-  // Map usable to substitute out loop variables, resulting in
-  // expressions in terms of the buffer axis variables.
-  Map<Var, PrimExpr> loop_var_to_axis_var;
-
-  // The BufferLoad or BufferStore object that caused this touch.
-  ObjectRef node;
-
-  // The statement in which this touch occurred.
-  tir::Stmt stmt;
 
   friend class BufferTouchPattern;
   friend class BufferConstraintSubstituter;

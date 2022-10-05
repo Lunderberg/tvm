@@ -355,15 +355,8 @@ std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
 }
 
 BufferTouch::BufferTouch(Buffer buffer, Predicate predicate, AccessType touch_type,
-                         ParametrizedExpression known_value, Array<PrimExpr> original_indices,
-                         Map<Var, PrimExpr> loop_var_to_axis_var, ObjectRef node)
-    : buffer(buffer),
-      predicate(predicate),
-      touch_type(touch_type),
-      known_value(known_value),
-      original_indices(original_indices),
-      loop_var_to_axis_var(loop_var_to_axis_var),
-      node(node) {}
+                         ParametrizedExpression known_value)
+    : buffer(buffer), predicate(predicate), touch_type(touch_type), known_value(known_value) {}
 
 bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
@@ -846,8 +839,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Predicate predicate(index_variables, predicate_expr, free_params);
     ParametrizedExpression known_value(index_variables, known_value_expr);
 
-    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value, node->indices,
-                             loop_var_to_axis_var, node);
+    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value);
 
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
   }
