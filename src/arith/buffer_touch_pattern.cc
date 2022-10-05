@@ -262,12 +262,10 @@ std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
 }
 
 BufferTouch::BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr predicate,
-                         Map<tir::Var, Range> free_parameters, AccessType touch_type,
-                         PrimExpr value)
+                         AccessType touch_type, PrimExpr value)
     : buffer(buffer),
       axis_vars(axis_vars),
       predicate(predicate),
-      free_predicate_parameters(free_parameters),
       value(value),
       touch_type(touch_type) {}
 
@@ -658,7 +656,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
 
     Map<Var, PrimExpr> loop_var_to_axis_var = transform->src_to_dst;
-    Map<Var, Range> free_params = transform->dst->ranges;
+    const Map<Var, Range>& free_params = transform->dst->ranges;
 
     for (const auto& pair : free_params) {
       out_->free_predicate_parameters_.Set(pair.first, pair.second);
@@ -671,13 +669,9 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // The arith::SolveLinearEquation sometimes introduces free
     // parameters with extent of one.  Filtering them out here avoids
     // needing to track them through later simplifications.
-    bool has_extent_one_params = false;
-    for (const auto& pair : free_params) {
-      if (is_const_int(pair.second->extent, 1)) {
-        has_extent_one_params = true;
-        break;
-      }
-    }
+    bool has_extent_one_params =
+        std::any_of(free_params.begin(), free_params.end(),
+                    [](const auto& pair) { return is_one(pair.second->extent); });
     if (has_extent_one_params) {
       Analyzer analyzer;
       analyzer.Bind(free_params);
@@ -686,14 +680,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
         new_map.Set(pair.first, analyzer.Simplify(pair.second));
       }
       loop_var_to_axis_var = new_map;
-
-      Map<Var, Range> new_params;
-      for (const auto& pair : free_params) {
-        if (!is_const_int(pair.second->extent, 1)) {
-          new_params.Set(pair.first, pair.second);
-        }
-      }
-      free_params = new_params;
     }
 
     // Normalization function, applied to both the predicate and the
@@ -729,7 +715,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     PrimExpr predicate_expr =
         local_analyzer.Simplify(transform_predicate && scope_predicate && loop_predicate);
 
-    BufferTouch buffer_touch(node->buffer, index_variables, predicate_expr, free_params, touch_type,
+    BufferTouch buffer_touch(node->buffer, index_variables, predicate_expr, touch_type,
                              known_value_expr);
 
     out_->control_flow_.back().touch_points.push_back(buffer_touch);

@@ -147,8 +147,8 @@ class BufferTouch {
     Assume,
   };
 
-  BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr predicate,
-              Map<tir::Var, Range> free_parameters, AccessType touch_type, PrimExpr known_value);
+  BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr predicate, AccessType touch_type,
+              PrimExpr known_value);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -175,7 +175,6 @@ class BufferTouch {
   tir::Buffer buffer;
   Array<tir::Var> axis_vars;
   PrimExpr predicate;
-  Map<tir::Var, Range> free_predicate_parameters;
   PrimExpr value;
 
   AccessType touch_type;
