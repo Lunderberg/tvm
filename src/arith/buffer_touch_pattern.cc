@@ -344,13 +344,24 @@ std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
   return os;
 }
 
-BufferTouch::BufferTouch(Buffer buffer, Predicate predicate, AccessType touch_type,
-                         ParametrizedExpression known_value)
-    : buffer(buffer), predicate(predicate), touch_type(touch_type), known_value(known_value) {}
+BufferTouch::BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr predicate,
+                         Map<tir::Var, Range> free_parameters, AccessType touch_type,
+                         PrimExpr value)
+    : buffer(buffer),
+      axis_vars(axis_vars),
+      predicate(predicate),
+      free_predicate_parameters(free_parameters),
+      value(value),
+      touch_type(touch_type) {}
 
 bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
-    return this->predicate.IsSubsetOf(other.predicate, analyzer);
+    CheckSameAxisVars(other);
+    With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
+    With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
+    With<ConstraintContext> constraint(analyzer, predicate);
+
+    return analyzer->CanProve(other.predicate);
   } else {
     return false;
   }
@@ -358,10 +369,37 @@ bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const
 
 bool BufferTouch::IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
-    return this->predicate.IsDistinctFrom(other.predicate, analyzer);
+    CheckSameAxisVars(other);
+    With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
+    With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
+    With<ConstraintContext> constraint(analyzer, predicate);
+
+    return analyzer->CanProve(!other.predicate);
   } else {
     return true;
   }
+}
+
+void BufferTouch::CheckSameAxisVars(const BufferTouch& other) const {
+  ICHECK_EQ(axis_vars.size(), other.axis_vars.size());
+  for (size_t i = 0; i < axis_vars.size(); i++) {
+    ICHECK(axis_vars[i].same_as(other.axis_vars[i]));
+  }
+}
+
+PrimExpr BufferTouch::FreeParameterConstraints() const {
+  PrimExpr constraint = Bool(true);
+  for (const auto& pair : free_predicate_parameters) {
+    const Var& var = pair.first;
+    const Range& range = pair.second;
+    if (is_const_int(range->extent, 1)) {
+      constraint = constraint && (var == range->min);
+    } else {
+      constraint = constraint && (var >= range->min);
+      constraint = constraint && (var < range->min + range->extent);
+    }
+  }
+  return constraint;
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
@@ -369,12 +407,8 @@ std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
                     : (tp.touch_type == BufferTouch::AccessType::Write)  ? "write"
                     : (tp.touch_type == BufferTouch::AccessType::Assume) ? "assume"
                                                                          : "???";
-  os << "BufferTouch(" << tp.buffer->name << ", " << touch_type << ", " << tp.predicate;
-  if (tp.known_value.IsDefined()) {
-    os << ", known_value = " << tp.known_value;
-  }
-
-  os << ")";
+  os << "BufferTouch(" << tp.buffer->name << ", " << touch_type << ", " << tp.predicate
+     << ", value = " << tp.value << ")";
   return os;
 }
 
@@ -793,9 +827,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     PrimExpr predicate_expr =
         local_analyzer.Simplify(transform_predicate && scope_predicate && loop_predicate);
 
-    Predicate predicate(index_variables, predicate_expr, free_params);
-    ParametrizedExpression known_value(index_variables, known_value_expr);
-    BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value);
+    BufferTouch buffer_touch(node->buffer, index_variables, predicate_expr, free_params, touch_type,
+                             known_value_expr);
 
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
   }
@@ -1462,7 +1495,7 @@ Map<Var, Range> BufferTouchPattern::GetAllFreeParameters() const {
   Map<Var, Range> ret;
   for (const auto& block : control_flow_) {
     for (const auto& touch : block.touch_points) {
-      for (const auto& pair : touch.predicate.free_parameters_) {
+      for (const auto& pair : touch.free_predicate_parameters) {
         ret.Set(pair.first, pair.second);
       }
     }
@@ -1483,7 +1516,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   for (size_t i = 0; i < control_flow_.size(); i++) {
     bool has_known_value = false;
     for (const auto& touch : control_flow_[i].touch_points) {
-      if (touch.known_value.IsDefined() && !HasBufferLoad(touch.known_value.expression_.value())) {
+      if (!HasBufferLoad(touch.value)) {
         has_known_value = true;
         break;
       }
@@ -1612,10 +1645,10 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
           continue;
         }
 
-        Array<Var> axis_vars = touch.known_value.parameter_vars_;
-        PrimExpr predicate = touch.predicate(axis_vars).value();
+        Array<Var> axis_vars = touch.axis_vars;
+        PrimExpr predicate = touch.predicate;
 
-        PrimExpr known_value = touch.known_value(axis_vars).value();
+        PrimExpr known_value = touch.value;
         auto regions =
             BufferRegionCollector::Collect(prior_knowns, {predicate, known_value}, &analyzer);
 
@@ -1630,8 +1663,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
           if (!is_const_false(updated_predicate)) {
             Map<tir::Var, Range> free_parameters;
             for (const Var& var : UndefinedVars(updated_predicate)) {
-              auto it = touch.predicate.free_parameters_.find(var);
-              if (it != touch.predicate.free_parameters_.end()) {
+              auto it = touch.free_predicate_parameters.find(var);
+              if (it != touch.free_predicate_parameters.end()) {
                 free_parameters.Set((*it).first, (*it).second);
               }
             }

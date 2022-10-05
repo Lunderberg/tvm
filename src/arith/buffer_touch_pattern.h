@@ -155,8 +155,8 @@ class BufferTouch {
     Assume,
   };
 
-  BufferTouch(tir::Buffer buffer, Predicate predicate, AccessType touch_type,
-              ParametrizedExpression known_value);
+  BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr predicate,
+              Map<tir::Var, Range> free_parameters, AccessType touch_type, PrimExpr known_value);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -178,12 +178,16 @@ class BufferTouch {
   friend std::ostream& operator<<(std::ostream& os, const BufferTouch& expr);
 
  private:
-  tir::Buffer buffer;
+  void CheckSameAxisVars(const BufferTouch& other) const;
+  PrimExpr FreeParameterConstraints() const;
 
-  // TODO: Merge predicate/known_value into this class?
-  Predicate predicate;
+  tir::Buffer buffer;
+  Array<tir::Var> axis_vars;
+  PrimExpr predicate;
+  Map<tir::Var, Range> free_predicate_parameters;
+  PrimExpr value;
+
   AccessType touch_type;
-  ParametrizedExpression known_value;
 
   friend class BufferTouchPattern;
   friend class BufferConstraintSubstituter;
