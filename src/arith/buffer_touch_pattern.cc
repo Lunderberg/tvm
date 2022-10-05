@@ -31,6 +31,7 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/stmt_functor.h>
 
+#include <numeric>
 #include <queue>
 #include <sstream>
 #include <vector>
@@ -536,7 +537,10 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // constraints.  Will need to split out the BufferConstraint from
     // the clearing of previous in KnownBufferValue.
 
-    VisitAccess(load, BufferTouch::AccessType::Assume, value, additional_predicate);
+    {
+      InternalConstraintContext context(this, additional_predicate);
+      VisitAccess(load, BufferTouch::AccessType::Assume, value);
+    }
     // Appending a control block ensures that all control blocks have
     // at most one statement that changes the known buffer contents.
     auto prev_block = CurrentControlBlock();
@@ -693,15 +697,13 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   template <typename BufferAccess>
   void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type,
-                   Optional<PrimExpr> known_value_expr = NullOpt,
-                   Optional<PrimExpr> additional_predicate = NullOpt) {
-    auto index_variables = MakeIndexVariables(node->indices);
+                   PrimExpr known_value_expr) {
+    auto index_variables = MakeIndexVariables(node->buffer, node->indices);
 
     Optional<Var> lane_var = NullOpt;
     IntImm num_lanes;
 
-    Array<PrimExpr> index_expressions = node->indices;
-    index_expressions.MutateByApply([&](const auto& index) {
+    Array<PrimExpr> index_expressions = node->indices.Map([&](const auto& index) {
       if (index.dtype().lanes() == 1) {
         return index;
       } else {
@@ -729,10 +731,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // Constraints imposed on the axis variable (min/max bounds) and
     // on free parameters (relationships relative to axis vars).
     // These are used as part of the access predicate.
-    PrimExpr axis_var_relations = Bool(true);
-    for (const auto& expr : transform->dst->relations) {
-      axis_var_relations = axis_var_relations && expr;
-    }
 
     // The arith::SolveLinearEquation sometimes introduces free
     // parameters with extent of one.  Filtering them out here avoids
@@ -764,16 +762,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     // Normalization function, applied to both the predicate and the
     // known value.  Converts from an expression in terms of loop
-    // iterators which may contain BufferLoad to an expression in
-    // terms of buffer indices which may not contain BufferLoad.  If
-    // this conversion cannot be done, returns None.
-    auto normalize_expr = [&](const Optional<PrimExpr>& opt,
-                              Analyzer* arg_analyzer) -> Optional<PrimExpr> {
-      if (!opt) {
-        return NullOpt;
-      }
-
-      PrimExpr expr = opt.value();
+    // iterators to an expression in terms of buffer indices.
+    auto normalize_expr = [&](PrimExpr expr) -> PrimExpr {
       expr = Substitute(expr, let_bindings_using_loop_);
 
       if (lane_var) {
@@ -781,41 +771,30 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       }
       expr = Substitute(expr, loop_var_to_axis_var);
 
-      expr = arg_analyzer->Simplify(expr);
-
       return expr;
     };
 
+    known_value_expr = analyzer_.Simplify(normalize_expr(known_value_expr));
+
     // The full predicate is composed of the values required to reach
     // the scope of the BufferStore or builtin::assume(), any bounds
-    // implied by the indices used to access the buffer, and any
-    // additional statements resulting from unpacking the expression
-    // contained in builtin::assume().
-    Optional<PrimExpr> predicate_expr =
-        axis_var_relations && additional_predicate.value_or(Bool(true));
+    // implied by solving for the axis variables, and any additional
+    // statements resulting from unpacking the expression contained in
+    // builtin::assume().
+    PrimExpr scope_predicate = normalize_expr(CurrentScopePredicate());
+    PrimExpr transform_predicate = normalize_expr(
+        std::accumulate(transform->dst->relations.begin(), transform->dst->relations.end(),
+                        PrimExpr(Bool(true)), [](PrimExpr a, PrimExpr b) { return a && b; }));
+    PrimExpr loop_predicate = CurrentLoopPredicate(loop_var_to_axis_var);
 
-    predicate_expr = normalize_expr(predicate_expr, &analyzer_);
-    known_value_expr = normalize_expr(known_value_expr, &analyzer_);
-
+    // Deliberately use an analyzer without scope-based information,
+    // to avoid simplifying `scope_predicate` to True.
     Analyzer local_analyzer;
-    PrimExpr scope_predicate = normalize_expr(CurrentScopePredicate(), &local_analyzer).value();
-
-    PrimExpr loop_predicate = Bool(true);
-    for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
-      auto expr_it = loop_var_to_axis_var.find(it->loop_var);
-      ICHECK(expr_it != loop_var_to_axis_var.end());
-      PrimExpr loop_expr = (*expr_it).second;
-
-      loop_predicate =
-          (it->loop_var >= loop_expr) || ((it->loop_var == loop_expr) && loop_predicate);
-    }
-
-    predicate_expr =
-        local_analyzer.Simplify(predicate_expr.value() && scope_predicate && loop_predicate);
+    PrimExpr predicate_expr =
+        local_analyzer.Simplify(transform_predicate && scope_predicate && loop_predicate);
 
     Predicate predicate(index_variables, predicate_expr, free_params);
     ParametrizedExpression known_value(index_variables, known_value_expr);
-
     BufferTouch buffer_touch(node->buffer, predicate, touch_type, known_value);
 
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
@@ -838,13 +817,19 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
   }
 
-  Array<Var> MakeIndexVariables(const Array<PrimExpr>& indices) {
+  Array<Var> MakeIndexVariables(const Buffer& buf, const Array<PrimExpr>& indices) {
+    if (auto it = axis_var_lookup_.find(buf.get()); it != axis_var_lookup_.end()) {
+      return it->second;
+    }
+
     Array<Var> vars;
     for (size_t i = 0; i < indices.size(); i++) {
       std::stringstream ss;
-      ss << "i_" << i;
+      ss << buf->name << "_axis_" << i;
       vars.push_back(Var(ss.str(), indices[i].dtype().element_of()));
     }
+
+    axis_var_lookup_[buf.get()] = vars;
     return vars;
   }
 
@@ -881,6 +866,21 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       predicate = predicate && condition;
     }
     return predicate;
+  }
+
+  // Generate a boolean expression represents having reached the
+  // current loop iteration.
+  PrimExpr CurrentLoopPredicate(Map<Var, PrimExpr>& loop_var_to_axis_var) const {
+    PrimExpr loop_predicate = Bool(true);
+    for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
+      auto expr_it = loop_var_to_axis_var.find(it->loop_var);
+      ICHECK(expr_it != loop_var_to_axis_var.end());
+      PrimExpr loop_expr = (*expr_it).second;
+
+      loop_predicate =
+          (it->loop_var >= loop_expr) || ((it->loop_var == loop_expr) && loop_predicate);
+    }
+    return loop_predicate;
   }
 
   /* \brief Add a new control block, returning its index */
@@ -1000,6 +1000,9 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   // Track in order to know what conditions limit the buffer access
   std::vector<PrimExpr> conditions_;
+
+  // Cache of previously used axis vars
+  std::unordered_map<const BufferNode*, Array<Var>> axis_var_lookup_;
 
   // Track in order to know what statement initiated the buffer access
   Stmt current_stmt_;
