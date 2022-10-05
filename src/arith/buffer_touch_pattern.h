@@ -65,8 +65,7 @@ class ParametrizedExpression {
 // parameters.
 class Predicate : public ParametrizedExpression {
  public:
-  Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression,
-            Map<tir::Var, Range> free_parameters);
+  Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -137,13 +136,7 @@ class Predicate : public ParametrizedExpression {
    *
    * The returned predicate will be true for a subset of this predicate.
    */
-  Predicate WithoutFreeParameters() const;
-
-  /* \brief Boolean expression defining ranges of free parameters */
-  PrimExpr FreeParameterConstraints() const;
-
-  // private:
-  Map<tir::Var, Range> free_parameters_;
+  Predicate WithoutFreeParameters(const Map<Var, Range>& free_params) const;
 };
 
 class BufferTouch {
@@ -357,6 +350,7 @@ class BufferTouchPattern {
    */
   std::unordered_map<const tir::StmtNode*, size_t> control_flow_lookup_;
 
+  Map<Var, Range> free_predicate_parameters_;
   Map<Var, Range> iterator_ranges_;
 
   /*! \brief All free parameters across all constraint predicates */

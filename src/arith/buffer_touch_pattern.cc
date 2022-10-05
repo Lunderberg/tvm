@@ -115,9 +115,8 @@ std::ostream& operator<<(std::ostream& os, const ParametrizedExpression& expr) {
   return os;
 }
 
-Predicate::Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression,
-                     Map<tir::Var, Range> free_parameters)
-    : ParametrizedExpression(parameter_vars, expression), free_parameters_(free_parameters) {
+Predicate::Predicate(Array<tir::Var> parameter_vars, Optional<PrimExpr> expression)
+    : ParametrizedExpression(parameter_vars, expression) {
   ICHECK(!expression || expression.value().dtype().is_bool())
       << "Predicate should be boolean expression, but received " << expression;
 }
@@ -132,8 +131,6 @@ bool Predicate::IsSubsetOf(const Predicate& other, Analyzer* analyzer) const {
 
   PrimExpr other_predicate = other(parameter_vars_).value();
 
-  With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-  With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
   With<ConstraintContext> constraint(analyzer, expression_.value());
 
   return analyzer->CanProve(other_predicate);
@@ -149,8 +146,6 @@ bool Predicate::IsDistinctFrom(const Predicate& other, Analyzer* analyzer) const
 
   PrimExpr other_predicate = other(parameter_vars_).value();
 
-  With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-  With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
   With<ConstraintContext> constraint(analyzer, expression_.value());
 
   return analyzer->CanProve(logical_not(other_predicate));
@@ -161,23 +156,15 @@ Predicate Predicate::Difference(const Predicate& other, Analyzer* analyzer) cons
       << "Predicates must be over the same number of parameters to be comparable";
 
   if (!IsDefined() || !other.IsDefined()) {
-    return Predicate(parameter_vars_, NullOpt, {});
+    return Predicate(parameter_vars_, NullOpt);
   }
 
   PrimExpr other_predicate = other(parameter_vars_).value();
 
-  With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-  With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
-
   PrimExpr new_predicate_expr =
       SimplifyAsAndOfOrs(expression_.value() && !other_predicate, analyzer);
 
-  Map<tir::Var, Range> new_free_params = free_parameters_;
-  for (const auto& pair : other.free_parameters_) {
-    new_free_params.Set(pair.first, pair.second);
-  }
-
-  return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
+  return Predicate(parameter_vars_, new_predicate_expr);
 }
 
 Predicate Predicate::Intersection(const Predicate& other, Analyzer* analyzer) const {
@@ -185,7 +172,7 @@ Predicate Predicate::Intersection(const Predicate& other, Analyzer* analyzer) co
       << "Predicates must be over the same number of parameters to be comparable";
 
   if (!IsDefined() || !other.IsDefined()) {
-    return Predicate(parameter_vars_, NullOpt, {});
+    return Predicate(parameter_vars_, NullOpt);
   }
 
   if (this->IsSubsetOf(other, analyzer)) {
@@ -196,17 +183,9 @@ Predicate Predicate::Intersection(const Predicate& other, Analyzer* analyzer) co
 
   PrimExpr other_predicate = other(parameter_vars_).value();
 
-  With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-  With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
-
   PrimExpr new_predicate_expr = analyzer->Simplify(expression_.value() && other_predicate);
 
-  Map<tir::Var, Range> new_free_params = free_parameters_;
-  for (const auto& pair : other.free_parameters_) {
-    new_free_params.Set(pair.first, pair.second);
-  }
-
-  return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
+  return Predicate(parameter_vars_, new_predicate_expr);
 }
 
 Predicate Predicate::Union(const Predicate& other, Analyzer* analyzer) const {
@@ -214,13 +193,10 @@ Predicate Predicate::Union(const Predicate& other, Analyzer* analyzer) const {
       << "Predicates must be over the same number of parameters to be comparable";
 
   if (!IsDefined() || !other.IsDefined()) {
-    return Predicate(parameter_vars_, NullOpt, {});
+    return Predicate(parameter_vars_, NullOpt);
   }
 
   PrimExpr other_predicate = other(parameter_vars_).value();
-
-  With<ConstraintContext> this_params(analyzer, this->FreeParameterConstraints());
-  With<ConstraintContext> other_params(analyzer, other.FreeParameterConstraints());
 
   PrimExpr new_predicate_expr =
       SimplifyAsAndOfOrs(expression_.value() || other_predicate, analyzer);
@@ -233,19 +209,7 @@ Predicate Predicate::Union(const Predicate& other, Analyzer* analyzer) const {
     undefined.insert(var.get());
   }
 
-  for (const auto& pair : free_parameters_) {
-    if (undefined.count(pair.first.get())) {
-      new_free_params.Set(pair.first, pair.second);
-    }
-  }
-
-  for (const auto& pair : other.free_parameters_) {
-    if (undefined.count(pair.first.get())) {
-      new_free_params.Set(pair.first, pair.second);
-    }
-  }
-
-  return Predicate(parameter_vars_, new_predicate_expr, new_free_params);
+  return Predicate(parameter_vars_, new_predicate_expr);
 }
 
 void Predicate::Remap(const Map<Var, PrimExpr>& var_remap) {
@@ -261,85 +225,38 @@ void Predicate::Simplify(Analyzer* analyzer) {
     return;
   }
 
-  With<ConstraintContext> context(analyzer, FreeParameterConstraints());
-
   // TODO: Are the extra simplification rounds necessary?
   PrimExpr expr = analyzer->Simplify(expression_.value(), 5);
-
-  // Remove any free parameters that are no longer needed.  Using
-  // Map::erase instead of constructing a new Map, to allow
-  // CopyOnWrite.
-  if (free_parameters_.size()) {
-    std::unordered_set<const VarNode*> undefined;
-    for (const auto& var : UndefinedVars(expr)) {
-      undefined.insert(var.get());
-    }
-
-    Array<Var> to_remove;
-    for (const auto& pair : free_parameters_) {
-      if (!undefined.count(pair.first.get())) {
-        to_remove.push_back(pair.first);
-      }
-    }
-
-    for (const auto& var : to_remove) {
-      free_parameters_.erase(var);
-    }
-  }
 
   expression_ = expr;
 }
 
 bool Predicate::CanProve(Array<PrimExpr> args, Analyzer* analyzer) const {
-  With<ConstraintContext> constraint(analyzer, FreeParameterConstraints());
   Optional<PrimExpr> expr = (*this)(std::move(args));
   return expr && analyzer->CanProve(expr.value());
 }
 
 bool Predicate::CanDisprove(Array<PrimExpr> args, Analyzer* analyzer) const {
-  With<ConstraintContext> constraint(analyzer, FreeParameterConstraints());
   Optional<PrimExpr> expr = (*this)(std::move(args));
   return expr && analyzer->CanProve(!expr.value());
 }
 
 bool Predicate::IsAlwaysFalse() const {
   Analyzer analyzer;
-  With<ConstraintContext> constraint(&analyzer, FreeParameterConstraints());
   return expression_ && analyzer.CanProve(!expression_.value());
 }
 
-Predicate Predicate::WithoutFreeParameters() const {
+Predicate Predicate::WithoutFreeParameters(const Map<Var, Range>& free_params) const {
   if (!expression_) {
     return *this;
   }
 
-  PrimExpr expr = NarrowExpressionToTrue(expression_.value(), free_parameters_);
-  return Predicate(parameter_vars_, expr, {});
-}
-
-PrimExpr Predicate::FreeParameterConstraints() const {
-  PrimExpr constraint = Bool(true);
-  for (const auto& pair : free_parameters_) {
-    const Var& var = pair.first;
-    const Range& range = pair.second;
-    if (is_const_int(range->extent, 1)) {
-      constraint = constraint && (var == range->min);
-    } else {
-      constraint = constraint && (var >= range->min);
-      constraint = constraint && (var < range->min + range->extent);
-    }
-  }
-  return constraint;
+  PrimExpr expr = NarrowExpressionToTrue(expression_.value(), free_params);
+  return Predicate(parameter_vars_, expr);
 }
 
 std::ostream& operator<<(std::ostream& os, const Predicate& expr) {
   os << "predicate(" << static_cast<const ParametrizedExpression&>(expr);
-  if (expr.free_parameters_.size()) {
-    for (const auto& pair : expr.free_parameters_) {
-      os << ", for all " << pair.first << " in [" << pair.second->min << ", "
-         << pair.second->min + pair.second->extent << ")";
-    }
-  }
   os << ")";
   return os;
 }
@@ -762,6 +679,10 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     Map<Var, PrimExpr> loop_var_to_axis_var = transform->src_to_dst;
     Map<Var, Range> free_params = transform->dst->ranges;
 
+    for (const auto& pair : free_params) {
+      out_->free_predicate_parameters_.Set(pair.first, pair.second);
+    }
+
     // Constraints imposed on the axis variable (min/max bounds) and
     // on free parameters (relationships relative to axis vars).
     // These are used as part of the access predicate.
@@ -1132,8 +1053,9 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
 
   ExprDeepEqual deep_equal;
 
-  With<ConstraintContext> context(
-      analyzer, predicate.FreeParameterConstraints() && other.predicate.FreeParameterConstraints());
+  // With<ConstraintContext> context(
+  //     analyzer, predicate.FreeParameterConstraints() &&
+  //     other.predicate.FreeParameterConstraints());
 
   auto implies = [&](const PrimExpr& a, const PrimExpr& b) -> bool {
     With<ConstraintContext> context(analyzer, a);
@@ -1186,12 +1108,6 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
         PrimExpr value_a = a.known_value(axis_vars).value();
         PrimExpr value_b = b.known_value(axis_vars).value();
 
-        Map<Var, Range> free_parameters = a.predicate.free_parameters_;
-        for (const auto& pair : b.predicate.free_parameters_) {
-          free_parameters.Set(pair.first, pair.second);
-        }
-        analyzer->Bind(free_parameters);
-
         bool provably_equal_value = [&]() {
           With<ConstraintContext> context(analyzer, union_predicate);
           return analyzer->CanProveEqual(value_a, value_b);
@@ -1201,7 +1117,7 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
           union_predicate = SimplifyAsAndOfOrs(union_predicate, analyzer);
 
           BufferTouchPattern::BufferConstraint new_constraint{
-              a.buffer, Predicate(axis_vars, union_predicate, free_parameters),
+              a.buffer, Predicate(axis_vars, union_predicate),
               ParametrizedExpression(axis_vars, value_a)};
           a = std::move(new_constraint);
           b.predicate.expression_ = NullOpt;
@@ -1337,8 +1253,7 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
         Predicate predicate = ai.predicate.Intersection(bi.predicate, analyzer);
         if (!predicate.IsAlwaysFalse()) {
           auto axis_vars = predicate.parameter_vars_;
-          With<ConstraintContext> context(analyzer, predicate.FreeParameterConstraints() &&
-                                                        predicate.expression_.value_or(Bool(true)));
+          With<ConstraintContext> context(analyzer, predicate.expression_.value_or(Bool(true)));
           Optional<PrimExpr> known_value_a = ai.known_value(axis_vars);
           Optional<PrimExpr> known_value_b = bi.known_value(axis_vars);
 
@@ -1531,9 +1446,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   analyzer.rewrite_simplify.SetEnabledFeatures(
       arith::RewriteSimplifier::kTransitivelyProveInequalities);
 
-  Map<Var, Range> all_free_parameters = GetAllFreeParameters();
   analyzer.Bind(iterator_ranges_);
-  analyzer.Bind(all_free_parameters);
+  analyzer.Bind(free_predicate_parameters_);
 
   // Utility function to simplify a list of knowns
   auto normalize_simplify = [&analyzer](std::vector<BufferTouchPattern::BufferConstraint> priors) {
@@ -1661,22 +1575,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
               BufferRegionValueReplacer::Apply(region.known_values, known_value, &analyzer);
 
           if (!is_const_false(updated_predicate)) {
-            Map<tir::Var, Range> free_parameters;
-            for (const Var& var : UndefinedVars(updated_predicate)) {
-              auto it = touch.free_predicate_parameters.find(var);
-              if (it != touch.free_predicate_parameters.end()) {
-                free_parameters.Set((*it).first, (*it).second);
-              }
-            }
-
             if (HasBufferLoad(updated_value)) {
               BufferTouchPattern::BufferConstraint overwrite{
-                  touch.buffer, Predicate(axis_vars, updated_predicate, free_parameters),
+                  touch.buffer, Predicate(axis_vars, updated_predicate),
                   ParametrizedExpression(axis_vars, NullOpt)};
               new_knowns.push_back(overwrite);
             } else {
               BufferTouchPattern::BufferConstraint new_constraint{
-                  touch.buffer, Predicate(axis_vars, updated_predicate, free_parameters),
+                  touch.buffer, Predicate(axis_vars, updated_predicate),
                   ParametrizedExpression(axis_vars, updated_value)};
               new_knowns.push_back(new_constraint);
             }
@@ -1695,7 +1601,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
           prior_knowns, new_knowns, &analyzer);
 
       for (auto& known : post_knowns) {
-        known.predicate = known.predicate.WithoutFreeParameters();
+        known.predicate = known.predicate.WithoutFreeParameters(free_predicate_parameters_);
         known.predicate.expression_ =
             SimplifyAsAndOfOrs(known.predicate.expression_.value(), &analyzer);
       }
