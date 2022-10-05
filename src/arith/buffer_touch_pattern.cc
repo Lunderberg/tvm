@@ -547,17 +547,17 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   }
 
   void VisitExpr_(const LetNode* op) override {
-    BindLetVar binding;
+    std::optional<BindLetVar> binding;
     if (UsesLoopVar(op->value)) {
-      binding = BindLetVar(this, op->var, op->value);
+      binding.emplace(this, op->var, op->value);
     }
     Parent::VisitExpr_(op);
   }
 
   void VisitStmt_(const LetStmtNode* op) override {
-    BindLetVar binding;
+    std::optional<BindLetVar> binding;
     if (UsesLoopVar(op->value)) {
-      binding = BindLetVar(this, op->var, op->value);
+      binding.emplace(this, op->var, op->value);
     }
     Parent::VisitStmt_(op);
   }
@@ -935,8 +935,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
         BufferTouchPattern::ControlFlowEdge{from_block, var_remap, predicate});
   }
 
+  // Internal utility, context manager for tracking a loop
   struct BindActiveLoopVar {
-    BindActiveLoopVar() : self{nullptr} {}
     BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min, PrimExpr loop_extent)
         : self(self), var(var) {
       PrimExpr loop_max = loop_min + (loop_extent - 1);
@@ -944,51 +944,36 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       self->active_loop_iterators_.push_back({var, loop_min, loop_max, loop_range});
       self->loop_dependent_vars_.insert(var.get());
     }
+    ~BindActiveLoopVar() { self->active_loop_iterators_.pop_back(); }
 
-    BindActiveLoopVar(const BindActiveLoopVar&) = delete;
-    BindActiveLoopVar& operator=(const BindActiveLoopVar&) = delete;
-
-    BindActiveLoopVar(BindActiveLoopVar&& other) : BindActiveLoopVar() {
-      std::swap(self, other.self);
-    }
-    BindActiveLoopVar& operator=(BindActiveLoopVar&& other) {
-      std::swap(self, other.self);
-      return *this;
-    }
-
-    ~BindActiveLoopVar() {
-      if (self) {
-        self->active_loop_iterators_.pop_back();
-      }
-    }
     BufferTouchExtractor* self;
     Var var;
+
+    // Disable default-generated copy/move assignment and constructors
+    BindActiveLoopVar(const BindActiveLoopVar&) = delete;
+    BindActiveLoopVar& operator=(const BindActiveLoopVar&) = delete;
+    BindActiveLoopVar(BindActiveLoopVar&&) = delete;
+    BindActiveLoopVar& operator=(BindActiveLoopVar&&) = delete;
   };
 
+  // Internal utility, context manager for tracking a variable binding
   struct BindLetVar {
-    BindLetVar() : self{nullptr} {}
     BindLetVar(BufferTouchExtractor* self, Var var, PrimExpr value) : self(self), var(var) {
       self->let_bindings_using_loop_[var.get()] = value;
       self->loop_dependent_vars_.insert(var.get());
     }
-
-    BindLetVar(const BindLetVar&) = delete;
-    BindLetVar& operator=(const BindLetVar&) = delete;
-
-    BindLetVar(BindLetVar&& other) : BindLetVar() { std::swap(self, other.self); }
-    BindLetVar& operator=(BindLetVar&& other) {
-      std::swap(self, other.self);
-      return *this;
-    }
-
     ~BindLetVar() {
-      if (self) {
-        self->loop_dependent_vars_.erase(var.get());
-        self->let_bindings_using_loop_.erase(var.get());
-      }
+      self->loop_dependent_vars_.erase(var.get());
+      self->let_bindings_using_loop_.erase(var.get());
     }
     BufferTouchExtractor* self;
     Var var;
+
+    // Disable default-generated copy/move assignment and constructors
+    BindLetVar(const BindLetVar&) = delete;
+    BindLetVar& operator=(const BindLetVar&) = delete;
+    BindLetVar(BindLetVar&&) = delete;
+    BindLetVar& operator=(BindLetVar&&) = delete;
   };
 
   struct LoopEntry {
