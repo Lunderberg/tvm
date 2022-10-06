@@ -312,8 +312,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
  public:
   using Parent = IRMutatorWithAnalyzer;
 
-  BufferConstraintApply(const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
-                        Analyzer* analyzer)
+  BufferConstraintApply(const std::vector<BufferConstraint>& knowns, Analyzer* analyzer)
       : Parent(analyzer), knowns_(knowns) {}
 
   using Parent::VisitExpr_;
@@ -356,7 +355,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
   }
 
  private:
-  const std::vector<BufferTouchPattern::BufferConstraint>& knowns_;
+  const std::vector<BufferConstraint>& knowns_;
 };
 
 // Find Read region of the tensor in the stmt.
@@ -941,17 +940,17 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlow
   os << "Control block with " << block.touch_points.size() << " touch points"
      << "\n";
 
-  for (size_t i = 0; i < block.known_at_block_start.size(); i++) {
+  for (size_t i = 0; i < block.known_at_block_start.constraints.size(); i++) {
     os << "\t\t"
-       << "PriorKnown[" << i << "] = " << block.known_at_block_start[i] << "\n";
+       << "PriorKnown[" << i << "] = " << block.known_at_block_start.constraints[i] << "\n";
   }
   for (size_t i = 0; i < block.touch_points.size(); i++) {
     os << "\t\t"
        << "Touch[" << i << "] = " << block.touch_points[i] << "\n";
   }
-  for (size_t i = 0; i < block.known_at_block_end.size(); i++) {
+  for (size_t i = 0; i < block.known_at_block_end.constraints.size(); i++) {
     os << "\t\t"
-       << "PostKnown[" << i << "] = " << block.known_at_block_end[i] << "\n";
+       << "PostKnown[" << i << "] = " << block.known_at_block_end.constraints[i] << "\n";
   }
 
   os << "\t\t"
@@ -993,8 +992,7 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
   return os;
 }
 
-bool BufferTouchPattern::BufferConstraint::IsDistinctFrom(
-    const BufferTouchPattern::BufferConstraint& other, Analyzer* analyzer) const {
+bool BufferConstraint::IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const {
   if (!buffer.same_as(other.buffer)) {
     return true;
   }
@@ -1002,8 +1000,7 @@ bool BufferTouchPattern::BufferConstraint::IsDistinctFrom(
   return predicate.IsDistinctFrom(other.predicate, analyzer);
 }
 
-void BufferTouchPattern::BufferConstraint::OverwriteBy(
-    const BufferTouchPattern::BufferConstraint& other, Analyzer* analyzer) {
+void BufferConstraint::OverwriteBy(const BufferConstraint& other, Analyzer* analyzer) {
   if (IsDistinctFrom(other, analyzer)) {
     return;
   }
@@ -1011,8 +1008,7 @@ void BufferTouchPattern::BufferConstraint::OverwriteBy(
   predicate = predicate.Difference(other.predicate, analyzer);
 }
 
-bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
-    const BufferTouchPattern::BufferConstraint& other, Analyzer* analyzer) const {
+bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const {
   // Constraints must apply to the same buffer to be equivalent
   if (!buffer.same_as(other.buffer)) {
     return false;
@@ -1059,9 +1055,9 @@ bool BufferTouchPattern::BufferConstraint::IsEquivalentTo(
   return true;
 }
 
-std::vector<BufferTouchPattern::BufferConstraint>
-BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
-    std::vector<BufferTouchPattern::BufferConstraint> constraints, Analyzer* analyzer) {
+BufferState BufferState::MergeDisjointConstraints(BufferState state, Analyzer* analyzer) {
+  auto& constraints = state.constraints;
+
   for (size_t i = 0; i < constraints.size(); i++) {
     for (size_t j = i + 1; j < constraints.size(); j++) {
       auto& a = constraints[i];
@@ -1083,9 +1079,8 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
         if (provably_equal_value) {
           union_predicate = SimplifyAsAndOfOrs(union_predicate, analyzer);
 
-          BufferTouchPattern::BufferConstraint new_constraint{
-              a.buffer, Predicate(axis_vars, union_predicate),
-              ParametrizedExpression(axis_vars, value_a)};
+          BufferConstraint new_constraint{a.buffer, Predicate(axis_vars, union_predicate),
+                                          ParametrizedExpression(axis_vars, value_a)};
           a = std::move(new_constraint);
           b.predicate.expression_ = NullOpt;
         }
@@ -1100,11 +1095,10 @@ BufferTouchPattern::BufferConstraint::MergeDisjointConstraints(
                                             !constraint.known_value.IsDefined();
                                    }),
                     constraints.end());
-
-  return constraints;
+  return {constraints};
 }
 
-std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::BufferConstraint& obj) {
+std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj) {
   return os << "Buffer " << obj.buffer->name << " is " << obj.known_value << " if "
             << obj.predicate;
 }
@@ -1114,15 +1108,15 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::BufferConst
  * Assumes that "before" and "after" sets of constraints are
  * internally consistent.
  */
-std::vector<BufferTouchPattern::BufferConstraint>
-BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
-    const std::vector<BufferTouchPattern::BufferConstraint>& arg_before,
-    const std::vector<BufferTouchPattern::BufferConstraint>& arg_after, Analyzer* analyzer) {
-  auto before = arg_before;
-  auto after = arg_after;
+
+BufferState BufferState::MergeSequentialConstraints(const BufferState& arg_before,
+                                                    const BufferState& arg_after,
+                                                    Analyzer* analyzer) {
+  auto before = arg_before.constraints;
+  auto after = arg_after.constraints;
 
   std::vector<bool> used(after.size(), false);
-  std::vector<BufferTouchPattern::BufferConstraint> merged;
+  std::vector<BufferConstraint> merged;
 
   for (const auto& prev : before) {
     Predicate overwrite_at = prev.predicate;
@@ -1155,7 +1149,7 @@ BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
     }
 
     if (!new_predicate.IsAlwaysFalse()) {
-      BufferTouchPattern::BufferConstraint post_constraint = prev;
+      BufferConstraint post_constraint = prev;
       post_constraint.predicate = new_predicate;
       merged.push_back(post_constraint);
     }
@@ -1169,15 +1163,18 @@ BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
     }
   }
 
-  return merged;
+  return {merged};
 }
 
-std::vector<BufferTouchPattern::BufferConstraint>
-BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostcondition(
-    const std::vector<BufferTouchPattern::BufferConstraint>& a_constraints,
-    const std::vector<BufferTouchPattern::BufferConstraint>& b_constraints, PrimExpr a_condition,
-    PrimExpr b_condition, Analyzer* analyzer) {
-  std::vector<BufferTouchPattern::BufferConstraint> output;
+BufferState BufferState::MergePredecessorConstraintsWithPostcondition(const BufferState& a,
+                                                                      const BufferState& b,
+                                                                      PrimExpr a_condition,
+                                                                      PrimExpr b_condition,
+                                                                      Analyzer* analyzer) {
+  const auto& a_constraints = a.constraints;
+  const auto& b_constraints = b.constraints;
+
+  BufferState output_state;
   std::vector<bool> a_used(a_constraints.size(), false);
   std::vector<bool> b_used(b_constraints.size(), false);
 
@@ -1188,7 +1185,7 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostconditi
         constraint.predicate.expression_ = constraint.predicate.expression_.value() && a_condition;
         constraint.predicate.Simplify(analyzer);
       }
-      output.push_back(std::move(constraint));
+      output_state.constraints.push_back(std::move(constraint));
     }
   }
 
@@ -1199,23 +1196,21 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostconditi
         constraint.predicate.expression_ = constraint.predicate.expression_.value() && b_condition;
         constraint.predicate.Simplify(analyzer);
       }
-      output.push_back(std::move(constraint));
+      output_state.constraints.push_back(std::move(constraint));
     }
   }
 
-  return MergeDisjointConstraints(std::move(output), analyzer);
+  return BufferState::MergeDisjointConstraints(std::move(output_state), analyzer);
 }
 
-std::vector<BufferTouchPattern::BufferConstraint>
-BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
-    const std::vector<BufferTouchPattern::BufferConstraint>& a,
-    const std::vector<BufferTouchPattern::BufferConstraint>& b, Analyzer* analyzer) {
+BufferState BufferState::MergePredecessorConstraints(const BufferState& a, const BufferState& b,
+                                                     Analyzer* analyzer) {
   // For a constraint to be in the output, it must be present in both
   // inputs.
 
-  std::vector<BufferTouchPattern::BufferConstraint> consistent_constraints;
-  for (const auto& ai : a) {
-    for (const auto& bi : b) {
+  BufferState output_state;
+  for (const auto& ai : a.constraints) {
+    for (const auto& bi : b.constraints) {
       if (ai.buffer.same_as(bi.buffer)) {
         Predicate predicate = ai.predicate.Intersection(bi.predicate, analyzer);
         if (!predicate.IsAlwaysFalse()) {
@@ -1228,14 +1223,14 @@ BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
               known_value_a && known_value_b &&
               analyzer->CanProveEqual(known_value_a.value(), known_value_b.value());
           if (is_consistent) {
-            consistent_constraints.push_back({ai.buffer, predicate, ai.known_value});
+            output_state.constraints.push_back({ai.buffer, predicate, ai.known_value});
           }
         }
       }
     }
   }
 
-  return MergeDisjointConstraints(std::move(consistent_constraints), analyzer);
+  return BufferState::MergeDisjointConstraints(std::move(output_state), analyzer);
 }
 
 class BufferRegionCollector : public ExprVisitor {
@@ -1245,9 +1240,9 @@ class BufferRegionCollector : public ExprVisitor {
     std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>> known_values;
   };
 
-  static std::vector<Region> Collect(
-      const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
-      const std::vector<Optional<PrimExpr>>& exprs, Analyzer* analyzer) {
+  static std::vector<Region> Collect(const std::vector<BufferConstraint>& knowns,
+                                     const std::vector<Optional<PrimExpr>>& exprs,
+                                     Analyzer* analyzer) {
     BufferRegionCollector collector(knowns, analyzer);
     for (const auto& expr : exprs) {
       if (expr) {
@@ -1261,8 +1256,7 @@ class BufferRegionCollector : public ExprVisitor {
  private:
   using Parent = ExprVisitor;
 
-  BufferRegionCollector(const std::vector<BufferTouchPattern::BufferConstraint>& knowns,
-                        Analyzer* analyzer)
+  BufferRegionCollector(const std::vector<BufferConstraint>& knowns, Analyzer* analyzer)
       : analyzer_(analyzer), knowns_(knowns) {
     regions_.push_back(Region{Bool(true), {}});
   }
@@ -1280,7 +1274,7 @@ class BufferRegionCollector : public ExprVisitor {
 
     PrimExpr unknown_region = Bool(true);
 
-    for (const BufferTouchPattern::BufferConstraint& constraint : knowns_) {
+    for (const BufferConstraint& constraint : knowns_) {
       ICHECK(constraint.predicate.IsDefined());
 
       if (!op->buffer.same_as(constraint.buffer)) {
@@ -1326,7 +1320,7 @@ class BufferRegionCollector : public ExprVisitor {
 
   Analyzer* analyzer_;
   std::vector<Region> regions_;
-  const std::vector<BufferTouchPattern::BufferConstraint>& knowns_;
+  const std::vector<BufferConstraint>& knowns_;
 };
 
 class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
@@ -1397,8 +1391,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   analyzer.Bind(free_predicate_parameters_);
 
   // Utility function to simplify a list of knowns
-  auto normalize_simplify = [&analyzer](std::vector<BufferTouchPattern::BufferConstraint> priors) {
-    for (auto& prior : priors) {
+  auto normalize_simplify = [&analyzer](BufferState priors) -> BufferState {
+    for (auto& prior : priors.constraints) {
       prior.predicate.expression_ =
           SimplifyAsAndOfOrs(prior.predicate.expression_.value(), &analyzer);
     }
@@ -1411,13 +1405,12 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     ControlFlowBlock& block = control_flow_[visiting];
 
     // Step 1: Collect known values provided from each precedessor
-    block.known_at_block_start = [&]() -> std::vector<BufferTouchPattern::BufferConstraint> {
+    block.known_at_block_start = [&]() -> BufferState {
       ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
 
-      auto remap_priors = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
-                              Map<Var, PrimExpr> var_remap) {
+      auto remap_priors = [&](BufferState priors, Map<Var, PrimExpr> var_remap) -> BufferState {
         if (var_remap.size()) {
-          for (auto& prior : priors) {
+          for (auto& prior : priors.constraints) {
             PrimExpr before_remap = prior.predicate.expression_.value();
             PrimExpr after_remap = Substitute(before_remap, var_remap);
             if (!before_remap.same_as(after_remap)) {
@@ -1428,9 +1421,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         return priors;
       };
 
-      auto add_condition = [&](std::vector<BufferTouchPattern::BufferConstraint> priors,
-                               PrimExpr condition) {
-        for (auto& prior : priors) {
+      auto add_condition = [&](BufferState priors, PrimExpr condition) -> BufferState {
+        for (auto& prior : priors.constraints) {
           prior.predicate.expression_ = prior.predicate.expression_.value() && condition;
           prior.predicate.Simplify(&analyzer);
         }
@@ -1480,26 +1472,25 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
       auto priors_a = remap_priors(pred_a_block.known_at_block_end, pred_a.var_remap);
       auto priors_b = remap_priors(pred_b_block.known_at_block_end, pred_b.var_remap);
 
-      std::vector<BufferTouchPattern::BufferConstraint> output;
+      BufferState output_state;
       if (pred_a.predicate && pred_b.predicate) {
-        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraintsWithPostcondition(
+        output_state = BufferState::MergePredecessorConstraintsWithPostcondition(
             priors_a, priors_b, pred_a.predicate.value(), pred_b.predicate.value(), &analyzer);
       } else if (!pred_a.predicate && !pred_b.predicate) {
-        output = BufferTouchPattern::BufferConstraint::MergePredecessorConstraints(
-            priors_a, priors_b, &analyzer);
+        output_state = BufferState::MergePredecessorConstraints(priors_a, priors_b, &analyzer);
       } else {
         LOG(FATAL) << "In control flow graph, "
                    << "either both predecessors must have predicates, "
                    << "or neither may have a predicate";
       }
 
-      return output;
+      return output_state;
     }();
-    const auto& prior_knowns = block.known_at_block_start;
+    const auto& prior_state = block.known_at_block_start;
 
     // Step 2: Collect knowns provided as a result of executing this block
-    std::vector<BufferTouchPattern::BufferConstraint> new_knowns = [&]() {
-      std::vector<BufferTouchPattern::BufferConstraint> new_knowns;
+    auto state_updates = [&]() -> BufferState {
+      std::vector<BufferConstraint> new_knowns;
 
       for (auto& touch : block.touch_points) {
         if (touch.touch_type == BufferTouch::AccessType::Read) {
@@ -1510,8 +1501,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         PrimExpr predicate = touch.predicate;
 
         PrimExpr known_value = touch.value;
-        auto regions =
-            BufferRegionCollector::Collect(prior_knowns, {predicate, known_value}, &analyzer);
+        auto regions = BufferRegionCollector::Collect(prior_state.constraints,
+                                                      {predicate, known_value}, &analyzer);
 
         for (const auto& region : regions) {
           PrimExpr updated_predicate = BufferRegionValueReplacer::Apply(
@@ -1523,36 +1514,35 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
           if (!is_zero(updated_predicate)) {
             if (HasBufferLoad(updated_value)) {
-              BufferTouchPattern::BufferConstraint overwrite{
-                  touch.buffer, Predicate(axis_vars, updated_predicate),
-                  ParametrizedExpression(axis_vars, NullOpt)};
+              BufferConstraint overwrite{touch.buffer, Predicate(axis_vars, updated_predicate),
+                                         ParametrizedExpression(axis_vars, NullOpt)};
               new_knowns.push_back(overwrite);
             } else {
-              BufferTouchPattern::BufferConstraint new_constraint{
-                  touch.buffer, Predicate(axis_vars, updated_predicate),
-                  ParametrizedExpression(axis_vars, updated_value)};
+              BufferConstraint new_constraint{touch.buffer, Predicate(axis_vars, updated_predicate),
+                                              ParametrizedExpression(axis_vars, updated_value)};
               new_knowns.push_back(new_constraint);
             }
           }
         }
       }
-      return new_knowns;
+      return BufferState{new_knowns};
     }();
 
     // Step 3: Generate the knowns at the end of the block
-    auto post_knowns = [&]() {
-      if (new_knowns.size() == 0) {
-        return prior_knowns;
+    auto post_state = [&]() -> BufferState {
+      if (state_updates.constraints.size() == 0) {
+        return prior_state;
       }
-      auto post_knowns = BufferTouchPattern::BufferConstraint::MergeSequentialConstraints(
-          prior_knowns, new_knowns, &analyzer);
 
-      for (auto& known : post_knowns) {
+      auto post_state =
+          BufferState::MergeSequentialConstraints(prior_state, state_updates, &analyzer);
+
+      for (auto& known : post_state.constraints) {
         known.predicate = known.predicate.WithoutFreeParameters(free_predicate_parameters_);
         known.predicate.expression_ =
             SimplifyAsAndOfOrs(known.predicate.expression_.value(), &analyzer);
       }
-      return post_knowns;
+      return post_state;
     }();
 
     // Step 4: If any changes are made to the post knowns since the
@@ -1563,14 +1553,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         return true;
       }
 
-      const auto& previous_post_knowns = block.known_at_block_end;
+      const auto& previous_post_knowns = block.known_at_block_end.constraints;
 
-      if (post_knowns.size() != previous_post_knowns.size()) {
+      if (post_state.constraints.size() != previous_post_knowns.size()) {
         return true;
       }
 
-      for (size_t i = 0; i < post_knowns.size(); i++) {
-        if (!post_knowns[i].IsEquivalentTo(previous_post_knowns[i], &analyzer)) {
+      for (size_t i = 0; i < post_state.constraints.size(); i++) {
+        if (!post_state.constraints[i].IsEquivalentTo(previous_post_knowns[i], &analyzer)) {
           return true;
         }
       }
@@ -1581,7 +1571,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     // TODO: Have a maximum number of times that blocks may be
     // visited, to guard against infinite loops.
     if (has_updated_post) {
-      block.known_at_block_end = post_knowns;
+      block.known_at_block_end.constraints = post_state.constraints;
       for (size_t successor : block.successors) {
         to_visit.insert(successor);
       }
@@ -1591,75 +1581,76 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   }
 }
 
-bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
-                                                    Analyzer* analyzer) const {
-  auto it = control_flow_lookup_.find(store.get());
-  ICHECK(it != control_flow_lookup_.end()) << "BufferStore did not occur within analyzed statement";
+  bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
+                                                      Analyzer* analyzer) const {
+    auto it = control_flow_lookup_.find(store.get());
+    ICHECK(it != control_flow_lookup_.end())
+        << "BufferStore did not occur within analyzed statement";
 
-  const auto& store_block = control_flow_[it->second];
-  ICHECK_GE(store_block.touch_points.size(), 1);
+    const auto& store_block = control_flow_[it->second];
+    ICHECK_GE(store_block.touch_points.size(), 1);
 
-  const auto& store_touch = store_block.touch_points.back();
+    const auto& store_touch = store_block.touch_points.back();
 
-  std::unordered_set<size_t> seen;
-  std::vector<size_t> to_visit = store_block.successors;
+    std::unordered_set<size_t> seen;
+    std::vector<size_t> to_visit = store_block.successors;
 
-  while (to_visit.size()) {
-    size_t visiting = to_visit.back();
-    to_visit.pop_back();
+    while (to_visit.size()) {
+      size_t visiting = to_visit.back();
+      to_visit.pop_back();
 
-    const auto& block = control_flow_[visiting];
+      const auto& block = control_flow_[visiting];
 
-    for (auto& touch : block.touch_points) {
-      if (touch.touch_type == BufferTouch::AccessType::Read &&
-          !store_touch.IsDistinctFrom(touch, analyzer)) {
-        // The buffer location is being read out, has an effect.
-        return false;
-      } else if (touch.touch_type == BufferTouch::AccessType::Write &&
-                 store_touch.IsSubsetOf(touch, analyzer)) {
-        // The buffer is entirely overwritten, so the earlier store
-        // has no effect.
-        return true;
-      } else {
-        // Pass along to next block to visit.
-        for (size_t next_index : block.successors) {
-          if (!seen.count(next_index)) {
-            to_visit.push_back(next_index);
+      for (auto& touch : block.touch_points) {
+        if (touch.touch_type == BufferTouch::AccessType::Read &&
+            !store_touch.IsDistinctFrom(touch, analyzer)) {
+          // The buffer location is being read out, has an effect.
+          return false;
+        } else if (touch.touch_type == BufferTouch::AccessType::Write &&
+                   store_touch.IsSubsetOf(touch, analyzer)) {
+          // The buffer is entirely overwritten, so the earlier store
+          // has no effect.
+          return true;
+        } else {
+          // Pass along to next block to visit.
+          for (size_t next_index : block.successors) {
+            if (!seen.count(next_index)) {
+              to_visit.push_back(next_index);
+            }
           }
         }
       }
     }
+
+    return false;
   }
 
-  return false;
-}
+  PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
+                                                 Analyzer* analyzer) const {
+    size_t context_index = [&]() {
+      auto it = control_flow_lookup_.find(context.get());
+      ICHECK(it != control_flow_lookup_.end())
+          << "Context did not occur in the Stmt provided to BufferTouchPattern's constructor";
+      return it->second;
+    }();
 
-PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
-                                               Analyzer* analyzer) const {
-  size_t context_index = [&]() {
-    auto it = control_flow_lookup_.find(context.get());
-    ICHECK(it != control_flow_lookup_.end())
-        << "Context did not occur in the Stmt provided to BufferTouchPattern's constructor";
-    return it->second;
-  }();
+    PrimExpr constraint = Bool(true);
+    for (const auto& known : non_buffer_assumptions_) {
+      constraint = constraint && known;
+    }
+    With<ConstraintContext> constraint_context(analyzer, constraint);
 
-  PrimExpr constraint = Bool(true);
-  for (const auto& known : non_buffer_assumptions_) {
-    constraint = constraint && known;
+    const auto& knowns = control_flow_[context_index].known_at_block_start.constraints;
+
+    BufferConstraintApply mutator(knowns, analyzer);
+    expr = mutator(expr);
+    expr = analyzer->Simplify(expr);
+    return expr;
   }
-  With<ConstraintContext> constraint_context(analyzer, constraint);
 
-  const auto& knowns = control_flow_[context_index].known_at_block_start;
-
-  BufferConstraintApply mutator(knowns, analyzer);
-  expr = mutator(expr);
-  expr = analyzer->Simplify(expr);
-  return expr;
-}
-
-void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
-  // TODO: Update control_flow_
-}
+  void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
+    // TODO: Update control_flow_
+  }
 
 }  // namespace arith
 }  // namespace tvm

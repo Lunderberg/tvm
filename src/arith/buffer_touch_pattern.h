@@ -182,6 +182,42 @@ class BufferTouch {
   friend class BufferTouchPattern;
 };
 
+struct BufferConstraint {
+  tir::Buffer buffer;
+  Predicate predicate;
+  ParametrizedExpression known_value;
+
+  friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
+
+  bool IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const;
+
+  void OverwriteBy(const BufferConstraint& other, Analyzer* analyzer);
+
+  bool IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const;
+};
+
+struct BufferState {
+  std::vector<BufferConstraint> constraints;
+
+  /* \brief Merge constraints from multiple disjoint predecessors */
+  static BufferState MergePredecessorConstraintsWithPostcondition(const BufferState& a,
+                                                                  const BufferState& b,
+                                                                  PrimExpr a_condition,
+                                                                  PrimExpr b_condition,
+                                                                  Analyzer* analyzer);
+
+  /* \brief Merge constraints from multiple possible-conflicting predecessors */
+  static BufferState MergePredecessorConstraints(const BufferState& a, const BufferState& b,
+                                                 Analyzer* analyzer);
+
+  /* \brief Merge constraints that produce the same known value */
+  static BufferState MergeDisjointConstraints(BufferState constraints, Analyzer* analyzer);
+
+  /* \brief Merge constraints, where "after" may overwrite "before" */
+  static BufferState MergeSequentialConstraints(const BufferState& before, const BufferState& after,
+                                                Analyzer* analyzer);
+};
+
 class BufferTouchPattern {
  public:
   /* \brief Extract the touch pattern from a TIR statement
@@ -232,67 +268,6 @@ class BufferTouchPattern {
  public:
   void ForwardPropagateKnownValues();
 
-  struct BufferConstraint {
-    tir::Buffer buffer;
-    Predicate predicate;
-    ParametrizedExpression known_value;
-
-    friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
-
-    bool IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const;
-
-    void OverwriteBy(const BufferConstraint& other, Analyzer* analyzer);
-
-    bool IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const;
-
-    /* \brief Merge constraints that may overwrite each other.
-     *
-     * Assumes that "before" and "after" sets of constraints are
-     * internally consistent.
-     */
-    static std::vector<BufferConstraint> MergeSequentialConstraints(
-        const std::vector<BufferConstraint>& before, const std::vector<BufferConstraint>& after,
-        Analyzer* analyzer);
-
-    /*! \brief Simplify disjoint
-     *
-     * Given a vector of disjoint constraints, merge any constraints
-     * that produce the same known value.
-     *
-     * \param constraints The initial disjoing constraints.
-     *
-     * \return A set of disjoint constraints
-     */
-    static std::vector<BufferConstraint> MergeDisjointConstraints(
-        std::vector<BufferConstraint> constraints, Analyzer* analyzer);
-
-    /* \brief Merge constraints that jointly apply
-     *
-     * If a constraint applies to the same indices in the same buffer,
-     * but cannot be shown to be the same value, it will be tracked as
-     * a NullOpt, with no additional information tracked.
-     */
-    static std::vector<BufferConstraint> MergePredecessorConstraints(
-        const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
-        Analyzer* analyzer);
-
-    /* \brief Merge constraints that jointly apply
-     *
-     * If a constraint applies to the same indices in the same buffer,
-     * but cannot be shown to be the same value, it will be tracked as
-     * a NullOpt, with no additional information tracked.
-     *
-     * \param a_condition Condition that is known to be true when
-     * block A was the predecessor.
-     *
-     * \param b_condition Condition that is known to be true when
-     * block B was the predecessor.
-     */
-    static std::vector<BufferConstraint> MergePredecessorConstraintsWithPostcondition(
-        const std::vector<BufferConstraint>& a, const std::vector<BufferConstraint>& b,
-        PrimExpr a_condition, PrimExpr b_condition, Analyzer* analyzer);
-  };
-
   struct ControlFlowEdge {
     /* \brief The source block of the control flow edge
      *
@@ -317,8 +292,8 @@ class BufferTouchPattern {
   };
 
   struct ControlFlowBlock {
-    std::vector<BufferConstraint> known_at_block_start;
-    std::vector<BufferConstraint> known_at_block_end;
+    BufferState known_at_block_start;
+    BufferState known_at_block_end;
 
     /* \brief Buffer touches that occur within the block
      *
