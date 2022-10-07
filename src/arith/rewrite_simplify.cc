@@ -1360,7 +1360,7 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryMatchLiteralConstraint(const Prim
     if (expr_equal(constraint.expr, expr)) {
       return make_const(expr->dtype, true);
     }
-    if (expr_equal(constraint.negation, negation)) {
+    if (expr_equal(constraint.negation, expr)) {
       return make_const(expr->dtype, false);
     }
   }
@@ -1965,9 +1965,9 @@ class BooleanRewriter : public ExprMutator {
     TVM_TRY_REWRITE(x <= y && y <= x, x == y);
 
     TVM_TRY_REWRITE(x <= y && x == y, x == y);
-    TVM_TRY_REWRITE(x <= y && y == x, x == y);
+    TVM_TRY_REWRITE(y <= x && x == y, x == y);
     TVM_TRY_REWRITE(x == y && x <= y, x == y);
-    TVM_TRY_REWRITE(y == x && x <= y, x == y);
+    TVM_TRY_REWRITE(x == y && y <= x, x == y);
 
     TVM_TRY_REWRITE(x <= y && x != y, x < y);
     TVM_TRY_REWRITE(x <= y && y != x, x < y);

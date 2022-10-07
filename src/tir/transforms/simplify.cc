@@ -268,7 +268,7 @@ Pass Simplify() {
     auto cfg = ctx->GetConfig<arith::SimplifyConfig>("tir.Simplify");
 
     auto* n = f.CopyOnWrite();
-    n->body = arith::StmtSimplifier::Apply(std::move(n->body), nullptr, cfg);
+    n->body = arith::StmtSimplifier::Apply(std::move(n->body), &analyzer, cfg);
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.Simplify", {});

@@ -43,7 +43,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
  public:
   static Stmt Apply(Stmt stmt) {
     arith::Analyzer analyzer;
-    analyzer.rewrite_simplify.SetEnabledFeatures(
+    analyzer.rewrite_simplify.SetEnabledExtensions(
         arith::RewriteSimplifier::kTransitivelyProveInequalities);
     arith::BufferTouchPattern touch_pattern(stmt);
     NoOpRemover visitor(&analyzer, std::move(touch_pattern));

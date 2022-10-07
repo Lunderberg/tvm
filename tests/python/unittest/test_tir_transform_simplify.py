@@ -140,7 +140,7 @@ def test_complex_likely_elimination():
 
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     transitively_prove_inequalities = False
-    propagate_knowns_to_prove_conditional = True
+    propagate_knowns_to_prove_conditional = False
     propagate_knowns_to_simplify_expressions = False
 
     def transform(self):
@@ -377,6 +377,8 @@ class TestAlteredBufferContents(BaseBeforeAfter):
     may not.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[(1,), "int32"], n: T.int32):
         if A[0] == n:
             A[0] = A[0] + 1
@@ -404,6 +406,8 @@ class TestPossiblyAlteredBufferContents(BaseBeforeAfter):
     inner conditional, either as `A[0] == n` from the outer
     conditional or as `A[0] == n+1` from the write statement.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[(1,), "int32"], n: T.int32, m: T.int32):
         if A[0] == n:
@@ -852,6 +856,8 @@ class TestSuppressTransitivelyProvableCondition(BaseBeforeAfter):
 class TestSimplifyInputAssumption(BaseBeforeAfter):
     """A T.assume annotation may be used to simplify"""
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[1, "int32"], n: T.int32):
         T.assume(n == 0)
         if n == 0:
@@ -865,6 +871,8 @@ class TestSimplifyInputAssumption(BaseBeforeAfter):
 class TestNoSimplifyFromScopedInputAssumption(BaseBeforeAfter):
     """A T.assume inside a scope may not apply outside that scope"""
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[1, "int32"], n: T.int32, m: T.int32):
         if m == 0:
             T.assume(n == 0)
@@ -877,6 +885,8 @@ class TestNoSimplifyFromScopedInputAssumption(BaseBeforeAfter):
 
 class TestSimplifyConditionalUsingBufferValue(BaseBeforeAfter):
     """Simplify a conditional using the known value in the buffer"""
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[1, "int32"]):
         A[0] = 0
@@ -897,6 +907,8 @@ class TestKeepExpressionSimplifyUsingBufferValue(BaseBeforeAfter):
     conditionals, but should not be used for other simplifications.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[1, "int32"], B: T.Buffer[1, "int32"]):
         A[0] = 0
         B[0] = A[0]
@@ -910,6 +922,8 @@ class TestSimplifyConditionalInLoopUsingBufferValue(BaseBeforeAfter):
     Like TestSimplifyConditionalUsingBufferValue, but the value used
     to simplify is set in a previous loop.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -932,6 +946,8 @@ class TestSimplifyConditionalInLoopUsingBufferValue(BaseBeforeAfter):
 class TestSimplifyUsingBufferAssumption(BaseBeforeAfter):
     """A T.assume may apply to a buffer's contents"""
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[1, "int32"]):
         T.assume(A[0] == 0)
 
@@ -945,6 +961,8 @@ class TestSimplifyUsingBufferAssumption(BaseBeforeAfter):
 
 class TestSimplifyUsingBufferAssumptionInLoop(BaseBeforeAfter):
     """An assumption about buffer contents may apply to a range"""
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -964,6 +982,8 @@ class TestSimplifyUsingBufferAssumptionInLoop(BaseBeforeAfter):
 
 class TestSimplifyUsingPartiallyKnownBufferConditional(BaseBeforeAfter):
     """An assumption about buffer contents may apply to only part of a buffer"""
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -1001,6 +1021,8 @@ class TestSimplifyUsingPartiallyKnownBufferExpression(BaseBeforeAfter):
     control flow.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             T.assume(i < 14 or A[i] == 0)
@@ -1027,6 +1049,8 @@ class TestNoSimplificationIfPredicateNotMet(BaseBeforeAfter):
     first loop.  Therefore, the `T.assume` refers to a different set
     of indices.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -1059,6 +1083,8 @@ class TestSimplifyUsingScopedConstraint(BaseBeforeAfter):
 class TestNoSimplifyUsingInvalidatedScopedConstraint(BaseBeforeAfter):
     """A write may not be used for proofs outside its conditional"""
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             if i == 0:
@@ -1076,6 +1102,8 @@ class TestNoSimplifyUsingOverwrittenValue(BaseBeforeAfter):
     The appearance of "A[i] = 5" must prevent the earlier constraint
     from being used for simplification.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -1099,6 +1127,8 @@ class TestNoSimplifyUsingLoopDependentBufferValue(BaseBeforeAfter):
     within the loop.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
         B[0] = 0
         for i in T.serial(16):
@@ -1110,21 +1140,9 @@ class TestNoSimplifyUsingLoopDependentBufferValue(BaseBeforeAfter):
     expected = before
 
 
-class TestRemoveTransitivelyProvableCondition(BaseBeforeAfter):
-    """Remove comparisons that may be proven using multiple others
-
-    Here, the `0 < i` and `i <= j` conditions can be used to prove
-    that `0 < j`.
-    """
-
-    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = j <= 15 and i <= j and 0 < j and 0 < i
-
-    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
-        A[0] = j <= 15 and i <= j and 0 < i
-
-
 class TestInequalities1(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
         A[0] = i <= j and i - 1 <= j
 
@@ -1133,6 +1151,8 @@ class TestInequalities1(BaseBeforeAfter):
 
 
 class TestInequalities2(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
         A[0] = i <= j and i <= j + 1
 
@@ -1165,6 +1185,8 @@ class TestInequalities5(BaseBeforeAfter):
 
 
 class TestInequalities6(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
         A[0] = 14 <= j and i - 1 == j and i < 16
 
@@ -1173,6 +1195,8 @@ class TestInequalities6(BaseBeforeAfter):
 
 
 class TestInequalities7(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
         A[0] = i + 1 < j + 5 and i + 1 != j + 6
         # A[0] = i < j + 2 and i + 1 != j + 2
@@ -1214,6 +1238,8 @@ class TestInequalities8(BaseBeforeAfter):
 
 
 class TestInequalities9(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+
     def before(A: T.Buffer[1, "bool"], j: T.int32, k: T.int32):
         for i in T.serial(k, 16):
             A[0] = i < j and k - 5 < j
@@ -1224,6 +1250,8 @@ class TestInequalities9(BaseBeforeAfter):
 
 
 class TestInequalities10(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+
     def before(A: T.Buffer[1, "bool"], j: T.int32):
         for i in T.serial(0, 16):
             # A[0] = (j < i) and ((0 < j) or ((i - 1) <= j)) and (j != 0) and (0 < i)
@@ -1296,6 +1324,8 @@ class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
     iterations are all independent.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             T.assume(A[i] == 0)
@@ -1332,6 +1362,8 @@ class TestSimplifyUsingKnownPartOfPartiallyOverwrittenBuffer(BaseBeforeAfter):
     earlier overwrite didn't touch this value.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             T.assume(A[i] == 0)
@@ -1363,6 +1395,8 @@ class TestSimplifyElementWiseUsingPreLoopBufferValue(BaseBeforeAfter):
     pre-loop buffer value may be used to simplify conditions that
     occur prior to the write.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -1429,6 +1463,8 @@ class TestSimplifyUsingTransitiveKnownBufferValue(BaseBeforeAfter):
     can be tracked backwards through both.
     """
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[1, "int32"]):
         T.assume(A[0] == 0)
 
@@ -1452,6 +1488,8 @@ class TestSimplifyUsingTransitiveKnownBufferValue(BaseBeforeAfter):
 class TestSimplifyRampIndexBroadcastValue(BaseBeforeAfter):
     """Simplifications involving buffer loads with ramp indices"""
 
+    propagate_knowns_to_prove_conditional = True
+
     def before(A: T.Buffer[4, "int32"]):
         A[T.ramp(0, 1, 4)] = T.broadcast(0, 4)
 
@@ -1470,6 +1508,8 @@ class TestSimplifyRampIndexBroadcastValue(BaseBeforeAfter):
 
 class TestSimplifyRampIndexRampValue(BaseBeforeAfter):
     """Simplifications involving buffer loads with ramp indices"""
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[4, "int32"]):
         A[T.ramp(0, 1, 4)] = T.ramp(11, 1, 4)
@@ -1495,6 +1535,8 @@ class TestSimplifyUsingPartiallyProvenBufferValueGather(BaseBeforeAfter):
     known 0 values in the padding of A produces known 0 values in the
     padding of B.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
         # A has non-zero values only in the range 3 <= i < 17
@@ -1539,6 +1581,8 @@ class TestSimplifyUsingPartiallyProvenBufferValueScatter(BaseBeforeAfter):
     compute loop is over the input buffer A, rather than the output
     buffer B.
     """
+
+    propagate_knowns_to_prove_conditional = True
 
     def before(A: T.Buffer[24, "int32"], B: T.Buffer[24, "int32"], F: T.Buffer[3, "int32"]):
         # A has non-zero values only in the range 3 <= i < 17

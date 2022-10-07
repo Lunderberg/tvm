@@ -1381,7 +1381,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   }
 
   Analyzer analyzer;
-  analyzer.rewrite_simplify.SetEnabledFeatures(
+  analyzer.rewrite_simplify.SetEnabledExtensions(
       arith::RewriteSimplifier::kTransitivelyProveInequalities);
 
   analyzer.Bind(iterator_ranges_);
