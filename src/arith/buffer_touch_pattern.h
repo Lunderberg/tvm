@@ -183,9 +183,17 @@ class BufferTouch {
 };
 
 struct BufferConstraint {
+  BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars, PrimExpr predicate,
+                   Optional<PrimExpr> value);
+  BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars, PrimExpr predicate,
+                   PrimExpr value);
+
   tir::Buffer buffer;
-  Predicate predicate;
-  ParametrizedExpression known_value;
+  Array<tir::Var> axis_vars;
+  PrimExpr predicate;
+  Optional<PrimExpr> value;
+
+  void CheckSameAxisVars(const BufferConstraint& other) const;
 
   friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
 
