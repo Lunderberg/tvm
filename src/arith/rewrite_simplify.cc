@@ -1372,6 +1372,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const EQNode* op) {
   op = ret.as<EQNode>();
 
   if (auto const_res = TryConstFold<EQ>(op->a, op->b)) return const_res.value();
+  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
   if (IsIndexType(op->a.dtype())) {
     CompareResult result = TryCompare(op->a, op->b);
@@ -1391,7 +1392,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NENode* op) {
   op = ret.as<NENode>();
 
   if (auto const_res = TryConstFold<NE>(op->a, op->b)) return const_res.value();
-
   if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
 
   if (IsIndexType(op->a.dtype())) {
@@ -1424,11 +1424,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NENode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitWithoutRecursion(EQ node) {
-  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(node.get());
-  auto* op = ret.as<EQNode>();
-
-  if (auto const_res = TryConstFold<EQ>(op->a, op->b)) return const_res.value();
-  if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+  PrimExpr ret = node;
 
   // Pattern var to match any expression
   PVar<PrimExpr> x, y;
@@ -1437,11 +1433,11 @@ PrimExpr RewriteSimplifier::Impl::VisitWithoutRecursion(EQ node) {
   PVar<int> lanes;
 
   // vector rule
-  if (op->dtype.lanes() != 1) {
+  if (node->dtype.lanes() != 1) {
     TVM_TRY_REWRITE(broadcast(x, lanes) == broadcast(y, lanes), broadcast(x == y, lanes));
   }
 
-  if (IsIndexType(op->a.dtype())) {
+  if (IsIndexType(node->a.dtype())) {
     TVM_TRY_REWRITE(c1 == x, x == c1);
     TVM_TRY_REWRITE(x - c1 == 0, x == c1);
     TVM_TRY_REWRITE(c1 - x == 0, x == c1);
@@ -1501,8 +1497,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const GENode* op) {
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LTNode* op) {
   PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
   op = ret.as<LTNode>();
-
-  if (auto const_res = TryConstFold<LT>(op->a, op->b)) return const_res.value();
 
   if (IsIndexType(op->a.dtype())) {
     CompareResult result = TryCompare(op->a, op->b);
