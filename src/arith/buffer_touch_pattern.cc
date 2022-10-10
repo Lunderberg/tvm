@@ -1225,7 +1225,7 @@ BufferState BufferState::Intersection(const BufferState& a, const BufferState& b
     }
   }
 
-  return BufferState::MergeDisjointConstraints(std::move(output_state), analyzer);
+  return output_state;
 }
 
 class BufferRegionCollector : public ExprVisitor {
@@ -1560,11 +1560,9 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         return BufferState::Intersection(priors_a, priors_b, &analyzer);
       }
     }();
-    const auto& prior_state = block.known_at_block_start;
 
     // Step 2: Collect knowns provided as a result of executing this block
-
-    auto post_state = prior_state;
+    auto post_state = block.known_at_block_start;
     post_state.ApplyTouches(block.touch_points, free_predicate_parameters_, &analyzer);
     post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
 
@@ -1577,7 +1575,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     // if (has_updated_post) {
     if (!visited_once.count(visiting) ||
         !post_state.IsEquivalentTo(block.known_at_block_end, &analyzer)) {
-      block.known_at_block_end.constraints = post_state.constraints;
+      block.known_at_block_end = std::move(post_state);
       for (size_t successor : block.successors) {
         to_visit.insert(successor);
       }
