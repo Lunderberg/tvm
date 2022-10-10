@@ -221,13 +221,6 @@ struct BufferState {
 
   /* \brief Merge constraints from multiple possible-conflicting predecessors */
   static BufferState Intersection(const BufferState& a, const BufferState& b, Analyzer* analyzer);
-
-  /* \brief Merge constraints that produce the same known value */
-  static BufferState MergeDisjointConstraints(BufferState constraints, Analyzer* analyzer);
-
-  /* \brief Merge constraints, where "after" may overwrite "before" */
-  static BufferState MergeSequentialConstraints(const BufferState& before, const BufferState& after,
-                                                Analyzer* analyzer);
 };
 
 class BufferTouchPattern {

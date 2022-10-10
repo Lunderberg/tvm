@@ -1084,118 +1084,29 @@ void BufferState::Simplify(Analyzer* analyzer) {
   }
 }
 
-BufferState BufferState::MergeDisjointConstraints(BufferState state, Analyzer* analyzer) {
-  auto& constraints = state.constraints;
-
-  for (size_t i = 0; i < constraints.size(); i++) {
-    for (size_t j = i + 1; j < constraints.size(); j++) {
-      auto& a = constraints[i];
-      auto& b = constraints[j];
-      if (a.buffer.same_as(b.buffer)) {
-        a.CheckSameAxisVars(b);
-
-        auto axis_vars = a.axis_vars;
-
-        PrimExpr union_predicate = analyzer->Simplify(a.predicate || b.predicate);
-
-        PrimExpr value_a = a.value.value();
-        PrimExpr value_b = b.value.value();
-
-        bool provably_equal_value = [&]() {
-          With<ConstraintContext> context(analyzer, union_predicate);
-          return analyzer->CanProveEqual(value_a, value_b);
-        }();
-
-        if (provably_equal_value) {
-          union_predicate = SimplifyAsAndOfOrs(union_predicate, analyzer);
-
-          BufferConstraint new_constraint{a.buffer, axis_vars, union_predicate, value_a};
-          a = std::move(new_constraint);
-          b.predicate = Bool(false);
-        }
-      }
-    }
-  }
-
-  constraints.erase(std::remove_if(constraints.begin(), constraints.end(),
-                                   [](const auto& constraint) -> bool {
-                                     return is_zero(constraint.predicate) ||
-                                            !constraint.value.defined();
-                                   }),
-                    constraints.end());
-  return {constraints};
-}
-
 std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj) {
   return os << "Buffer " << obj.buffer->name << " is " << obj.value << " if " << obj.predicate;
 }
 
-/* \brief Merge constraints that may overwrite each other.
- *
- * Assumes that "before" and "after" sets of constraints are
- * internally consistent.
- */
-
-BufferState BufferState::MergeSequentialConstraints(const BufferState& arg_before,
-                                                    const BufferState& arg_after,
-                                                    Analyzer* analyzer) {
-  auto before = arg_before.constraints;
-  auto after = arg_after.constraints;
-
-  std::vector<bool> used(after.size(), false);
-  std::vector<BufferConstraint> merged;
-
-  for (const auto& prev : before) {
-    PrimExpr overwrite_expr = Bool(false);
-    PrimExpr expand_known_at = Bool(false);
-
-    auto axis_vars = prev.axis_vars;
-    PrimExpr prev_value = prev.value.value();
-
-    for (size_t i = 0; i < after.size(); i++) {
-      if (after[i].buffer.same_as(prev.buffer)) {
-        Optional<PrimExpr> overwritten_with = after[i].value;
-        if (overwritten_with && analyzer->CanProveEqual(prev_value, overwritten_with.value())) {
-          expand_known_at = SimplifyAsAndOfOrs(expand_known_at || after[i].predicate, analyzer);
-          used[i] = true;
-        } else {
-          overwrite_expr = SimplifyAsAndOfOrs(overwrite_expr || after[i].predicate, analyzer);
-        }
-      }
-    }
-
-    PrimExpr new_predicate = prev.predicate;
-    if (!is_zero(overwrite_expr)) {
-      new_predicate = SimplifyAsAndOfOrs(new_predicate && !overwrite_expr, analyzer);
-    }
-    if (!is_zero(expand_known_at)) {
-      new_predicate = SimplifyAsAndOfOrs(new_predicate || expand_known_at, analyzer);
-    }
-
-    if (!is_zero(new_predicate)) {
-      BufferConstraint post_constraint(prev.buffer, axis_vars, new_predicate, prev_value);
-      merged.push_back(post_constraint);
-    }
-  }
-
-  for (size_t i = 0; i < after.size(); i++) {
-    if (!used[i]) {
-      if (after[i].value) {
-        merged.push_back(after[i]);
-      }
-    }
-  }
-
-  return {merged};
-}
-
 BufferState BufferState::Union(const BufferState& a, const BufferState& b, Analyzer* analyzer) {
   BufferState output_state = a;
-  for (const auto& constraint : b.constraints) {
-    output_state.constraints.push_back(constraint);
+  for (const auto& b_constraint : b.constraints) {
+    bool used = false;
+    for (auto& a_constraint : output_state.constraints) {
+      if (a_constraint.buffer.same_as(b_constraint.buffer) &&
+          analyzer->CanProveEqual(a_constraint.value.value(), b_constraint.value.value())) {
+        a_constraint.predicate =
+            SimplifyAsAndOfOrs(a_constraint.predicate || b_constraint.predicate, analyzer);
+        used = true;
+        break;
+      }
+    }
+    if (!used) {
+      output_state.constraints.push_back(b_constraint);
+    }
   }
 
-  return BufferState::MergeDisjointConstraints(std::move(output_state), analyzer);
+  return output_state;
 }
 
 BufferState BufferState::Intersection(const BufferState& a, const BufferState& b,
