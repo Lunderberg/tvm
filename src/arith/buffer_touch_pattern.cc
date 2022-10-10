@@ -1064,6 +1064,26 @@ bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* a
   return true;
 }
 
+void BufferState::AddCondition(const PrimExpr& condition) {
+  for (auto& constraint : constraints) {
+    constraint.predicate = constraint.predicate && condition;
+  }
+}
+
+void BufferState::Substitute(const Map<Var, PrimExpr>& var_remap) {
+  if (var_remap.size()) {
+    for (auto& prior : constraints) {
+      prior.predicate = tvm::tir::Substitute(prior.predicate, var_remap);
+    }
+  }
+}
+
+void BufferState::Simplify(Analyzer* analyzer) {
+  for (auto& constraint : constraints) {
+    constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate, analyzer);
+  }
+}
+
 BufferState BufferState::MergeDisjointConstraints(BufferState state, Analyzer* analyzer) {
   auto& constraints = state.constraints;
 
@@ -1387,14 +1407,6 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   analyzer.Bind(iterator_ranges_);
   analyzer.Bind(free_predicate_parameters_);
 
-  // Utility function to simplify a list of knowns
-  auto normalize_simplify = [&analyzer](BufferState priors) -> BufferState {
-    for (auto& prior : priors.constraints) {
-      prior.predicate = SimplifyAsAndOfOrs(prior.predicate, &analyzer);
-    }
-    return priors;
-  };
-
   while (to_visit.size()) {
     size_t visiting = *to_visit.begin();
     to_visit.erase(visiting);
@@ -1404,35 +1416,15 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     block.known_at_block_start = [&]() -> BufferState {
       ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
 
-      auto remap_priors = [&](BufferState priors, Map<Var, PrimExpr> var_remap) -> BufferState {
-        if (var_remap.size()) {
-          for (auto& prior : priors.constraints) {
-            PrimExpr before_remap = prior.predicate;
-            PrimExpr after_remap = Substitute(before_remap, var_remap);
-            if (!before_remap.same_as(after_remap)) {
-              prior.predicate = SimplifyAsAndOfOrs(after_remap, &analyzer);
-            }
-          }
-        }
-        return priors;
-      };
-
-      auto add_condition = [&](BufferState priors, PrimExpr condition) -> BufferState {
-        for (auto& prior : priors.constraints) {
-          prior.predicate = SimplifyAsAndOfOrs(prior.predicate && condition, &analyzer);
-        }
-        return priors;
-      };
-
       if (block.predecessors.size() == 0) {
         // Block has no predecessors, nothing is known initially
         return {};
       } else if (block.predecessors.size() == 1) {
         // Block has only a single predecessor
         const auto& pred = block.predecessors[0];
-        size_t prev_index = pred.from_index;
-        const auto& prev_block = control_flow_[prev_index];
-        return remap_priors(prev_block.known_at_block_end, pred.var_remap);
+        auto knowns = control_flow_[pred.from_index].known_at_block_end;
+        knowns.Substitute(pred.var_remap);
+        return knowns;
       }
 
       ICHECK_EQ(block.predecessors.size(), 2);
@@ -1446,26 +1438,28 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         return {};
       } else if (!visited_once.count(pred_a.from_index)) {
         auto out = pred_b_block.known_at_block_end;
-        out = remap_priors(out, pred_b.var_remap);
+        out.Substitute(pred_b.var_remap);
         if (pred_a.predicate && pred_b.predicate) {
-          out = add_condition(out, pred_a.predicate.value() || pred_b.predicate.value());
+          out.AddCondition(pred_a.predicate.value() || pred_b.predicate.value());
         }
-        out = normalize_simplify(out);
+        out.Simplify(&analyzer);
         return out;
       } else if (!visited_once.count(pred_b.from_index)) {
         auto out = pred_a_block.known_at_block_end;
-        out = remap_priors(out, pred_a.var_remap);
+        out.Substitute(pred_a.var_remap);
         if (pred_a.predicate && pred_b.predicate) {
-          out = add_condition(out, pred_a.predicate.value() || pred_b.predicate.value());
+          out.AddCondition(pred_a.predicate.value() || pred_b.predicate.value());
         }
 
-        out = normalize_simplify(out);
+        out.Simplify(&analyzer);
 
         return out;
       }
 
-      auto priors_a = remap_priors(pred_a_block.known_at_block_end, pred_a.var_remap);
-      auto priors_b = remap_priors(pred_b_block.known_at_block_end, pred_b.var_remap);
+      auto priors_a = pred_a_block.known_at_block_end;
+      auto priors_b = pred_b_block.known_at_block_end;
+      priors_a.Substitute(pred_a.var_remap);
+      priors_b.Substitute(pred_b.var_remap);
 
       BufferState output_state;
       if (pred_a.predicate && pred_b.predicate) {

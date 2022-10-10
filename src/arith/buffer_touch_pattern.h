@@ -205,6 +205,10 @@ struct BufferConstraint {
 };
 
 struct BufferState {
+  void AddCondition(const PrimExpr& condition);
+  void Substitute(const Map<Var, PrimExpr>& var_remap);
+  void Simplify(Analyzer* analyzer);
+
   std::vector<BufferConstraint> constraints;
 
   /* \brief Merge constraints from multiple disjoint predecessors */
