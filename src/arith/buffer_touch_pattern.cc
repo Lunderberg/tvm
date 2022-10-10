@@ -1028,27 +1028,20 @@ bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* a
 
   ExprDeepEqual deep_equal;
 
-  // With<ConstraintContext> context(
-  //     analyzer, predicate.FreeParameterConstraints() &&
-  //     other.predicate.FreeParameterConstraints());
-
   auto implies = [&](const PrimExpr& a, const PrimExpr& b) -> bool {
     With<ConstraintContext> context(analyzer, a);
     return analyzer->CanProve(b);
   };
 
   // Predicates must be equivalent expressions, or must both be undefined
-  PrimExpr predicate_expr = this->predicate;
-  PrimExpr other_predicate_expr = other.predicate;
-
-  bool equivalent_predicates = deep_equal(predicate_expr, other_predicate_expr) ||
-                               (implies(predicate_expr, other_predicate_expr) &&
-                                implies(other_predicate_expr, predicate_expr));
+  bool equivalent_predicates =
+      deep_equal(predicate, other.predicate) ||
+      (implies(predicate, other.predicate) && implies(other.predicate, predicate));
   if (!equivalent_predicates) {
     return false;
   }
 
-  // The known value must be equal, or both must be undefined
+  // The known value must be equal
   if (!deep_equal(value, other.value) && !analyzer->CanProveEqual(value, other.value)) {
     return false;
   }
