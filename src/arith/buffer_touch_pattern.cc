@@ -1394,64 +1394,57 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     block.known_at_block_start = [&]() -> BufferState {
       ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
 
-      if (block.predecessors.size() == 0) {
-        // Block has no predecessors, nothing is known initially
+      std::vector<BufferState> states;
+      for (const auto& pred : block.predecessors) {
+        const auto& pred_block = control_flow_[pred.from_index];
+        BufferState state = pred_block.known_at_block_end;
+        state.Substitute(pred.var_remap);
+        states.push_back(state);
+      }
+
+      if (std::all_of(block.predecessors.begin(), block.predecessors.end(),
+                      [&](const auto& pred) { return !visited_once.count(pred.from_index); })) {
+        // Predecessors, if any, are unvisited.
         return {};
       } else if (block.predecessors.size() == 1) {
         // Block has only a single predecessor
-        const auto& pred = block.predecessors[0];
-        auto knowns = control_flow_[pred.from_index].known_at_block_end;
-        knowns.Substitute(pred.var_remap);
-        return knowns;
+        return states[0];
       }
-
-      ICHECK_EQ(block.predecessors.size(), 2);
 
       const auto& pred_a = block.predecessors[0];
       const auto& pred_b = block.predecessors[1];
 
-      const auto& pred_a_block = control_flow_[pred_a.from_index];
-      const auto& pred_b_block = control_flow_[pred_b.from_index];
+      auto& priors_a = states[0];
+      auto& priors_b = states[1];
 
-      auto priors_a = pred_a_block.known_at_block_end;
-      auto priors_b = pred_b_block.known_at_block_end;
-
-      priors_a.Substitute(pred_a.var_remap);
-      priors_b.Substitute(pred_b.var_remap);
-
-      if (!visited_once.count(pred_a.from_index) && !visited_once.count(pred_b.from_index)) {
-        return {};
-      } else if (!visited_once.count(pred_a.from_index)) {
-        auto out = priors_b;
-        if (pred_a.predicate && pred_b.predicate) {
-          out.AddCondition(pred_a.predicate.value() || pred_b.predicate.value());
-        }
-        out.Simplify(&analyzer);
-        return out;
+      // During the first visit of a block, predecessor blocks may be
+      // unvisited, even though we preferentially visit earlier blocks
+      // first.  (e.g. During the first visit of the start of a For
+      // loop, the end of the For loop has not yet been visited.)  If
+      // this is the case, assume the best-case scenario that all
+      // knowns are consistent, and rely on a later visit to
+      // resolve/remove any conflicts.
+      if (!visited_once.count(pred_a.from_index)) {
+        return priors_b;
       } else if (!visited_once.count(pred_b.from_index)) {
-        auto out = priors_a;
-        if (pred_a.predicate && pred_b.predicate) {
-          out.AddCondition(pred_a.predicate.value() || pred_b.predicate.value());
-        }
-        out.Simplify(&analyzer);
-
-        return out;
+        return priors_a;
       }
 
-      BufferState output_state;
       if (pred_a.predicate && pred_b.predicate) {
+        // The predicate can identify which predecessor block applies
+        // (e.g. i==0 for the first loop iteration, i>0 for remaining
+        // loop iterations).  Therefore, we can use all buffer
+        // constraints, conditional on having come from the
+        // predecessor that provides it.
         priors_a.AddCondition(pred_a.predicate.value());
         priors_b.AddCondition(pred_b.predicate.value());
-        output_state = BufferState::Union(priors_a, priors_b, &analyzer);
-      } else if (!pred_a.predicate && !pred_b.predicate) {
-        output_state = BufferState::Intersection(priors_a, priors_b, &analyzer);
+        return BufferState::Union(priors_a, priors_b, &analyzer);
       } else {
-        LOG(FATAL) << "In control flow graph, "
-                   << "either both predecessors must have predicates, "
-                   << "or neither may have a predicate";
+        // We don't know which predecessor applies.  Therefore, the
+        // only buffer constraints that can be used are those that
+        // appear in both predecessors.
+        return BufferState::Intersection(priors_a, priors_b, &analyzer);
       }
-
-      return output_state;
     }();
     const auto& prior_state = block.known_at_block_start;
 
