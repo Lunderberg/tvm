@@ -1049,11 +1049,7 @@ bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* a
   }
 
   // The known value must be equal, or both must be undefined
-  PrimExpr known_expr = value.value();
-  PrimExpr other_known_expr = other.value.value();
-
-  if (!deep_equal(known_expr, other_known_expr) &&
-      !analyzer->CanProveEqual(known_expr, other_known_expr)) {
+  if (!deep_equal(value, other.value) && !analyzer->CanProveEqual(value, other.value)) {
     return false;
   }
 
@@ -1090,7 +1086,7 @@ BufferState BufferState::Union(const BufferState& a, const BufferState& b, Analy
     bool used = false;
     for (auto& a_constraint : output_state.constraints) {
       if (a_constraint.buffer.same_as(b_constraint.buffer) &&
-          analyzer->CanProveEqual(a_constraint.value.value(), b_constraint.value.value())) {
+          analyzer->CanProveEqual(a_constraint.value, b_constraint.value)) {
         a_constraint.predicate =
             SimplifyAsAndOfOrs(a_constraint.predicate || b_constraint.predicate, analyzer);
         used = true;
@@ -1118,8 +1114,8 @@ BufferState BufferState::Intersection(const BufferState& a, const BufferState& b
         if (!is_zero(predicate)) {
           auto axis_vars = ai.axis_vars;
           With<ConstraintContext> context(analyzer, predicate);
-          PrimExpr known_value_a = ai.value.value();
-          PrimExpr known_value_b = bi.value.value();
+          PrimExpr known_value_a = ai.value;
+          PrimExpr known_value_b = bi.value;
 
           bool is_consistent = analyzer->CanProveEqual(known_value_a, known_value_b);
           if (is_consistent) {
@@ -1315,7 +1311,7 @@ void BufferState::ApplyTouches(const std::vector<BufferTouch>& touch_points,
     for (auto& constraint : constraints) {
       PrimExpr expand_known_at = Bool(false);
 
-      PrimExpr prev_value = constraint.value.value();
+      PrimExpr prev_value = constraint.value;
 
       for (size_t i = 0; i < new_knowns.size(); i++) {
         if (new_knowns[i].buffer.same_as(constraint.buffer)) {
@@ -1336,19 +1332,15 @@ void BufferState::ApplyTouches(const std::vector<BufferTouch>& touch_points,
 
     for (size_t i = 0; i < new_knowns.size(); i++) {
       if (!used[i]) {
-        if (new_knowns[i].value) {
-          constraints.push_back(new_knowns[i]);
-        }
+        constraints.push_back(new_knowns[i]);
       }
     }
   }
 
-  constraints.erase(std::remove_if(constraints.begin(), constraints.end(),
-                                   [&](const auto& constraint) {
-                                     return is_zero(constraint.predicate) ||
-                                            !constraint.value.defined();
-                                   }),
-                    constraints.end());
+  constraints.erase(
+      std::remove_if(constraints.begin(), constraints.end(),
+                     [&](const auto& constraint) { return is_zero(constraint.predicate); }),
+      constraints.end());
 }
 
 void BufferState::RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters,
