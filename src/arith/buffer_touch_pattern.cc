@@ -1454,6 +1454,20 @@ void BufferState::RemoveFreeParameters(const Map<Var, Range>& free_predicate_par
   }
 }
 
+bool BufferState::IsEquivalentTo(const BufferState& other, Analyzer* analyzer) const {
+  if (constraints.size() != other.constraints.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < constraints.size(); i++) {
+    if (!constraints[i].IsEquivalentTo(other.constraints[i], analyzer)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void BufferTouchPattern::ForwardPropagateKnownValues() {
   // Values to visit when searching.  Using a std::set to
   // preferentially visit nodes near the start of the control flow.
@@ -1557,29 +1571,12 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     // Step 3: If any changes are made to the post knowns since the
     // previous time we visited this block, mark the successor block
     // as needing to be visited.
-    bool has_updated_post = [&]() -> bool {
-      if (!visited_once.count(visiting)) {
-        return true;
-      }
-
-      const auto& previous_post_knowns = block.known_at_block_end.constraints;
-
-      if (post_state.constraints.size() != previous_post_knowns.size()) {
-        return true;
-      }
-
-      for (size_t i = 0; i < post_state.constraints.size(); i++) {
-        if (!post_state.constraints[i].IsEquivalentTo(previous_post_knowns[i], &analyzer)) {
-          return true;
-        }
-      }
-
-      return false;
-    }();
-
+    //
     // TODO: Have a maximum number of times that blocks may be
     // visited, to guard against infinite loops.
-    if (has_updated_post) {
+    // if (has_updated_post) {
+    if (!visited_once.count(visiting) ||
+        !post_state.IsEquivalentTo(block.known_at_block_end, &analyzer)) {
       block.known_at_block_end.constraints = post_state.constraints;
       for (size_t successor : block.successors) {
         to_visit.insert(successor);

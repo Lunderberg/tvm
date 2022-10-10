@@ -212,6 +212,7 @@ struct BufferState {
   void ApplyTouches(const std::vector<BufferTouch>& touch_points,
                     const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
   void RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
+  bool IsEquivalentTo(const BufferState& other, Analyzer* analyzer) const;
 
   std::vector<BufferConstraint> constraints;
 
