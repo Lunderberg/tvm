@@ -1189,39 +1189,17 @@ BufferState BufferState::MergeSequentialConstraints(const BufferState& arg_befor
   return {merged};
 }
 
-BufferState BufferState::MergePredecessorConstraintsWithPostcondition(const BufferState& a,
-                                                                      const BufferState& b,
-                                                                      PrimExpr a_condition,
-                                                                      PrimExpr b_condition,
-                                                                      Analyzer* analyzer) {
-  const auto& a_constraints = a.constraints;
-  const auto& b_constraints = b.constraints;
-
-  BufferState output_state;
-  std::vector<bool> a_used(a_constraints.size(), false);
-  std::vector<bool> b_used(b_constraints.size(), false);
-
-  for (size_t i = 0; i < a_constraints.size(); i++) {
-    if (!a_used[i]) {
-      auto constraint = a_constraints[i];
-      constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate && a_condition, analyzer);
-      output_state.constraints.push_back(std::move(constraint));
-    }
-  }
-
-  for (size_t i = 0; i < b_constraints.size(); i++) {
-    if (!b_used[i]) {
-      auto constraint = b_constraints[i];
-      constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate && b_condition, analyzer);
-      output_state.constraints.push_back(std::move(constraint));
-    }
+BufferState BufferState::Union(const BufferState& a, const BufferState& b, Analyzer* analyzer) {
+  BufferState output_state = a;
+  for (const auto& constraint : b.constraints) {
+    output_state.constraints.push_back(constraint);
   }
 
   return BufferState::MergeDisjointConstraints(std::move(output_state), analyzer);
 }
 
-BufferState BufferState::MergePredecessorConstraints(const BufferState& a, const BufferState& b,
-                                                     Analyzer* analyzer) {
+BufferState BufferState::Intersection(const BufferState& a, const BufferState& b,
+                                      Analyzer* analyzer) {
   // For a constraint to be in the output, it must be present in both
   // inputs.
 
@@ -1434,39 +1412,39 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
       const auto& pred_a_block = control_flow_[pred_a.from_index];
       const auto& pred_b_block = control_flow_[pred_b.from_index];
+
+      auto priors_a = pred_a_block.known_at_block_end;
+      auto priors_b = pred_b_block.known_at_block_end;
+
+      priors_a.Substitute(pred_a.var_remap);
+      priors_b.Substitute(pred_b.var_remap);
+
       if (!visited_once.count(pred_a.from_index) && !visited_once.count(pred_b.from_index)) {
         return {};
       } else if (!visited_once.count(pred_a.from_index)) {
-        auto out = pred_b_block.known_at_block_end;
-        out.Substitute(pred_b.var_remap);
+        auto out = priors_b;
         if (pred_a.predicate && pred_b.predicate) {
           out.AddCondition(pred_a.predicate.value() || pred_b.predicate.value());
         }
         out.Simplify(&analyzer);
         return out;
       } else if (!visited_once.count(pred_b.from_index)) {
-        auto out = pred_a_block.known_at_block_end;
-        out.Substitute(pred_a.var_remap);
+        auto out = priors_a;
         if (pred_a.predicate && pred_b.predicate) {
           out.AddCondition(pred_a.predicate.value() || pred_b.predicate.value());
         }
-
         out.Simplify(&analyzer);
 
         return out;
       }
 
-      auto priors_a = pred_a_block.known_at_block_end;
-      auto priors_b = pred_b_block.known_at_block_end;
-      priors_a.Substitute(pred_a.var_remap);
-      priors_b.Substitute(pred_b.var_remap);
-
       BufferState output_state;
       if (pred_a.predicate && pred_b.predicate) {
-        output_state = BufferState::MergePredecessorConstraintsWithPostcondition(
-            priors_a, priors_b, pred_a.predicate.value(), pred_b.predicate.value(), &analyzer);
+        priors_a.AddCondition(pred_a.predicate.value());
+        priors_b.AddCondition(pred_b.predicate.value());
+        output_state = BufferState::Union(priors_a, priors_b, &analyzer);
       } else if (!pred_a.predicate && !pred_b.predicate) {
-        output_state = BufferState::MergePredecessorConstraints(priors_a, priors_b, &analyzer);
+        output_state = BufferState::Intersection(priors_a, priors_b, &analyzer);
       } else {
         LOG(FATAL) << "In control flow graph, "
                    << "either both predecessors must have predicates, "

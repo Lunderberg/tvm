@@ -212,15 +212,10 @@ struct BufferState {
   std::vector<BufferConstraint> constraints;
 
   /* \brief Merge constraints from multiple disjoint predecessors */
-  static BufferState MergePredecessorConstraintsWithPostcondition(const BufferState& a,
-                                                                  const BufferState& b,
-                                                                  PrimExpr a_condition,
-                                                                  PrimExpr b_condition,
-                                                                  Analyzer* analyzer);
+  static BufferState Union(const BufferState& a, const BufferState& b, Analyzer* analyzer);
 
   /* \brief Merge constraints from multiple possible-conflicting predecessors */
-  static BufferState MergePredecessorConstraints(const BufferState& a, const BufferState& b,
-                                                 Analyzer* analyzer);
+  static BufferState Intersection(const BufferState& a, const BufferState& b, Analyzer* analyzer);
 
   /* \brief Merge constraints that produce the same known value */
   static BufferState MergeDisjointConstraints(BufferState constraints, Analyzer* analyzer);
