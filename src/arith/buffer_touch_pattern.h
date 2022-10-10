@@ -185,8 +185,6 @@ class BufferTouch {
 
 struct BufferConstraint {
   BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars, PrimExpr predicate,
-                   Optional<PrimExpr> value);
-  BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars, PrimExpr predicate,
                    PrimExpr value);
 
   tir::Buffer buffer;

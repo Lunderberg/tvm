@@ -1000,10 +1000,6 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
 }
 
 BufferConstraint::BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars,
-                                   PrimExpr predicate, Optional<PrimExpr> value)
-    : buffer(buffer), axis_vars(axis_vars), predicate(predicate), value(value) {}
-
-BufferConstraint::BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars,
                                    PrimExpr predicate, PrimExpr value)
     : buffer(buffer), axis_vars(axis_vars), predicate(predicate), value(value) {}
 
@@ -1122,12 +1118,10 @@ BufferState BufferState::Intersection(const BufferState& a, const BufferState& b
         if (!is_zero(predicate)) {
           auto axis_vars = ai.axis_vars;
           With<ConstraintContext> context(analyzer, predicate);
-          Optional<PrimExpr> known_value_a = ai.value;
-          Optional<PrimExpr> known_value_b = bi.value;
+          PrimExpr known_value_a = ai.value.value();
+          PrimExpr known_value_b = bi.value.value();
 
-          bool is_consistent =
-              known_value_a && known_value_b &&
-              analyzer->CanProveEqual(known_value_a.value(), known_value_b.value());
+          bool is_consistent = analyzer->CanProveEqual(known_value_a, known_value_b);
           if (is_consistent) {
             output_state.constraints.push_back({ai.buffer, axis_vars, predicate, known_value_a});
           }
