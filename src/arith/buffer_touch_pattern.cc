@@ -1358,6 +1358,7 @@ void BufferState::ApplyTouches(const std::vector<BufferTouch>& touch_points,
                                const Map<Var, Range>& free_predicate_parameters,
                                Analyzer* analyzer) {
   std::vector<BufferConstraint> new_knowns;
+  Map<Buffer, PrimExpr> keep_prior_known_at;
 
   for (auto& touch : touch_points) {
     if (touch.touch_type == BufferTouch::AccessType::Read) {
@@ -1380,11 +1381,13 @@ void BufferState::ApplyTouches(const std::vector<BufferTouch>& touch_points,
           BufferRegionValueReplacer::Apply(region.known_values, known_value, analyzer);
 
       if (!is_zero(updated_predicate)) {
-        if (HasBufferLoad(updated_value)) {
-          BufferConstraint overwrite{touch.buffer, axis_vars, updated_predicate, NullOpt};
-
-          new_knowns.push_back(overwrite);
+        if (auto it = keep_prior_known_at.find(touch.buffer); it != keep_prior_known_at.end()) {
+          keep_prior_known_at.Set(touch.buffer, (*it).second && !updated_predicate);
         } else {
+          keep_prior_known_at.Set(touch.buffer, !updated_predicate);
+        }
+
+        if (!HasBufferLoad(updated_value)) {
           BufferConstraint new_constraint{touch.buffer, axis_vars, updated_predicate,
                                           updated_value};
           new_knowns.push_back(new_constraint);
@@ -1392,15 +1395,55 @@ void BufferState::ApplyTouches(const std::vector<BufferTouch>& touch_points,
       }
     }
   }
-  BufferState state_updates{new_knowns};
 
-  // Step 3: Generate the knowns at the end of the block
-  // auto post_state = [&]() -> BufferState {
-  if (state_updates.constraints.size() == 0) {
-    return;
+  if (keep_prior_known_at.size()) {
+    for (auto& constraint : constraints) {
+      if (auto it = keep_prior_known_at.find(constraint.buffer); it != keep_prior_known_at.end()) {
+        constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate && (*it).second, analyzer);
+      }
+    }
   }
 
-  *this = BufferState::MergeSequentialConstraints(*this, state_updates, analyzer);
+  if (new_knowns.size()) {
+    std::vector<bool> used(new_knowns.size(), false);
+
+    for (auto& constraint : constraints) {
+      PrimExpr expand_known_at = Bool(false);
+
+      PrimExpr prev_value = constraint.value.value();
+
+      for (size_t i = 0; i < new_knowns.size(); i++) {
+        if (new_knowns[i].buffer.same_as(constraint.buffer)) {
+          Optional<PrimExpr> overwritten_with = new_knowns[i].value;
+          if (overwritten_with && analyzer->CanProveEqual(prev_value, overwritten_with.value())) {
+            expand_known_at =
+                SimplifyAsAndOfOrs(expand_known_at || new_knowns[i].predicate, analyzer);
+            used[i] = true;
+          }
+        }
+      }
+
+      if (!is_zero(expand_known_at)) {
+        constraint.predicate =
+            SimplifyAsAndOfOrs(constraint.predicate || expand_known_at, analyzer);
+      }
+    }
+
+    for (size_t i = 0; i < new_knowns.size(); i++) {
+      if (!used[i]) {
+        if (new_knowns[i].value) {
+          constraints.push_back(new_knowns[i]);
+        }
+      }
+    }
+  }
+
+  constraints.erase(std::remove_if(constraints.begin(), constraints.end(),
+                                   [&](const auto& constraint) {
+                                     return is_zero(constraint.predicate) ||
+                                            !constraint.value.defined();
+                                   }),
+                    constraints.end());
 }
 
 void BufferState::RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters,
