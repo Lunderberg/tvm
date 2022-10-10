@@ -180,6 +180,7 @@ class BufferTouch {
   AccessType touch_type;
 
   friend class BufferTouchPattern;
+  friend class BufferState;
 };
 
 struct BufferConstraint {
@@ -208,6 +209,9 @@ struct BufferState {
   void AddCondition(const PrimExpr& condition);
   void Substitute(const Map<Var, PrimExpr>& var_remap);
   void Simplify(Analyzer* analyzer);
+  void ApplyTouches(const std::vector<BufferTouch>& touch_points,
+                    const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
+  void RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
 
   std::vector<BufferConstraint> constraints;
 

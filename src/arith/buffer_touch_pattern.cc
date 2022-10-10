@@ -1354,6 +1354,63 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
   const std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>>& known_values_;
 };
 
+void BufferState::ApplyTouches(const std::vector<BufferTouch>& touch_points,
+                               const Map<Var, Range>& free_predicate_parameters,
+                               Analyzer* analyzer) {
+  std::vector<BufferConstraint> new_knowns;
+
+  for (auto& touch : touch_points) {
+    if (touch.touch_type == BufferTouch::AccessType::Read) {
+      continue;
+    }
+
+    Array<Var> axis_vars = touch.axis_vars;
+    PrimExpr predicate = touch.predicate;
+
+    PrimExpr known_value = touch.value;
+    auto regions =
+        BufferRegionCollector::Collect(constraints, {touch.predicate, touch.value}, analyzer);
+
+    for (const auto& region : regions) {
+      PrimExpr updated_predicate = BufferRegionValueReplacer::Apply(
+          region.known_values, region.region_predicate && predicate, analyzer);
+
+      updated_predicate = SimplifyAsAndOfOrs(updated_predicate, analyzer);
+      PrimExpr updated_value =
+          BufferRegionValueReplacer::Apply(region.known_values, known_value, analyzer);
+
+      if (!is_zero(updated_predicate)) {
+        if (HasBufferLoad(updated_value)) {
+          BufferConstraint overwrite{touch.buffer, axis_vars, updated_predicate, NullOpt};
+
+          new_knowns.push_back(overwrite);
+        } else {
+          BufferConstraint new_constraint{touch.buffer, axis_vars, updated_predicate,
+                                          updated_value};
+          new_knowns.push_back(new_constraint);
+        }
+      }
+    }
+  }
+  BufferState state_updates{new_knowns};
+
+  // Step 3: Generate the knowns at the end of the block
+  // auto post_state = [&]() -> BufferState {
+  if (state_updates.constraints.size() == 0) {
+    return;
+  }
+
+  *this = BufferState::MergeSequentialConstraints(*this, state_updates, analyzer);
+}
+
+void BufferState::RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters,
+                                       Analyzer* analyzer) {
+  for (auto& known : constraints) {
+    known.predicate = NarrowExpressionToTrue(known.predicate, free_predicate_parameters);
+    known.predicate = SimplifyAsAndOfOrs(known.predicate, analyzer);
+  }
+}
+
 void BufferTouchPattern::ForwardPropagateKnownValues() {
   // Values to visit when searching.  Using a std::set to
   // preferentially visit nodes near the start of the control flow.
@@ -1449,62 +1506,12 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
     const auto& prior_state = block.known_at_block_start;
 
     // Step 2: Collect knowns provided as a result of executing this block
-    auto state_updates = [&]() -> BufferState {
-      std::vector<BufferConstraint> new_knowns;
 
-      for (auto& touch : block.touch_points) {
-        if (touch.touch_type == BufferTouch::AccessType::Read) {
-          continue;
-        }
+    auto post_state = prior_state;
+    post_state.ApplyTouches(block.touch_points, free_predicate_parameters_, &analyzer);
+    post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
 
-        Array<Var> axis_vars = touch.axis_vars;
-        PrimExpr predicate = touch.predicate;
-
-        PrimExpr known_value = touch.value;
-        auto regions = BufferRegionCollector::Collect(prior_state.constraints,
-                                                      {predicate, known_value}, &analyzer);
-
-        for (const auto& region : regions) {
-          PrimExpr updated_predicate = BufferRegionValueReplacer::Apply(
-              region.known_values, region.region_predicate && predicate, &analyzer);
-
-          updated_predicate = SimplifyAsAndOfOrs(updated_predicate, &analyzer);
-          PrimExpr updated_value =
-              BufferRegionValueReplacer::Apply(region.known_values, known_value, &analyzer);
-
-          if (!is_zero(updated_predicate)) {
-            if (HasBufferLoad(updated_value)) {
-              BufferConstraint overwrite{touch.buffer, axis_vars, updated_predicate, NullOpt};
-
-              new_knowns.push_back(overwrite);
-            } else {
-              BufferConstraint new_constraint{touch.buffer, axis_vars, updated_predicate,
-                                              updated_value};
-              new_knowns.push_back(new_constraint);
-            }
-          }
-        }
-      }
-      return BufferState{new_knowns};
-    }();
-
-    // Step 3: Generate the knowns at the end of the block
-    auto post_state = [&]() -> BufferState {
-      if (state_updates.constraints.size() == 0) {
-        return prior_state;
-      }
-
-      auto post_state =
-          BufferState::MergeSequentialConstraints(prior_state, state_updates, &analyzer);
-
-      for (auto& known : post_state.constraints) {
-        known.predicate = NarrowExpressionToTrue(known.predicate, free_predicate_parameters_);
-        known.predicate = SimplifyAsAndOfOrs(known.predicate, &analyzer);
-      }
-      return post_state;
-    }();
-
-    // Step 4: If any changes are made to the post knowns since the
+    // Step 3: If any changes are made to the post knowns since the
     // previous time we visited this block, mark the successor block
     // as needing to be visited.
     bool has_updated_post = [&]() -> bool {
