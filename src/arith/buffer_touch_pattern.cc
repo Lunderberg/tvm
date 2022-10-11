@@ -329,39 +329,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto after_loop = AppendControlBlock("after loop over " + op->loop_var->name_hint);
     MarkControlFlow(loop_end, after_loop,
                     {{op->loop_var, analyzer_.Simplify(op->min + op->extent - 1)}});
-
-    std::vector<size_t> to_visit = {loop_start};
-    std::unordered_set<size_t> marked = {loop_start};
-
-    std::vector<const BufferTouch*> touches;
-
-    while (to_visit.size()) {
-      size_t visiting = to_visit.back();
-      to_visit.pop_back();
-
-      const auto& block = out_->control_flow_[visiting];
-
-      for (const auto& touch : block.touch_points) {
-        touches.push_back(&touch);
-      }
-
-      for (size_t successor : block.successors) {
-        if (!marked.count(successor)) {
-          to_visit.push_back(successor);
-          marked.insert(successor);
-        }
-      }
-    }
-
-    bool depends_on_other_iterations = touches.size() > 1;
-
-    if (depends_on_other_iterations) {
-      std::stringstream d_name;
-      d_name << op->loop_var->name_hint << "_delta";
-      Var delta(d_name.str(), op->loop_var.dtype());
-      MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}},
-                      op->loop_var > op->min);
-    }
+    MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}},
+                    op->loop_var > op->min);
   }
 
   void VisitStmt_(const IfThenElseNode* op) override {
