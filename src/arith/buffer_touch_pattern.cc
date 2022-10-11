@@ -83,6 +83,8 @@ Optional<PrimExpr> SubstituteParamValues(const Array<Var>& param_vars, const Arr
 BufferTouch::BufferTouch(tir::Buffer buffer, PrimExpr predicate, AccessType touch_type,
                          PrimExpr value)
     : buffer(buffer), predicate(predicate), value(value), touch_type(touch_type) {}
+BufferTouch::BufferTouch(tir::Buffer buffer, PrimExpr predicate, PrimExpr value)
+    : buffer(buffer), predicate(predicate), value(value), touch_type(AccessType::Assume) {}
 
 bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
@@ -119,7 +121,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
   using Parent = IRMutatorWithAnalyzer;
 
   BufferConstraintApply(const Map<Buffer, Array<Var>>& axis_var_lookup,
-                        const std::vector<BufferConstraint>& knowns, Analyzer* analyzer)
+                        const std::vector<BufferTouch>& knowns, Analyzer* analyzer)
       : Parent(analyzer), axis_var_lookup_(axis_var_lookup), knowns_(knowns) {}
 
   using Parent::VisitExpr_;
@@ -164,7 +166,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
 
  private:
   const Map<Buffer, Array<Var>>& axis_var_lookup_;
-  const std::vector<BufferConstraint>& knowns_;
+  const std::vector<BufferTouch>& knowns_;
 };
 
 // Find Read region of the tensor in the stmt.
@@ -787,12 +789,9 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
   return os;
 }
 
-BufferConstraint::BufferConstraint(tir::Buffer buffer, PrimExpr predicate, PrimExpr value)
-    : buffer(buffer), predicate(predicate), value(value) {}
-
-bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const {
+bool BufferTouch::IsEquivalentTo(const BufferTouch& other, Analyzer* analyzer) const {
   // Constraints must apply to the same buffer to be equivalent
-  if (!buffer.same_as(other.buffer)) {
+  if (!buffer.same_as(other.buffer) || touch_type != other.touch_type) {
     return false;
   }
 
@@ -854,10 +853,6 @@ void BufferState::Simplify(Analyzer* analyzer) {
   }
 }
 
-std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj) {
-  return os << "Buffer " << obj.buffer->name << " is " << obj.value << " if " << obj.predicate;
-}
-
 BufferState BufferState::Union(const BufferState& a, const BufferState& b, Analyzer* analyzer) {
   BufferState output_state = a;
   for (const auto& b_constraint : b.constraints) {
@@ -914,7 +909,7 @@ class BufferRegionCollector : public ExprVisitor {
   };
 
   static std::vector<Region> Collect(const Map<Buffer, Array<Var>>& axis_var_lookup,
-                                     const std::vector<BufferConstraint>& knowns,
+                                     const std::vector<BufferTouch>& knowns,
                                      const std::vector<Optional<PrimExpr>>& exprs,
                                      Analyzer* analyzer) {
     BufferRegionCollector collector(axis_var_lookup, knowns, analyzer);
@@ -931,7 +926,7 @@ class BufferRegionCollector : public ExprVisitor {
   using Parent = ExprVisitor;
 
   BufferRegionCollector(const Map<Buffer, Array<Var>>& axis_var_lookup,
-                        const std::vector<BufferConstraint>& knowns, Analyzer* analyzer)
+                        const std::vector<BufferTouch>& knowns, Analyzer* analyzer)
       : analyzer_(analyzer), axis_var_lookup_(axis_var_lookup), knowns_(knowns) {
     regions_.push_back(Region{Bool(true), {}});
   }
@@ -949,7 +944,7 @@ class BufferRegionCollector : public ExprVisitor {
 
     PrimExpr unknown_region = Bool(true);
 
-    for (const BufferConstraint& constraint : knowns_) {
+    for (const BufferTouch& constraint : knowns_) {
       if (!op->buffer.same_as(constraint.buffer)) {
         // This is a different buffer, so continue searching.
         continue;
@@ -997,7 +992,7 @@ class BufferRegionCollector : public ExprVisitor {
   Analyzer* analyzer_;
   std::vector<Region> regions_;
   const Map<Buffer, Array<Var>>& axis_var_lookup_;
-  const std::vector<BufferConstraint>& knowns_;
+  const std::vector<BufferTouch>& knowns_;
 };
 
 class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
@@ -1038,7 +1033,7 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
 
 void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
                                const std::vector<BufferTouch>& touch_points, Analyzer* analyzer) {
-  std::vector<BufferConstraint> new_knowns;
+  std::vector<BufferTouch> new_knowns;
   Map<Buffer, PrimExpr> keep_prior_known_at;
 
   for (auto& touch : touch_points) {
@@ -1066,7 +1061,7 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
         }
 
         if (!HasBufferLoad(updated_value)) {
-          BufferConstraint new_constraint{touch.buffer, updated_predicate, updated_value};
+          BufferTouch new_constraint{touch.buffer, updated_predicate, updated_value};
           new_knowns.push_back(new_constraint);
         }
       }

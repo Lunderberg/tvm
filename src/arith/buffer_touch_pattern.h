@@ -35,17 +35,42 @@
 namespace tvm {
 namespace arith {
 
-class BufferTouch {
- public:
+struct BufferTouch {
   enum class AccessType {
     Read,
     Write,
     Assume,
   };
 
-  BufferTouch(tir::Buffer buffer, PrimExpr predicate, AccessType touch_type, PrimExpr known_value);
+  /*! \brief The buffer being touched */
+  tir::Buffer buffer;
 
-  /* \brief Checks if this Predicate is a subset of another predicate
+  /*! \brief A predicate that is true when this touch applies
+   *
+   * May be in terms of axis variables to indicate touches that impact
+   * only a portion of a buffer.
+   */
+  PrimExpr predicate;
+
+  /*! \brief The value in this buffer after the touch
+   *
+   * May be in terms of axis variables to indicate a known
+   * non-constant value.  May be in terms of a BufferLoad to indicate
+   * an unknown value.
+   */
+  PrimExpr value;
+
+  /*! \brief How the buffer was interacted with
+   *
+   * When used as a constraint (e.g. in BufferState), should use
+   * Assume.
+   */
+  AccessType touch_type{AccessType::Assume};
+
+  BufferTouch(tir::Buffer buffer, PrimExpr predicate, AccessType touch_type, PrimExpr known_value);
+  BufferTouch(tir::Buffer buffer, PrimExpr predicate, PrimExpr known_value);
+
+  /* \brief Checks if this touch affects a subset of indices of another
    *
    * Returns true if the indices accessed by this touch are a subset
    * of predicate is true can be proven to be a subset of the other
@@ -54,7 +79,7 @@ class BufferTouch {
    */
   bool IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const;
 
-  /* \brief Checks if this Predicate is distinct of another predicate
+  /* \brief Checks if this touch affects distinct indicates from another
    *
    * Returns true if it can be proven that the two predicates cannot
    * be simultaneously true.  Returns false if it cannot be proven
@@ -62,29 +87,15 @@ class BufferTouch {
    */
   bool IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) const;
 
+  /* \brief Checks if this touch affects distinct indicates from another
+   *
+   * Returns true if it can be proven that the two predicates cannot
+   * be simultaneously true.  Returns false if it cannot be proven
+   * that the two predicates are distinct.
+   */
+  bool IsEquivalentTo(const BufferTouch& other, Analyzer* analyzer) const;
+
   friend std::ostream& operator<<(std::ostream& os, const BufferTouch& expr);
-
- private:
-  tir::Buffer buffer;
-  PrimExpr predicate;
-  PrimExpr value;
-
-  AccessType touch_type;
-
-  friend class BufferTouchPattern;
-  friend class BufferState;
-};
-
-struct BufferConstraint {
-  BufferConstraint(tir::Buffer buffer, PrimExpr predicate, PrimExpr value);
-
-  tir::Buffer buffer;
-  PrimExpr predicate;
-  PrimExpr value;
-
-  friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
-
-  bool IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const;
 };
 
 /*! \brief Represents the known state of buffers at a specific point */
@@ -182,7 +193,7 @@ class BufferState {
 
  private:
   /*! \brief The known constraints */
-  std::vector<BufferConstraint> constraints;
+  std::vector<BufferTouch> constraints;
 };
 
 class BufferTouchPattern {
