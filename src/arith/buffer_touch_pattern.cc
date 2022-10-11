@@ -80,12 +80,6 @@ Optional<PrimExpr> SubstituteParamValues(const Array<Var>& param_vars, const Arr
 }
 }  // namespace
 
-BufferTouch::BufferTouch(tir::Buffer buffer, PrimExpr predicate, AccessType touch_type,
-                         PrimExpr value)
-    : buffer(buffer), predicate(predicate), value(value), touch_type(touch_type) {}
-BufferTouch::BufferTouch(tir::Buffer buffer, PrimExpr predicate, PrimExpr value)
-    : buffer(buffer), predicate(predicate), value(value), touch_type(AccessType::Assume) {}
-
 bool BufferTouch::IsSubsetOf(const BufferTouch& other, Analyzer* analyzer) const {
   if (this->buffer.same_as(other.buffer)) {
     With<ConstraintContext> constraint(analyzer, predicate);
@@ -525,7 +519,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     PrimExpr predicate_expr =
         local_analyzer.Simplify(transform_predicate && scope_predicate && loop_predicate);
 
-    BufferTouch buffer_touch(node->buffer, predicate_expr, touch_type, known_value_expr);
+    BufferTouch buffer_touch = {node->buffer, predicate_expr, known_value_expr, touch_type};
 
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
   }

@@ -67,9 +67,6 @@ struct BufferTouch {
    */
   AccessType touch_type{AccessType::Assume};
 
-  BufferTouch(tir::Buffer buffer, PrimExpr predicate, AccessType touch_type, PrimExpr known_value);
-  BufferTouch(tir::Buffer buffer, PrimExpr predicate, PrimExpr known_value);
-
   /* \brief Checks if this touch affects a subset of indices of another
    *
    * Returns true if the indices accessed by this touch are a subset
