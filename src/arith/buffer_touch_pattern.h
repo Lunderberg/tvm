@@ -43,8 +43,7 @@ class BufferTouch {
     Assume,
   };
 
-  BufferTouch(tir::Buffer buffer, Array<Var> axis_vars, PrimExpr predicate, AccessType touch_type,
-              PrimExpr known_value);
+  BufferTouch(tir::Buffer buffer, PrimExpr predicate, AccessType touch_type, PrimExpr known_value);
 
   /* \brief Checks if this Predicate is a subset of another predicate
    *
@@ -66,10 +65,7 @@ class BufferTouch {
   friend std::ostream& operator<<(std::ostream& os, const BufferTouch& expr);
 
  private:
-  void CheckSameAxisVars(const BufferTouch& other) const;
-
   tir::Buffer buffer;
-  Array<tir::Var> axis_vars;
   PrimExpr predicate;
   PrimExpr value;
 
@@ -80,15 +76,11 @@ class BufferTouch {
 };
 
 struct BufferConstraint {
-  BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars, PrimExpr predicate,
-                   PrimExpr value);
+  BufferConstraint(tir::Buffer buffer, PrimExpr predicate, PrimExpr value);
 
   tir::Buffer buffer;
-  Array<tir::Var> axis_vars;
   PrimExpr predicate;
   PrimExpr value;
-
-  void CheckSameAxisVars(const BufferConstraint& other) const;
 
   friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
 
@@ -132,7 +124,9 @@ class BufferState {
    *
    * \param touch_points The buffer touch points to
    */
-  void ApplyTouches(const std::vector<BufferTouch>& touch_points,
+  void ApplyTouches(const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
+
+                    const std::vector<BufferTouch>& touch_points,
                     const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
 
   /*! \brief Remove free parameters from the constraints
@@ -270,6 +264,8 @@ class BufferTouchPattern {
 
   Map<Var, Range> free_predicate_parameters_;
   Map<Var, Range> iterator_ranges_;
+
+  Map<tir::Buffer, Array<tir::Var>> axis_vars_;
 
   /* \brief Assumptions that do not depend on buffer values */
   std::vector<PrimExpr> non_buffer_assumptions_;
