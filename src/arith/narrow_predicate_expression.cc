@@ -78,13 +78,31 @@ class ExpressionNarrower : public tir::ExprMutator {
       return this->VisitExpr(t->b);
     }();
 
-    if (buffer_load_in_current_comparison_ && t.dtype().is_bool()) {
-      buffer_load_in_current_comparison_ = false;
+    if (contains_unknown_expr_ && t.dtype().is_bool()) {
+      contains_unknown_expr_ = false;
       return Bool(CurrentContext() == Context::Minimize);
     } else if (a.same_as(t->a) && b.same_as(t->b)) {
       return std::move(t);
     } else {
       return T(a, b);
+    }
+  }
+
+  PrimExpr VisitExpr_(const FloorModNode* op) override {
+    // FloorMod is non-monotonic, so inserting min/max won't remove
+    // the free parameters.
+    contains_unknown_expr_ = true;
+    return Parent::VisitExpr_(op);
+  }
+
+  PrimExpr VisitExpr_(const FloorDivNode* op) override {
+    auto res_a = this->VisitExpr(op->a);
+    auto res_b = this->VisitExpr(op->b);
+    if (is_zero(res_b)) {
+      contains_unknown_expr_ = true;
+      return IntImm(op->dtype, 0);
+    } else {
+      return floordiv(res_a, res_b);
     }
   }
 
@@ -109,11 +127,15 @@ class ExpressionNarrower : public tir::ExprMutator {
   }
 
   PrimExpr VisitExpr_(const EQNode* op) override {
-    return this->VisitExpr((op->a <= op->b) && (op->a >= op->b));
+    auto res_a = this->VisitExpr(op->a <= op->b);
+    auto res_b = this->VisitExpr(op->b <= op->a);
+    return res_a && res_b;
   }
 
   PrimExpr VisitExpr_(const NENode* op) override {
-    return this->VisitExpr((op->a < op->b) || (op->a > op->b));
+    auto res_a = this->VisitExpr(op->a < op->b);
+    auto res_b = this->VisitExpr(op->b < op->a);
+    return res_a || res_b;
   }
 
   PrimExpr VisitExpr_(const SubNode* op) override {
@@ -128,7 +150,7 @@ class ExpressionNarrower : public tir::ExprMutator {
   }
 
   PrimExpr VisitExpr_(const BufferLoadNode* op) override {
-    buffer_load_in_current_comparison_ = true;
+    contains_unknown_expr_ = true;
     return GetRef<PrimExpr>(op);
   }
 
@@ -183,7 +205,7 @@ class ExpressionNarrower : public tir::ExprMutator {
 
   std::vector<Context> context_stack_;
   Map<Var, Range> free_parameters_;
-  bool buffer_load_in_current_comparison_{false};
+  bool contains_unknown_expr_{false};
 };
 
 PrimExpr NarrowPredicateExpression(PrimExpr expr, Map<Var, Range> free_parameters) {
