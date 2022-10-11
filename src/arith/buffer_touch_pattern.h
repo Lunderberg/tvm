@@ -99,22 +99,72 @@ struct BufferConstraint {
   bool IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const;
 };
 
-struct BufferState {
+/*! \brief Represents the known state of buffers at a specific point */
+class BufferState {
+ public:
+  /*! Default constructor
+   *
+   * Initialize the buffer state with no known information.
+   */
+  BufferState() {}
+
+  /*! \brief Apply a condition to all known constraints
+   *
+   * For example, when propagating pre-loop constraints into the body
+   * of a loop, add a condition that the loop iterator is zero.
+   *
+   * \param condition The condition to apply
+   */
   void AddCondition(const PrimExpr& condition);
+
+  /*! \brief Perform a variable substitution for all constraints
+   *
+   * For example, when propagating constraints from the end of a loop
+   * to the beginning, replace `i` with `i-1`.
+   *
+   * \param var_remap The variable remapping to apply.
+   */
   void Substitute(const Map<Var, PrimExpr>& var_remap);
+
+  /*! \brief Simplify the predicate of all constraints
+   *
+   * \param analyzer The analyzer with which to simplify
+   */
   void Simplify(Analyzer* analyzer);
+
+  /*! \brief Apply the
+   *
+   * \param touch_points The buffer touch points to
+   */
   void ApplyTouches(const std::vector<BufferTouch>& touch_points,
                     const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
-  void RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
-  bool IsEquivalentTo(const BufferState& other, Analyzer* analyzer) const;
 
-  std::vector<BufferConstraint> constraints;
+  /*! \brief Remove free parameters from the constraints
+   *
+   * \param free_predicate_parameters
+   *
+   * \param analyzer The analyzer with which to simplify after removal
+   */
+  void RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
+
+  /*! \brief Check if two buffer states are equivalent
+   *
+   * \param other
+   *
+   * \param analyzer The analyzer used to check equality of PrimExpr
+   *
+   * \return True if the two states are provably equivalent, false otherwise.
+   */
+  bool IsEquivalentTo(const BufferState& other, Analyzer* analyzer) const;
 
   /* \brief Merge constraints from multiple disjoint predecessors */
   static BufferState Union(const BufferState& a, const BufferState& b, Analyzer* analyzer);
 
   /* \brief Merge constraints from multiple possible-conflicting predecessors */
   static BufferState Intersection(const BufferState& a, const BufferState& b, Analyzer* analyzer);
+
+  /*! \brief The known constraints */
+  std::vector<BufferConstraint> constraints;
 };
 
 class BufferTouchPattern {
