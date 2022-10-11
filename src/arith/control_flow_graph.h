@@ -35,6 +35,7 @@
 namespace tvm {
 namespace arith {
 
+/*! \brief Represents an interaction with a buffer */
 struct BufferTouch {
   enum class AccessType {
     Read,
