@@ -1037,9 +1037,7 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
 };
 
 void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
-                               const std::vector<BufferTouch>& touch_points,
-                               const Map<Var, Range>& free_predicate_parameters,
-                               Analyzer* analyzer) {
+                               const std::vector<BufferTouch>& touch_points, Analyzer* analyzer) {
   std::vector<BufferConstraint> new_knowns;
   Map<Buffer, PrimExpr> keep_prior_known_at;
 
@@ -1238,8 +1236,7 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
     // Step 2: Collect knowns provided as a result of executing this block
     auto post_state = block.known_at_block_start;
-    post_state.ApplyTouches(axis_var_lookup_, block.touch_points, free_predicate_parameters_,
-                            &analyzer);
+    post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
     post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
 
     // Step 3: If any changes are made to the post knowns since the

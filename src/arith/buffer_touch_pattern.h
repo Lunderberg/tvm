@@ -152,8 +152,7 @@ class BufferState {
    * \param analyzer The analyzer to use for simplifications
    */
   void ApplyTouches(const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
-                    const std::vector<BufferTouch>& touch_points,
-                    const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
+                    const std::vector<BufferTouch>& touch_points, Analyzer* analyzer);
 
   /*! \brief Remove free parameters from the constraints
    *
