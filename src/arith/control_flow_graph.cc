@@ -18,11 +18,11 @@
  */
 
 /*!
- * \file buffer_touch_pattern.cc
+ * \file control_flow_graph.cc
  * \brief Utility to deduce bound of expression
  */
 
-#include "buffer_touch_pattern.h"
+#include "control_flow_graph.h"
 
 #include <tvm/runtime/registry.h>
 #include <tvm/tir/analysis.h>

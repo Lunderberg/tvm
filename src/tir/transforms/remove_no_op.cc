@@ -30,8 +30,8 @@
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
-#include "../../arith/buffer_touch_pattern.h"
 #include "../../arith/const_fold.h"
+#include "../../arith/control_flow_graph.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
 #include "ir_utils.h"
 

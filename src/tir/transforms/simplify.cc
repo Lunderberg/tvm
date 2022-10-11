@@ -29,7 +29,7 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/transform.h>
 
-#include "../../arith/buffer_touch_pattern.h"
+#include "../../arith/control_flow_graph.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
 
 namespace tvm {

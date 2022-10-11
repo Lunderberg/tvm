@@ -27,7 +27,7 @@
 #include <tvm/arith/analyzer.h>
 #include <tvm/tir/stmt.h>
 
-#include "../../arith/buffer_touch_pattern.h"
+#include "../../arith/control_flow_graph.h"
 
 namespace tvm {
 namespace tir {

@@ -18,7 +18,7 @@
  */
 
 /*!
- * \file buffer_touch_pattern.h
+ * \file control_flow_graph.h
  * \brief Utility for extracting and interacting with buffer touch points
  */
 
@@ -29,8 +29,8 @@
 #include <tvm/tir/stmt.h>
 #include <tvm/tir/var.h>
 
-#ifndef TVM_ARITH_BUFFER_TOUCH_PATTERN_H_
-#define TVM_ARITH_BUFFER_TOUCH_PATTERN_H_
+#ifndef TVM_ARITH_CONTROL_FLOW_GRAPH_H_
+#define TVM_ARITH_CONTROL_FLOW_GRAPH_H_
 
 namespace tvm {
 namespace arith {
@@ -349,4 +349,4 @@ class ControlFlowGraph {
 
 }  // namespace arith
 }  // namespace tvm
-#endif  // TVM_ARITH_BUFFER_TOUCH_PATTERN_H_
+#endif  // TVM_ARITH_CONTROL_FLOW_GRAPH_H_
