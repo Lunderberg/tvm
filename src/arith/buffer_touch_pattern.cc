@@ -164,7 +164,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
  public:
   static void Extract(BufferTouchPattern* out, const Stmt& stmt) {
     BufferTouchExtractor extractor(out);
-    extractor.AppendControlBlock("start");
+    extractor.AppendControlBlock();
     extractor(stmt);
   }
 
@@ -274,9 +274,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // Appending a control block ensures that all control blocks have
     // at most one statement that changes the known buffer contents.
     auto prev_block = CurrentControlBlock();
-    std::stringstream ss;
-    ss << "after T.assume of " << assumption;
-    auto new_block = AppendControlBlock(ss.str());
+    auto new_block = AppendControlBlock();
     MarkControlFlow(prev_block, new_block);
   }
 
@@ -308,7 +306,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     // Appending a control block ensures that all control blocks have
     // at most one statement that changes the buffer contents.
     auto prev_block = CurrentControlBlock();
-    auto new_block = AppendControlBlock("after bufferstore into " + op->buffer->name);
+    auto new_block = AppendControlBlock();
     MarkControlFlow(prev_block, new_block);
   }
 
@@ -319,14 +317,14 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     out_->iterator_ranges_.Set(op->loop_var, Range::FromMinExtent(op->min, op->extent));
 
     auto before_loop = CurrentControlBlock();
-    auto loop_start = AppendControlBlock("start of loop over " + op->loop_var->name_hint);
+    auto loop_start = AppendControlBlock();
     MarkControlFlow(before_loop, loop_start, {}, op->loop_var == op->min);
 
     BindActiveLoopVar binding(this, op->loop_var, op->min, op->extent);
     Parent::VisitStmt_(op);
 
     auto loop_end = CurrentControlBlock();
-    auto after_loop = AppendControlBlock("after loop over " + op->loop_var->name_hint);
+    auto after_loop = AppendControlBlock();
     MarkControlFlow(loop_end, after_loop,
                     {{op->loop_var, analyzer_.Simplify(op->min + op->extent - 1)}});
     MarkControlFlow(loop_end, loop_start, {{op->loop_var, op->loop_var - 1}},
@@ -340,18 +338,10 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     auto before_branching = CurrentControlBlock();
 
-    auto branch_start = AppendControlBlock([&]() {
-      std::stringstream ss;
-      ss << "before branch on " << real_condition;
-      return ss.str();
-    }());
+    auto branch_start = AppendControlBlock();
     MarkControlFlow(before_branching, branch_start);
 
-    auto then_start = AppendControlBlock([&]() {
-      std::stringstream ss;
-      ss << "then_case on " << real_condition;
-      return ss.str();
-    }());
+    auto then_start = AppendControlBlock();
     MarkControlFlow(branch_start, then_start);
     {
       InternalConstraintContext context(this, real_condition);
@@ -362,11 +352,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     size_t else_start = -1;
     size_t else_end = -1;
     if (op->else_case.defined()) {
-      else_start = AppendControlBlock([&]() {
-        std::stringstream ss;
-        ss << "else_case on " << real_condition;
-        return ss.str();
-      }());
+      else_start = AppendControlBlock();
       MarkControlFlow(branch_start, else_start);
 
       auto negation = analyzer_.rewrite_simplify(Not(real_condition));
@@ -376,11 +362,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       else_end = CurrentControlBlock();
     }
 
-    auto after_branching = AppendControlBlock([&]() {
-      std::stringstream ss;
-      ss << "after branch on " << real_condition;
-      return ss.str();
-    }());
+    auto after_branching = AppendControlBlock();
     MarkControlFlow(then_end, after_branching);
 
     if (op->else_case.defined()) {
@@ -594,7 +576,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   }
 
   /* \brief Add a new control block, returning its index */
-  size_t AppendControlBlock(std::string name) {
+  size_t AppendControlBlock() {
     size_t index = out_->control_flow_.size();
     out_->control_flow_.emplace_back();
     return index;
