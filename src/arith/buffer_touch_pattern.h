@@ -203,11 +203,11 @@ class BufferState {
   std::vector<BufferTouch> constraints;
 };
 
-class BufferTouchPattern {
+class ControlFlowGraph {
  public:
   /* \brief Extract the touch pattern from a TIR statement
    */
-  explicit BufferTouchPattern(const tir::Stmt& stmt);
+  explicit ControlFlowGraph(const tir::Stmt& stmt);
 
   /* \brief Check if a write is overwritten without impacting final results
    *
@@ -247,7 +247,7 @@ class BufferTouchPattern {
   void RemoveTouches(const tir::BufferStore& store);
 
  private:
-  friend std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern);
+  friend std::ostream& operator<<(std::ostream& os, const ControlFlowGraph& pattern);
 
   /*! \brief Propagate known values from known BufferStore/assume
    *  subsequent control flow blocks
@@ -344,7 +344,7 @@ class BufferTouchPattern {
    */
   std::vector<PrimExpr> non_buffer_assumptions_;
 
-  friend class BufferTouchExtractor;
+  friend class ControlFlowGraphBuilder;
 };
 
 }  // namespace arith

@@ -45,7 +45,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
     arith::Analyzer analyzer;
     analyzer.rewrite_simplify.SetEnabledExtensions(
         arith::RewriteSimplifier::kTransitivelyProveInequalities);
-    arith::BufferTouchPattern touch_pattern(stmt);
+    arith::ControlFlowGraph touch_pattern(stmt);
     NoOpRemover visitor(&analyzer, std::move(touch_pattern));
     return visitor(std::move(stmt));
   }
@@ -55,7 +55,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   using Parent::VisitStmt;
   using Parent::VisitStmt_;
 
-  NoOpRemover(arith::Analyzer* analyzer, arith::BufferTouchPattern touch_pattern)
+  NoOpRemover(arith::Analyzer* analyzer, arith::ControlFlowGraph touch_pattern)
       : Parent(analyzer), touch_pattern_(touch_pattern) {}
 
   Stmt VisitStmt_(const LetStmtNode* op) final {
@@ -259,12 +259,12 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   }
 
   std::unordered_map<const VarNode*, arith::IntSet> var_range_map_;
-  arith::BufferTouchPattern touch_pattern_;
+  arith::ControlFlowGraph touch_pattern_;
 };
 
 Stmt RemoveNoOp(Stmt stmt) { return NoOpRemover::Apply(std::move(stmt)); }
 
-Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::BufferTouchPattern* touch_pattern) {
+Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::ControlFlowGraph* touch_pattern) {
   return NoOpRemover::Apply(std::move(stmt));
 }
 

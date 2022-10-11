@@ -39,7 +39,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
  public:
   static Stmt Apply(Stmt stmt) {
     arith::Analyzer analyzer;
-    arith::BufferTouchPattern touch_pattern(stmt);
+    arith::ControlFlowGraph touch_pattern(stmt);
     BranchReducer visitor(&analyzer, std::move(touch_pattern));
     return visitor(std::move(stmt));
   }
@@ -49,7 +49,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
   using Parent::VisitStmt;
   using Parent::VisitStmt_;
 
-  BranchReducer(arith::Analyzer* analyzer, arith::BufferTouchPattern touch_pattern)
+  BranchReducer(arith::Analyzer* analyzer, arith::ControlFlowGraph touch_pattern)
       : Parent(analyzer), touch_pattern_(touch_pattern) {}
 
   Stmt VisitStmt_(const IfThenElseNode* op) final {
@@ -77,7 +77,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
   }
 
  private:
-  arith::BufferTouchPattern touch_pattern_;
+  arith::ControlFlowGraph touch_pattern_;
 };
 
 Stmt ReduceBranchingThroughOvercompute(Stmt stmt) { return BranchReducer::Apply(std::move(stmt)); }

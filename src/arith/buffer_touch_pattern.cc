@@ -159,25 +159,30 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
   const std::vector<BufferTouch>& knowns_;
 };
 
-// Find Read region of the tensor in the stmt.
-class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
+/*! \brief Extract the control-flow graph
+ *
+ * Walk through a statement, populating the control-flow graph.
+ */
+class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
  public:
-  static void Extract(BufferTouchPattern* out, const Stmt& stmt) {
-    BufferTouchExtractor extractor(out);
+  static void Build(ControlFlowGraph* out, const Stmt& stmt) {
+    ControlFlowGraphBuilder extractor(out);
     extractor.AppendControlBlock();
     extractor(stmt);
   }
 
  private:
-  BufferTouchExtractor(BufferTouchPattern* out) : out_(out) {}
+  ControlFlowGraphBuilder(ControlFlowGraph* out) : out_(out) {}
 
   using Parent = IRVisitorWithAnalyzer;
   using Parent::VisitExpr_;
   using Parent::VisitStmt_;
 
   void VisitStmt(const Stmt& stmt) override {
-    // Point from the statement to the first touch point that occurs
-    // at or after the statement.
+    // Update the lookup table to determine which control-flow block
+    // contains the start of the specified statement.  This is used
+    // later to determine which set of known values should be used to
+    // simplify a statement.
     out_->control_flow_lookup_[stmt.get()] = CurrentControlBlock();
     Stmt prev_stmt = current_stmt_;
     current_stmt_ = stmt;
@@ -263,10 +268,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       return;
     }
 
-    // TODO: An assumption shouldn't remove previously known
-    // constraints.  Will need to split out the BufferConstraint from
-    // the clearing of previous in KnownBufferValue.
-
     {
       InternalConstraintContext context(this, additional_predicate);
       VisitAccess(load, BufferTouch::AccessType::Assume, value);
@@ -309,9 +310,6 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     auto new_block = AppendControlBlock();
     MarkControlFlow(prev_block, new_block);
   }
-
-  // TODO: tvm_access_ptr and address_of both act as opaque access of
-  // entire buffer.
 
   void VisitStmt_(const ForNode* op) override {
     out_->iterator_ranges_.Set(op->loop_var, Range::FromMinExtent(op->min, op->extent));
@@ -515,6 +513,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return vars;
   }
 
+  /*! \brief Solve for indices in terms of buffer axes */
   IntConstraintsTransform SolveForBufferIndices(const Array<Var>& index_variables,
                                                 const Array<PrimExpr>& index_expressions) {
     ICHECK_EQ(index_variables.size(), index_expressions.size());
@@ -603,12 +602,12 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
     out_->control_flow_[from_block].successors.push_back(to_block);
     out_->control_flow_[to_block].predecessors.push_back(
-        BufferTouchPattern::ControlFlowEdge{from_block, var_remap, post_condition});
+        ControlFlowGraph::ControlFlowEdge{from_block, var_remap, post_condition});
   }
 
   // Internal utility, context manager for entering/leaving a scoped constraint
   struct InternalConstraintContext {
-    InternalConstraintContext(BufferTouchExtractor* self, PrimExpr constraint)
+    InternalConstraintContext(ControlFlowGraphBuilder* self, PrimExpr constraint)
         : self(self), analyzer_context(&self->analyzer_, constraint) {
       old_num_constraints = self->conditions_.size();
 
@@ -628,7 +627,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
                               self->conditions_.end());
     }
 
-    BufferTouchExtractor* self{nullptr};
+    ControlFlowGraphBuilder* self{nullptr};
     With<ConstraintContext> analyzer_context;
     size_t old_num_constraints{0};
     size_t new_num_constraints{0};
@@ -642,7 +641,8 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   // Internal utility, context manager for tracking a loop
   struct BindActiveLoopVar {
-    BindActiveLoopVar(BufferTouchExtractor* self, Var var, PrimExpr loop_min, PrimExpr loop_extent)
+    BindActiveLoopVar(ControlFlowGraphBuilder* self, Var var, PrimExpr loop_min,
+                      PrimExpr loop_extent)
         : self(self), var(var) {
       PrimExpr loop_max = loop_min + (loop_extent - 1);
       auto loop_range = Range::FromMinExtent(loop_min, loop_extent);
@@ -651,7 +651,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
     ~BindActiveLoopVar() { self->active_loop_iterators_.pop_back(); }
 
-    BufferTouchExtractor* self;
+    ControlFlowGraphBuilder* self;
     Var var;
 
     // Disable default-generated copy/move assignment and constructors
@@ -663,7 +663,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
 
   // Internal utility, context manager for tracking a variable binding
   struct BindLetVar {
-    BindLetVar(BufferTouchExtractor* self, Var var, PrimExpr value) : self(self), var(var) {
+    BindLetVar(ControlFlowGraphBuilder* self, Var var, PrimExpr value) : self(self), var(var) {
       self->let_bindings_using_loop_[var.get()] = value;
       self->loop_dependent_vars_.insert(var.get());
     }
@@ -671,7 +671,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
       self->loop_dependent_vars_.erase(var.get());
       self->let_bindings_using_loop_.erase(var.get());
     }
-    BufferTouchExtractor* self;
+    ControlFlowGraphBuilder* self;
     Var var;
 
     // Disable default-generated copy/move assignment and constructors
@@ -707,15 +707,15 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   Stmt current_stmt_;
 
   // Output data structure
-  BufferTouchPattern* out_;
+  ControlFlowGraph* out_;
 };
 
-BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
-  BufferTouchExtractor::Extract(this, stmt);
+ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt) {
+  ControlFlowGraphBuilder::Build(this, stmt);
   ForwardPropagateKnownValues();
 }
 
-std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlowBlock& block) {
+std::ostream& operator<<(std::ostream& os, const ControlFlowGraph::ControlFlowBlock& block) {
   os << "Predecessors: [";
   for (size_t i = 0; i < block.predecessors.size(); i++) {
     if (i) {
@@ -749,7 +749,7 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlow
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern) {
+std::ostream& operator<<(std::ostream& os, const ControlFlowGraph& pattern) {
   os << "Touch pattern contains " << pattern.control_flow_.size() << " control blocks."
      << (pattern.control_flow_.size() ? "\n" : "");
   for (size_t i = 0; i < pattern.control_flow_.size(); i++) {
@@ -1103,7 +1103,7 @@ bool BufferState::IsEquivalentTo(const BufferState& other, Analyzer* analyzer) c
   return true;
 }
 
-void BufferTouchPattern::ForwardPropagateKnownValues() {
+void ControlFlowGraph::ForwardPropagateKnownValues() {
   // Values to visit when searching.  Using a std::set to
   // preferentially visit nodes near the start of the control flow.
   std::set<size_t> to_visit;
@@ -1222,8 +1222,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
   }
 }
 
-bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
-                                                    Analyzer* analyzer) const {
+bool ControlFlowGraph::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
+                                                  Analyzer* analyzer) const {
   auto it = control_flow_lookup_.find(store.get());
   ICHECK(it != control_flow_lookup_.end()) << "BufferStore did not occur within analyzed statement";
 
@@ -1265,8 +1265,8 @@ bool BufferTouchPattern::IsOverwrittenWithoutEffect(const tir::BufferStore& stor
   return false;
 }
 
-PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
-                                               Analyzer* analyzer) const {
+PrimExpr ControlFlowGraph::SimplifyInContext(PrimExpr expr, const tir::Stmt& context,
+                                             Analyzer* analyzer) const {
   size_t context_index = [&]() {
     auto it = control_flow_lookup_.find(context.get());
     ICHECK(it != control_flow_lookup_.end())
@@ -1287,7 +1287,7 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
   return expr;
 }
 
-void BufferTouchPattern::RemoveTouches(const tir::BufferStore& store) {
+void ControlFlowGraph::RemoveTouches(const tir::BufferStore& store) {
   // TODO: Update control_flow_
 }
 

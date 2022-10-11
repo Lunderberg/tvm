@@ -37,7 +37,7 @@ namespace tir {
  * Applies the same behavior as the tir.transform.RemoveNoOp pass, but
  * on a single statement, usable as a subroutine in other passes.
  */
-Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::BufferTouchPattern* touch_pattern);
+Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::ControlFlowGraph* touch_pattern);
 
 }  // namespace tir
 }  // namespace tvm

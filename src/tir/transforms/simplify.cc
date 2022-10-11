@@ -85,10 +85,10 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     analyzer->rewrite_simplify.SetEnabledExtensions(config->GetEnabledExtensions());
 
     // std::cout << "Starting collection of touch pattern" << std::endl;
-    std::optional<BufferTouchPattern> touch_pattern = std::nullopt;
+    std::optional<ControlFlowGraph> touch_pattern = std::nullopt;
     if (config->propagate_knowns_to_prove_conditional ||
         config->propagate_knowns_to_simplify_expressions) {
-      touch_pattern = BufferTouchPattern(stmt);
+      touch_pattern = ControlFlowGraph(stmt);
     }
     // BufferTouchPattern touch_pattern(Evaluate(0));
     // std::cout << "Finished collecting touch pattern" << std::endl;
@@ -100,7 +100,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
 
  private:
   explicit StmtSimplifier(Analyzer* analyzer, SimplifyConfig config,
-                          std::optional<BufferTouchPattern> touch_pattern)
+                          std::optional<ControlFlowGraph> touch_pattern)
       : IRMutatorWithAnalyzer(analyzer), config_(config), touch_pattern_(touch_pattern) {}
 
   using Parent = IRMutatorWithAnalyzer;
@@ -246,7 +246,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
   }
 
   SimplifyConfig config_;
-  std::optional<BufferTouchPattern> touch_pattern_;
+  std::optional<ControlFlowGraph> touch_pattern_;
 
   Map<Var, PrimExpr> non_inlined_bindings_;
   Optional<Stmt> current_stmt_{NullOpt};
