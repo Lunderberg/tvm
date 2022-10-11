@@ -40,7 +40,7 @@ namespace arith {
  *
  * Example: `Ramp(start, stride, n)` => `start + stride*lane`
  * Example: `Broadcast(value, n)` => `value`
- * Example: `2*Ramp(start, stride, n) + Broadcast(value,n)` => `start + stride*lane + value`
+ * Example: `2*Ramp(start, stride, n) + Broadcast(value,n)` => `2*(start + stride*lane) + value`
  *
  * \param vector_expr The vectorized expression to examine
  *
