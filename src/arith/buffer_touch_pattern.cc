@@ -122,8 +122,6 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
         continue;
       }
 
-      // TODO: De-dup this lane-handling section with similar code in
-      // VisitBufferAccess.
       Optional<Var> lane_var = NullOpt;
       IntImm num_lanes;
 
@@ -140,12 +138,14 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
 
       auto axis_vars = axis_var_lookup_.at(op->buffer);
       PrimExpr predicate = SubstituteParamValues(axis_vars, indices, known.predicate).value();
+
       std::optional<With<ConstraintContext>> context;
       if (lane_var.defined()) {
         Var lanes = lane_var.value();
         PrimExpr known = (IntImm(lanes.dtype(), 0) <= lanes) && (lanes < num_lanes);
         context.emplace(analyzer_, known);
       }
+
       if (analyzer_->CanProve(predicate)) {
         return SubstituteParamValues(axis_vars, op->indices, known.value).value();
       }
@@ -419,12 +419,27 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     }
   }
 
+  /*! \brief Internal utility, returns true if the expression depends
+   *  on a loop iterator
+   */
   bool UsesLoopVar(const PrimExpr& expr) {
     return UsesVar(expr, [&](const VarNode* expr_var) {
       return loop_dependent_vars_.find(expr_var) != loop_dependent_vars_.end();
     });
   }
 
+  /*! \brief Record the interaction with the buffer.
+   *
+   * \param node The TIR node that accesses the buffer.  Should be
+   * either a BufferLoad or BufferStore node.
+   *
+   * \param touch_type The type of buffer access being performed.  A
+   * BufferStore should always use AccessType::Write.  A BufferLoad
+   * may use either AccessType::Read or AccessType::Assume, depending
+   * on whether the BufferLoad occurs within `builtin::assume`.
+   *
+   * \param known_value_expr The value in the buffer following the access.
+   */
   template <typename BufferAccess>
   void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type,
                    PrimExpr known_value_expr) {
@@ -520,23 +535,18 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     out_->control_flow_.back().touch_points.push_back(buffer_touch);
   }
 
-  std::function<void()> EnterConstraint(const PrimExpr& constraint) override {
-    auto side_effect = tir::SideEffect(constraint);
-    if (side_effect <= tir::CallEffectKind::kPure) {
-      conditions_.push_back(constraint);
-
-      return [this]() {
-        ICHECK(conditions_.size()) << "Internal error: Each condition should only be popped once.";
-        conditions_.pop_back();
-      };
-    } else if (side_effect <= tir::CallEffectKind::kReadState) {
-      Assume(constraint, false);
-      return []() {};
-    } else {
-      return []() {};
-    }
-  }
-
+  /*! \brief Return index variables representing locations within a
+   *   buffer.
+   *
+   * For a given buffer, will always return the same set of variables.
+   *
+   * \param buf The buffer being accessed
+   *
+   * \param indices The indices at which the buffer is being accessed.
+   * These are used to set the dtype of the buffer axis variables.
+   *
+   * \returns Variables representing a position along the buffer's axis.
+   */
   Array<Var> MakeIndexVariables(const Buffer& buf, const Array<PrimExpr>& indices) {
     auto& axis_var_lookup = out_->axis_var_lookup_;
     if (auto it = axis_var_lookup.find(buf); it != axis_var_lookup.end()) {
@@ -581,6 +591,12 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return solution;
   }
 
+  /*! \brief Return a predicate for having reached the current
+   *  control-flow block
+   *
+   * For example, while inside an IfThenElse, will return the
+   * IfThenElse's condition.
+   */
   PrimExpr CurrentScopePredicate() const {
     PrimExpr predicate = Bool(true);
     for (const auto& condition : conditions_) {
@@ -589,8 +605,12 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
     return predicate;
   }
 
-  // Generate a boolean expression represents having reached the
-  // current loop iteration.
+  /*! \brief Generate a boolean expression in terms of buffer axes that
+   * indicates if the current loop iteration has been reached.
+   *
+   * This is used to track whether the loop iteration that made a
+   * specific change has occurred.
+   */
   PrimExpr CurrentLoopPredicate(Map<Var, PrimExpr>& loop_var_to_axis_var) const {
     PrimExpr loop_predicate = Bool(true);
     for (auto it = active_loop_iterators_.rbegin(); it != active_loop_iterators_.rend(); it++) {
@@ -614,15 +634,25 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   /* \brief The index of the current control block */
   size_t CurrentControlBlock() { return out_->control_flow_.size() - 1; }
 
-  /* \brief Mark a possible control from one block to another */
+  /* \brief Mark a possible control from one block to another
+   *
+   * \param from_block The block from which control leaves
+   *
+   * \param to_block The block to which control enters
+   *
+   * \param var_remap Variable replacements that should be made in
+   * known expression while traversing this edge.  For example,
+   * replacing `i` with `i-1` when entering the next loop iteration,
+   * or replacing `i` with `n-1` when concluding a loop.
+   */
   void MarkControlFlow(size_t from_block, size_t to_block, Map<Var, PrimExpr> var_remap = {},
-                       Optional<PrimExpr> predicate = NullOpt) {
+                       Optional<PrimExpr> post_condition = NullOpt) {
     ICHECK_LE(from_block, out_->control_flow_.size());
     ICHECK_LE(to_block, out_->control_flow_.size());
 
     out_->control_flow_[from_block].successors.push_back(to_block);
     out_->control_flow_[to_block].predecessors.push_back(
-        BufferTouchPattern::ControlFlowEdge{from_block, var_remap, predicate});
+        BufferTouchPattern::ControlFlowEdge{from_block, var_remap, post_condition});
   }
 
   // Internal utility, context manager for entering/leaving a scoped constraint
