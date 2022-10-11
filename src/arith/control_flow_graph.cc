@@ -40,7 +40,7 @@
 #include "constraint_extract.h"
 #include "ir_mutator_with_analyzer.h"
 #include "ir_visitor_with_analyzer.h"
-#include "narrow_expression_to_true.h"
+#include "narrow_predicate_expression.h"
 #include "unwrap_vector_expr.h"
 
 namespace tvm {
@@ -1084,7 +1084,7 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
 void BufferState::RemoveFreeParameters(const Map<Var, Range>& free_predicate_parameters,
                                        Analyzer* analyzer) {
   for (auto& known : constraints) {
-    known.predicate = NarrowExpressionToTrue(known.predicate, free_predicate_parameters);
+    known.predicate = NarrowPredicateExpression(known.predicate, free_predicate_parameters);
     known.predicate = SimplifyAsAndOfOrs(known.predicate, analyzer);
   }
 }

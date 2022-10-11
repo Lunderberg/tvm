@@ -18,7 +18,7 @@
  */
 
 /*!
- * \file narrow_expression_to_true.cc
+ * \file narrow_predicate_expression.cc
  * \brief Utility to deduce bound of expression
  */
 #include <tvm/arith/int_solver.h>
@@ -47,16 +47,16 @@ using namespace tir;
  */
 // Utility for generating a known true expression from an expression
 // with free parameters, and the range of those parameters.
-class ExpressionNarrowerToTrue : public tir::ExprMutator {
+class ExpressionNarrower : public tir::ExprMutator {
  public:
-  static PrimExpr Apply(PrimExpr expr, Map<Var, Range> ranges) {
+  static PrimExpr Apply(PrimExpr expr, Map<Var, Range> free_parameters) {
     ICHECK(expr.dtype().is_bool()) << "Expected boolean expression, but received " << expr;
-    ExpressionNarrowerToTrue widener(ranges);
-    return widener(expr);
+    ExpressionNarrower mutator(free_parameters);
+    return mutator(expr);
   }
 
  private:
-  ExpressionNarrowerToTrue(Map<Var, Range> ranges) : ranges_(ranges) {}
+  ExpressionNarrower(Map<Var, Range> free_parameters) : free_parameters_(free_parameters) {}
 
   using Parent = tir::ExprMutator;
   using Parent::VisitExpr_;
@@ -133,8 +133,8 @@ class ExpressionNarrowerToTrue : public tir::ExprMutator {
   }
 
   PrimExpr VisitExpr_(const VarNode* op) override {
-    auto it = ranges_.find(GetRef<Var>(op));
-    if (it == ranges_.end()) {
+    auto it = free_parameters_.find(GetRef<Var>(op));
+    if (it == free_parameters_.end()) {
       return Parent::VisitExpr_(op);
     }
 
@@ -174,23 +174,23 @@ class ExpressionNarrowerToTrue : public tir::ExprMutator {
   }
 
   struct WithContext {
-    WithContext(ExpressionNarrowerToTrue* self, Context context) : self(self) {
+    WithContext(ExpressionNarrower* self, Context context) : self(self) {
       self->context_stack_.push_back(context);
     }
     ~WithContext() { self->context_stack_.pop_back(); }
-    ExpressionNarrowerToTrue* self;
+    ExpressionNarrower* self;
   };
 
   std::vector<Context> context_stack_;
-  Map<Var, Range> ranges_;
+  Map<Var, Range> free_parameters_;
   bool buffer_load_in_current_comparison_{false};
 };
 
-PrimExpr NarrowExpressionToTrue(PrimExpr expr, Map<Var, Range> ranges) {
-  return ExpressionNarrowerToTrue::Apply(std::move(expr), std::move(ranges));
+PrimExpr NarrowPredicateExpression(PrimExpr expr, Map<Var, Range> free_parameters) {
+  return ExpressionNarrower::Apply(std::move(expr), std::move(free_parameters));
 }
 
-TVM_REGISTER_GLOBAL("arith.NarrowExpressionToTrue").set_body_typed(NarrowExpressionToTrue);
+TVM_REGISTER_GLOBAL("arith.NarrowPredicateExpression").set_body_typed(NarrowPredicateExpression);
 
 }  // namespace arith
 }  // namespace tvm

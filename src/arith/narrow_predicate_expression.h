@@ -18,20 +18,20 @@
  */
 
 /*!
- * \file narrow_expression_to_true.h
+ * \file narrow_predicate_expression.h
  * \brief Utility for extracting and interacting with buffer touch points
  */
 
 #include <tvm/ir/expr.h>
 #include <tvm/tir/var.h>
 
-#ifndef TVM_ARITH_NARROW_EXPRESSION_TO_TRUE_H_
-#define TVM_ARITH_NARROW_EXPRESSION_TO_TRUE_H_
+#ifndef TVM_ARITH_NARROW_PREDICATE_EXPRESSION_H_
+#define TVM_ARITH_NARROW_PREDICATE_EXPRESSION_H_
 
 namespace tvm {
 namespace arith {
 
-/* \brief Narrow a true expression a more easily provable condition.
+/* \brief Narrow a true expression to remove free parameters
  *
  * This function provides two guarantees:
  *
@@ -50,8 +50,8 @@ namespace arith {
  * \returns An expression that, if true, implies that the original
  * expression is also true.
  */
-PrimExpr NarrowExpressionToTrue(PrimExpr expr, Map<tir::Var, Range> ranges);
+PrimExpr NarrowPredicateExpression(PrimExpr expr, Map<tir::Var, Range> free_parameters);
 
 }  // namespace arith
 }  // namespace tvm
-#endif  // TVM_ARITH_NARROW_EXPRESSION_TO_TRUE_H_
+#endif  // TVM_ARITH_NARROW_PREDICATE_EXPRESSION_H_
