@@ -180,11 +180,21 @@ class BufferState {
    */
   bool IsEquivalentTo(const BufferState& other, Analyzer* analyzer) const;
 
-  /* \brief Merge constraints from multiple disjoint predecessors */
-  static BufferState Union(const BufferState& a, const BufferState& b, Analyzer* analyzer);
+  /* \brief Add known values provided by another state
+   *
+   * \param other The state with which to merge constraints
+   *
+   * \param analyzer The analyzer with which to simplify the result
+   */
+  void Union(const BufferState& other, Analyzer* analyzer);
 
-  /* \brief Merge constraints from multiple possible-conflicting predecessors */
-  static BufferState Intersection(const BufferState& a, const BufferState& b, Analyzer* analyzer);
+  /* \brief Remove all known values not consistent with another state
+   *
+   * \param other The state with which to merge constraints
+   *
+   * \param analyzer The analyzer with which to simplify the result
+   */
+  void Intersection(const BufferState& other, Analyzer* analyzer);
 
   friend std::ostream& operator<<(std::ostream& os, const BufferState&);
 

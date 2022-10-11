@@ -843,11 +843,10 @@ void BufferState::Simplify(Analyzer* analyzer) {
   }
 }
 
-BufferState BufferState::Union(const BufferState& a, const BufferState& b, Analyzer* analyzer) {
-  BufferState output_state = a;
+void BufferState::Union(const BufferState& b, Analyzer* analyzer) {
   for (const auto& b_constraint : b.constraints) {
     bool used = false;
-    for (auto& a_constraint : output_state.constraints) {
+    for (auto& a_constraint : constraints) {
       if (a_constraint.buffer.same_as(b_constraint.buffer) &&
           analyzer->CanProveEqual(a_constraint.value, b_constraint.value)) {
         a_constraint.predicate =
@@ -857,20 +856,17 @@ BufferState BufferState::Union(const BufferState& a, const BufferState& b, Analy
       }
     }
     if (!used) {
-      output_state.constraints.push_back(b_constraint);
+      constraints.push_back(b_constraint);
     }
   }
-
-  return output_state;
 }
 
-BufferState BufferState::Intersection(const BufferState& a, const BufferState& b,
-                                      Analyzer* analyzer) {
+void BufferState::Intersection(const BufferState& b, Analyzer* analyzer) {
   // For a constraint to be in the output, it must be present in both
   // inputs.
 
-  BufferState output_state;
-  for (const auto& ai : a.constraints) {
+  std::vector<BufferTouch> new_constraints;
+  for (const auto& ai : constraints) {
     for (const auto& bi : b.constraints) {
       if (ai.buffer.same_as(bi.buffer)) {
         PrimExpr predicate = SimplifyAsAndOfOrs(ai.predicate && bi.predicate, analyzer);
@@ -881,14 +877,14 @@ BufferState BufferState::Intersection(const BufferState& a, const BufferState& b
 
           bool is_consistent = analyzer->CanProveEqual(known_value_a, known_value_b);
           if (is_consistent) {
-            output_state.constraints.push_back({ai.buffer, predicate, known_value_a});
+            new_constraints.push_back({ai.buffer, predicate, known_value_a});
           }
         }
       }
     }
   }
 
-  return output_state;
+  constraints = std::move(new_constraints);
 }
 
 class BufferRegionCollector : public ExprVisitor {
@@ -1210,12 +1206,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         // predecessor that provides it.
         priors_a.AddCondition(pred_a.predicate.value());
         priors_b.AddCondition(pred_b.predicate.value());
-        return BufferState::Union(priors_a, priors_b, &analyzer);
+        priors_a.Union(priors_b, &analyzer);
+        return priors_a;
       } else {
         // We don't know which predecessor applies.  Therefore, the
         // only buffer constraints that can be used are those that
         // appear in both predecessors.
-        return BufferState::Intersection(priors_a, priors_b, &analyzer);
+        priors_a.Intersection(priors_b, &analyzer);
+        return priors_a;
       }
     }();
 
