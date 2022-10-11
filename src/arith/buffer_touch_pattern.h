@@ -153,6 +153,11 @@ class BufferState {
   /* \brief Merge constraints from multiple possible-conflicting predecessors */
   static BufferState Intersection(const BufferState& a, const BufferState& b, Analyzer* analyzer);
 
+  friend std::ostream& operator<<(std::ostream& os, const BufferState&);
+
+  friend class BufferTouchPattern;
+
+ private:
   /*! \brief The known constraints */
   std::vector<BufferConstraint> constraints;
 };

@@ -743,24 +743,7 @@ BufferTouchPattern::BufferTouchPattern(const tir::Stmt& stmt) {
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlowBlock& block) {
-  os << "Control block with " << block.touch_points.size() << " touch points"
-     << "\n";
-
-  for (size_t i = 0; i < block.known_at_block_start.constraints.size(); i++) {
-    os << "\t\t"
-       << "PriorKnown[" << i << "] = " << block.known_at_block_start.constraints[i] << "\n";
-  }
-  for (size_t i = 0; i < block.touch_points.size(); i++) {
-    os << "\t\t"
-       << "Touch[" << i << "] = " << block.touch_points[i] << "\n";
-  }
-  for (size_t i = 0; i < block.known_at_block_end.constraints.size(); i++) {
-    os << "\t\t"
-       << "PostKnown[" << i << "] = " << block.known_at_block_end.constraints[i] << "\n";
-  }
-
-  os << "\t\t"
-     << "Predecessors: [";
+  os << "Predecessors: [";
   for (size_t i = 0; i < block.predecessors.size(); i++) {
     if (i) {
       os << ", ";
@@ -775,8 +758,14 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlow
   }
   os << "]\n";
 
-  os << "\t\t"
-     << "Successors: [";
+  os << "Before block: " << block.known_at_block_start << "\n";
+
+  for (size_t i = 0; i < block.touch_points.size(); i++) {
+    os << "Touch[" << i << "] = " << block.touch_points[i] << "\n";
+  }
+  os << "After block: " << block.known_at_block_end << "\n";
+
+  os << "Successors: [";
   for (size_t i = 0; i < block.successors.size(); i++) {
     if (i) {
       os << ", ";
@@ -828,6 +817,14 @@ bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* a
   }
 
   return true;
+}
+
+std::ostream& operator<<(std::ostream& os, const BufferState& state) {
+  for (size_t i = 0; i < state.constraints.size(); i++) {
+    os << "constraints[" << i << "] = " << state.constraints[i]
+       << (i + 1 == state.constraints.size() ? "" : "\n");
+  }
+  return os;
 }
 
 void BufferState::AddCondition(const PrimExpr& condition) {
