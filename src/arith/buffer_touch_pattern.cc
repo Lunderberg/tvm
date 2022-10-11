@@ -822,23 +822,6 @@ BufferConstraint::BufferConstraint(tir::Buffer buffer, Array<tir::Var> axis_vars
                                    PrimExpr predicate, PrimExpr value)
     : buffer(buffer), axis_vars(axis_vars), predicate(predicate), value(value) {}
 
-bool BufferConstraint::IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const {
-  if (!buffer.same_as(other.buffer)) {
-    return true;
-  }
-
-  With<ConstraintContext> constraint(analyzer, predicate);
-  return analyzer->CanProve(!other.predicate);
-}
-
-void BufferConstraint::OverwriteBy(const BufferConstraint& other, Analyzer* analyzer) {
-  if (IsDistinctFrom(other, analyzer)) {
-    return;
-  }
-
-  predicate = SimplifyAsAndOfOrs(other.predicate, analyzer);
-}
-
 bool BufferConstraint::IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const {
   // Constraints must apply to the same buffer to be equivalent
   if (!buffer.same_as(other.buffer)) {

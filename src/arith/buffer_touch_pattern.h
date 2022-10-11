@@ -92,10 +92,6 @@ struct BufferConstraint {
 
   friend std::ostream& operator<<(std::ostream& os, const BufferConstraint& obj);
 
-  bool IsDistinctFrom(const BufferConstraint& other, Analyzer* analyzer) const;
-
-  void OverwriteBy(const BufferConstraint& other, Analyzer* analyzer);
-
   bool IsEquivalentTo(const BufferConstraint& other, Analyzer* analyzer) const;
 };
 
