@@ -60,23 +60,19 @@ bool HasBufferLoad(PrimExpr expr) {
   return visitor.found_buffer_load;
 }
 
-template <typename T>
-Optional<PrimExpr> SubstituteParamValues(const Array<Var>& param_vars, const Array<T>& param_values,
-                                         const Optional<PrimExpr>& expr) {
+Optional<PrimExpr> SubstituteParamValues(const Array<Var>& param_vars,
+                                         const Array<PrimExpr>& param_values,
+                                         const PrimExpr& expr) {
   ICHECK_EQ(param_vars.size(), param_values.size())
       << "Expression was defined as having " << param_vars.size() << " parameters, but received "
       << param_values.size() << " arguments.";
-
-  if (!expr) {
-    return NullOpt;
-  }
 
   Map<tir::Var, PrimExpr> var_map;
   for (size_t i = 0; i < param_values.size(); i++) {
     var_map.Set(param_vars[i], param_values[i]);
   }
 
-  return Substitute(expr.value(), var_map);
+  return Substitute(expr, var_map);
 }
 }  // namespace
 
