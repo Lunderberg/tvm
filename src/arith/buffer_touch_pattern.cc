@@ -118,9 +118,9 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
  public:
   using Parent = IRMutatorWithAnalyzer;
 
-  BufferConstraintApply(const Map<Buffer, Array<Var>>& axis_vars,
+  BufferConstraintApply(const Map<Buffer, Array<Var>>& axis_var_lookup,
                         const std::vector<BufferConstraint>& knowns, Analyzer* analyzer)
-      : Parent(analyzer), axis_vars_(axis_vars), knowns_(knowns) {}
+      : Parent(analyzer), axis_var_lookup_(axis_var_lookup), knowns_(knowns) {}
 
   using Parent::VisitExpr_;
 
@@ -146,7 +146,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
         }
       });
 
-      auto axis_vars = axis_vars_.at(op->buffer);
+      auto axis_vars = axis_var_lookup_.at(op->buffer);
       PrimExpr predicate = SubstituteParamValues(axis_vars, indices, known.predicate).value();
       std::optional<With<ConstraintContext>> context;
       if (lane_var.defined()) {
@@ -163,7 +163,7 @@ class BufferConstraintApply : public IRMutatorWithAnalyzer {
   }
 
  private:
-  const Map<Buffer, Array<Var>>& axis_vars_;
+  const Map<Buffer, Array<Var>>& axis_var_lookup_;
   const std::vector<BufferConstraint>& knowns_;
 };
 
@@ -546,7 +546,7 @@ class BufferTouchExtractor final : public IRVisitorWithAnalyzer {
   }
 
   Array<Var> MakeIndexVariables(const Buffer& buf, const Array<PrimExpr>& indices) {
-    auto& axis_var_lookup = out_->axis_vars_;
+    auto& axis_var_lookup = out_->axis_var_lookup_;
     if (auto it = axis_var_lookup.find(buf); it != axis_var_lookup.end()) {
       return (*it).second;
     }
@@ -827,6 +827,13 @@ std::ostream& operator<<(std::ostream& os, const BufferState& state) {
   return os;
 }
 
+PrimExpr BufferState::SubstituteKnownBufferValues(
+    PrimExpr expr, const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
+    Analyzer* analyzer) const {
+  BufferConstraintApply mutator(axis_var_lookup, constraints, analyzer);
+  return mutator(std::move(expr));
+}
+
 void BufferState::AddCondition(const PrimExpr& condition) {
   for (auto& constraint : constraints) {
     constraint.predicate = constraint.predicate && condition;
@@ -906,11 +913,11 @@ class BufferRegionCollector : public ExprVisitor {
     std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>> known_values;
   };
 
-  static std::vector<Region> Collect(const Map<Buffer, Array<Var>>& axis_vars,
+  static std::vector<Region> Collect(const Map<Buffer, Array<Var>>& axis_var_lookup,
                                      const std::vector<BufferConstraint>& knowns,
                                      const std::vector<Optional<PrimExpr>>& exprs,
                                      Analyzer* analyzer) {
-    BufferRegionCollector collector(axis_vars, knowns, analyzer);
+    BufferRegionCollector collector(axis_var_lookup, knowns, analyzer);
     for (const auto& expr : exprs) {
       if (expr) {
         collector(expr.value());
@@ -923,9 +930,9 @@ class BufferRegionCollector : public ExprVisitor {
  private:
   using Parent = ExprVisitor;
 
-  BufferRegionCollector(const Map<Buffer, Array<Var>>& axis_vars,
+  BufferRegionCollector(const Map<Buffer, Array<Var>>& axis_var_lookup,
                         const std::vector<BufferConstraint>& knowns, Analyzer* analyzer)
-      : analyzer_(analyzer), axis_vars_(axis_vars), knowns_(knowns) {
+      : analyzer_(analyzer), axis_var_lookup_(axis_var_lookup), knowns_(knowns) {
     regions_.push_back(Region{Bool(true), {}});
   }
 
@@ -948,7 +955,7 @@ class BufferRegionCollector : public ExprVisitor {
         continue;
       }
 
-      auto axis_vars = axis_vars_.at(op->buffer);
+      auto axis_vars = axis_var_lookup_.at(op->buffer);
       PrimExpr touch_predicate =
           SubstituteParamValues(axis_vars, op->indices, constraint.predicate).value();
       touch_predicate = SimplifyAsAndOfOrs(touch_predicate, analyzer_);
@@ -989,7 +996,7 @@ class BufferRegionCollector : public ExprVisitor {
 
   Analyzer* analyzer_;
   std::vector<Region> regions_;
-  const Map<Buffer, Array<Var>>& axis_vars_;
+  const Map<Buffer, Array<Var>>& axis_var_lookup_;
   const std::vector<BufferConstraint>& knowns_;
 };
 
@@ -1231,7 +1238,8 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
 
     // Step 2: Collect knowns provided as a result of executing this block
     auto post_state = block.known_at_block_start;
-    post_state.ApplyTouches(axis_vars_, block.touch_points, free_predicate_parameters_, &analyzer);
+    post_state.ApplyTouches(axis_var_lookup_, block.touch_points, free_predicate_parameters_,
+                            &analyzer);
     post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
 
     // Step 3: If any changes are made to the post knowns since the
@@ -1311,11 +1319,10 @@ PrimExpr BufferTouchPattern::SimplifyInContext(PrimExpr expr, const tir::Stmt& c
   }
   With<ConstraintContext> constraint_context(analyzer, constraint);
 
-  const auto& knowns = control_flow_[context_index].known_at_block_start.constraints;
+  expr = control_flow_[context_index].known_at_block_start.SubstituteKnownBufferValues(
+      std::move(expr), axis_var_lookup_, analyzer);
 
-  BufferConstraintApply mutator(axis_vars_, knowns, analyzer);
-  expr = mutator(expr);
-  expr = analyzer->Simplify(expr);
+  expr = analyzer->Simplify(std::move(expr));
   return expr;
 }
 

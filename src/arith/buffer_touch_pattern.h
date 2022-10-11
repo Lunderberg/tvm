@@ -96,6 +96,23 @@ class BufferState {
    */
   BufferState() {}
 
+  /*! \brief Replace BufferLoad instances with known values
+   *
+   * \param expr The expression to be updated.
+   *
+   * \param axis_var_lookup A map from buffer to the variables
+   * representing positions along the buffer's axes.
+   *
+   * \param analyzer The analyzer to use when validating a
+   * constraint's predicate.
+   *
+   * \returns The modified expression.  If no substitutions are made,
+   * the original expression is returned.
+   */
+  PrimExpr SubstituteKnownBufferValues(PrimExpr expr,
+                                       const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
+                                       Analyzer* analyzer) const;
+
   /*! \brief Apply a condition to all known constraints
    *
    * For example, when propagating pre-loop constraints into the body
@@ -120,12 +137,21 @@ class BufferState {
    */
   void Simplify(Analyzer* analyzer);
 
-  /*! \brief Apply the
+  /*! \brief Update the known buffer values based on buffer touches
    *
-   * \param touch_points The buffer touch points to
+   * For any Write or Assume touches, update the known values.  For
+   * any Read touches, ignore.  Used to determine known values at the
+   * end of a series of a control flow block, given the known values
+   * at the start.
+   *
+   * \param axis_var_lookup A map from buffer to the variables
+   * representing positions along the buffer's axes.
+   *
+   * \param touch_points The buffer touch points to apply
+   *
+   * \param analyzer The analyzer to use for simplifications
    */
   void ApplyTouches(const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
-
                     const std::vector<BufferTouch>& touch_points,
                     const Map<Var, Range>& free_predicate_parameters, Analyzer* analyzer);
 
@@ -154,8 +180,6 @@ class BufferState {
   static BufferState Intersection(const BufferState& a, const BufferState& b, Analyzer* analyzer);
 
   friend std::ostream& operator<<(std::ostream& os, const BufferState&);
-
-  friend class BufferTouchPattern;
 
  private:
   /*! \brief The known constraints */
@@ -270,7 +294,7 @@ class BufferTouchPattern {
   Map<Var, Range> free_predicate_parameters_;
   Map<Var, Range> iterator_ranges_;
 
-  Map<tir::Buffer, Array<tir::Var>> axis_vars_;
+  Map<tir::Buffer, Array<tir::Var>> axis_var_lookup_;
 
   /* \brief Assumptions that do not depend on buffer values */
   std::vector<PrimExpr> non_buffer_assumptions_;
