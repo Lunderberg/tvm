@@ -249,8 +249,9 @@ class BufferTouchPattern {
  private:
   friend std::ostream& operator<<(std::ostream& os, const BufferTouchPattern& pattern);
 
-  // private:
- public:
+  /*! \brief Propagate known values from known BufferStore/assume
+   *  subsequent control flow blocks
+   */
   void ForwardPropagateKnownValues();
 
   struct ControlFlowEdge {
@@ -262,22 +263,25 @@ class BufferTouchPattern {
 
     /*! \brief Variable remaps
      *
-     * e.g. Replacing loop iterator `i` with `i-delta` when following an
+     * e.g. Replacing loop iterator `i` with `i-1` when following an
      * edge from the end of a loop to the beginning of the loop.
      */
     Map<Var, PrimExpr> var_remap;
 
-    /*! \brief Predicate that must to true when following this edge
+    /*! \brief Condition that must to true after following this edge
      *
      * This is applied after variable remapping.  For example, `i >
      * loop_min` when following the an edge from the end of a loop to
      * the beginning of the loop.
      */
-    Optional<PrimExpr> predicate;
+    Optional<PrimExpr> post_condition;
   };
 
   struct ControlFlowBlock {
+    /*! \brief All known values prior to executing the block */
     BufferState known_at_block_start;
+
+    /*! \brief All known values after executing the block */
     BufferState known_at_block_end;
 
     /* \brief Buffer touches that occur within the block
@@ -308,12 +312,36 @@ class BufferTouchPattern {
    */
   std::unordered_map<const tir::StmtNode*, size_t> control_flow_lookup_;
 
+  /*! \brief A map from free parameters to their range
+   *
+   * A BufferStore/BufferLoad has indices in terms of loop iterators,
+   * while the internal BufferTouch must have predicate in terms of
+   * the buffer's axes.  While converting to the internal BufferTouch,
+   * reduction axes show up as free parameters.  Tracking the range of
+   * the free parameters allows them to be removed later, by requiring
+   * a predicate to be true for all values of the free parameters.
+   */
   Map<Var, Range> free_predicate_parameters_;
+
+  /*! \brief Ranges of iterators found in the analyzed statement */
   Map<Var, Range> iterator_ranges_;
 
+  /* \brief A map from buffer to the variables representing positions
+   * along the buffer's axes.
+   *
+   * This is stored here, rather than as part of the BufferState or
+   * BufferTouch, to ensure that all access of a buffer use the same
+   * variables to represent the buffer's axes, reducing the amount of
+   * variable substitution required.
+   */
   Map<tir::Buffer, Array<tir::Var>> axis_var_lookup_;
 
-  /* \brief Assumptions that do not depend on buffer values */
+  /* \brief Assumptions that do not depend on buffer values
+   *
+   * These may be collected as part of the handling of `builtin::assume()`, and do not depend on any
+   * buffer.  Since TIR only allows mutable values as part of buffers, these assumptions may be used
+   * anywhere the
+   */
   std::vector<PrimExpr> non_buffer_assumptions_;
 
   friend class BufferTouchExtractor;

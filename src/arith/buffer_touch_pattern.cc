@@ -744,8 +744,8 @@ std::ostream& operator<<(std::ostream& os, const BufferTouchPattern::ControlFlow
     if (block.predecessors[i].var_remap.size()) {
       os << " with remap " << block.predecessors[i].var_remap;
     }
-    if (block.predecessors[i].predicate) {
-      os << " with postcondition " << block.predecessors[i].predicate;
+    if (block.predecessors[i].post_condition) {
+      os << " with postcondition " << block.predecessors[i].post_condition;
     }
   }
   os << "]\n";
@@ -1198,14 +1198,14 @@ void BufferTouchPattern::ForwardPropagateKnownValues() {
         return priors_a;
       }
 
-      if (pred_a.predicate && pred_b.predicate) {
+      if (pred_a.post_condition && pred_b.post_condition) {
         // The predicate can identify which predecessor block applies
         // (e.g. i==0 for the first loop iteration, i>0 for remaining
         // loop iterations).  Therefore, we can use all buffer
         // constraints, conditional on having come from the
         // predecessor that provides it.
-        priors_a.AddCondition(pred_a.predicate.value());
-        priors_b.AddCondition(pred_b.predicate.value());
+        priors_a.AddCondition(pred_a.post_condition.value());
+        priors_b.AddCondition(pred_b.post_condition.value());
         priors_a.Union(priors_b, &analyzer);
         return priors_a;
       } else {
