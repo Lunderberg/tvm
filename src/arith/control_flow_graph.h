@@ -247,9 +247,9 @@ class ControlFlowGraph {
    */
   void RemoveTouches(const tir::BufferStore& store);
 
- private:
   friend std::ostream& operator<<(std::ostream& os, const ControlFlowGraph& pattern);
 
+ private:
   /*! \brief Propagate known values from known BufferStore/assume
    *  subsequent control flow blocks
    */
