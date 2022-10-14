@@ -1727,7 +1727,7 @@ class TestRewriteAsAndOfOrsWithSimplificationBetweenReorderedGroups(BaseBeforeAf
         A[0] = (i == 0 or j == 10 or k == 20) and (j == 10 or k != 30 or i == 0)
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, k: T.int32):
-        A[0] = i == 0 or j == 10 or k == 20
+        A[0] = j == 10 or k == 20 or i == 0
 
 
 class TestRewriteAsAndOfOrUsingSimplificationAcrossAnd(BaseBeforeAfter):
