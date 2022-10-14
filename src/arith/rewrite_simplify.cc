@@ -1660,10 +1660,20 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
-  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
-  op = ret.as<AndNode>();
+  PrimExpr a = op->a;
+  PrimExpr b = op->b;
+  {
+    With<ConstraintContext> context(analyzer_, b);
+    a = VisitExpr(std::move(a));
+  }
+  {
+    With<ConstraintContext> context(analyzer_, a);
+    b = VisitExpr(std::move(b));
+  }
 
-  if (auto const_res = TryConstFold<And>(op->a, op->b)) return const_res.value();
+  PrimExpr ret = (a.same_as(op->a) && b.same_as(op->b)) ? GetRef<And>(op) : And(a, b);
+
+  if (auto const_res = TryConstFold<And>(a, b)) return const_res.value();
   if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
   if ((enabled_extensions_ & RewriteSimplifier::kConvertBooleanToAndOfOrs) &&
       !recursively_visiting_boolean_) {
@@ -1684,7 +1694,18 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
-  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
+  PrimExpr a = op->a;
+  PrimExpr b = op->b;
+  {
+    With<ConstraintContext> context(analyzer_, RewriteBooleanOperators(Not(b)));
+    a = VisitExpr(std::move(a));
+  }
+  {
+    With<ConstraintContext> context(analyzer_, RewriteBooleanOperators(Not(a)));
+    b = VisitExpr(std::move(b));
+  }
+
+  PrimExpr ret = (a.same_as(op->a) && b.same_as(op->b)) ? GetRef<Or>(op) : Or(a, b);
 
   op = ret.as<OrNode>();
   if (auto const_res = TryConstFold<Or>(op->a, op->b)) return const_res.value();

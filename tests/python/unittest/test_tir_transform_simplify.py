@@ -1765,7 +1765,7 @@ class TestRewriteAsAndOfOrUsingSimplificationWithinOr(BaseBeforeAfter):
         A[0] = (i == 20) or (j == 0) or (i != 30)
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, k: T.int32):
-        A[0] = (i != 30) or (j == 0)
+        A[0] = (j == 0) or (i != 30)
 
 
 if __name__ == "__main__":
