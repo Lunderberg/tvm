@@ -148,7 +148,7 @@ def tune_and_test(relay_mod, data_np, weight_np, op_name, target, sch_rules, pos
     tune_tasks = list(
         filter(
             lambda task: op_name in task.task_name,
-            ms.relay_integration.extracted_task_from_relay(relay_mod, target, params),
+            ms.relay_integration.extract_tasks(relay_mod, target, params),
         )
     )
     with tempfile.TemporaryDirectory() as work_dir:
@@ -164,7 +164,7 @@ def tune_and_test(relay_mod, data_np, weight_np, op_name, target, sch_rules, pos
             tasks=tasks,
             task_weights=task_weights,
             work_dir=work_dir,
-            max_trials_global=20000,
+            max_trials_global=32,
         )
     with database, tvm.transform.PassContext(
         opt_level=3,
@@ -251,6 +251,7 @@ def _test_bert_int8(relay_mod, params, input_info, target, sch_rules, postprocs)
             tasks=tasks,
             task_weights=task_weights,
             work_dir=work_dir,
+            max_trials_per_task=32,
             max_trials_global=20000,
         )
     with database, tvm.transform.PassContext(
@@ -282,10 +283,10 @@ def test_dp4a_dense():
     _test_dense("int8", SCH_RULES_FOR_DP4A, POSTPROCS_FOR_DP4A, "nvidia/geforce-rtx-3070")
     # Uncomment to test on vulkan or rocm target
     # _test_dense(
-    #     "int8", sch_rules_for_dp4a, postprocs_for_dp4a, "vulkan -from_device=0"
+    #     "int8", SCH_RULES_FOR_DP4A, POSTPROCS_FOR_DP4A, "vulkan -from_device=0"
     # )
     # _test_dense(
-    #     "int8", sch_rules_for_sdot4, postprocs_for_dp4a, "rocm"
+    #     "int8", SCH_RULES_FOR_SDOT4, POSTPROCS_FOR_DP4A, "rocm"
     # )
 
 
@@ -302,10 +303,10 @@ def test_dp4a_conv2d():
     _test_conv2d("int8", SCH_RULES_FOR_DP4A, POSTPROCS_FOR_DP4A, "nvidia/geforce-rtx-3070")
     # Uncomment to test on vulkan or rocm target
     # _test_conv2d(
-    #     "int8", sch_rules_for_dp4a, postprocs_for_dp4a, "vulkan -from_device=0"
+    #     "int8", SCH_RULES_FOR_DP4A, POSTPROCS_FOR_DP4A, "vulkan -from_device=0"
     # )
     # _test_conv2d(
-    #     "int8", sch_rules_for_sdot4, postprocs_for_dp4a, "rocm"
+    #     "int8", SCH_RULES_FOR_SDOT4, POSTPROCS_FOR_DP4A, "rocm"
     # )
 
 
@@ -341,16 +342,16 @@ def test_dp4a_bert_int8():
     #     params,
     #     input_info,
     #     "vulkan -from_device=0",
-    #     sch_rules_for_dp4a,
-    #     postprocs_for_dp4a,
+    #     SCH_RULES_FOR_DP4A,
+    #     POSTPROCS_FOR_DP4A,
     # )
     # _test_bert_int8(
     #     relay_mod,
     #     params,
     #     input_info,
     #     "rocm",
-    #     sch_rules_for_sdot4,
-    #     postprocs_for_dp4a,
+    #     SCH_RULES_FOR_SDOT4
+    #     POSTPROCS_FOR_DP4A,
     # )
 
 

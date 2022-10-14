@@ -31,6 +31,7 @@
 #include <algorithm>
 
 #include "../target/datatype/registry.h"
+#include "conjunctive_normal_form.h"
 #include "const_fold.h"
 #include "constraint_extract.h"
 #include "pattern_match.h"
@@ -1659,51 +1660,49 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
-  PrimExpr a = op->a;
-  PrimExpr b = op->b;
-  {
-    With<ConstraintContext> context(analyzer_, b);
-    a = VisitExpr(std::move(a));
-  }
-  {
-    With<ConstraintContext> context(analyzer_, a);
-    b = VisitExpr(std::move(b));
-  }
-
-  PrimExpr ret;
-  if (a.same_as(op->a) && b.same_as(op->b)) {
-    ret = GetRef<And>(op);
-  } else {
-    ret = And(a, b);
-  }
+  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
   op = ret.as<AndNode>();
 
+  if (auto const_res = TryConstFold<And>(op->a, op->b)) return const_res.value();
   if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+  if ((enabled_extensions_ & RewriteSimplifier::kConvertBooleanToAndOfOrs) &&
+      !recursively_visiting_boolean_) {
+    return SimplifyAsAndOfOrs(ret, analyzer_);
+  }
+
+  // Pattern var to match any expression
+  PVar<PrimExpr> x, y;
+  // Pattern var match IntImm
+  PVar<IntImm> c1, c2;
+  PVar<int> lanes;
+
+  if (op->dtype.lanes() != 1) {
+    TVM_TRY_REWRITE(broadcast(x, lanes) && broadcast(y, lanes), broadcast(x && y, lanes));
+  }
 
   return RewriteBooleanOperators(ret);
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
-  PrimExpr a = op->a;
-  PrimExpr b = op->b;
-  {
-    With<ConstraintContext> context(analyzer_, RewriteBooleanOperators(Not(b)));
-    a = VisitExpr(std::move(a));
-  }
-  {
-    With<ConstraintContext> context(analyzer_, RewriteBooleanOperators(Not(a)));
-    b = VisitExpr(std::move(b));
-  }
+  PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
 
-  PrimExpr ret;
-  if (a.same_as(op->a) && b.same_as(op->b)) {
-    ret = GetRef<Or>(op);
-  } else {
-    ret = Or(a, b);
-  }
   op = ret.as<OrNode>();
-
+  if (auto const_res = TryConstFold<Or>(op->a, op->b)) return const_res.value();
   if (auto match = TryMatchLiteralConstraint(ret)) return match.value();
+  if ((enabled_extensions_ & RewriteSimplifier::kConvertBooleanToAndOfOrs) &&
+      !recursively_visiting_boolean_) {
+    return SimplifyAsAndOfOrs(ret, analyzer_);
+  }
+
+  // Pattern var to match any expression
+  PVar<PrimExpr> x, y;
+  // Pattern var match IntImm
+  PVar<IntImm> c1, c2;
+  PVar<int> lanes;
+
+  if (op->dtype.lanes() != 1) {
+    TVM_TRY_REWRITE(broadcast(x, lanes) || broadcast(y, lanes), broadcast(x || y, lanes));
+  }
 
   return RewriteBooleanOperators(ret);
 }

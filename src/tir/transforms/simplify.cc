@@ -41,6 +41,7 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
   bool transitively_prove_inequalities;
   bool propagate_knowns_to_prove_conditional;
   bool propagate_knowns_to_simplify_expressions;
+  bool convert_boolean_to_and_of_ors;
 
   TVM_DECLARE_ATTRS(SimplifyConfigNode, "tir.transform.SimplifyConfig") {
     TVM_ATTR_FIELD(transitively_prove_inequalities)
@@ -58,6 +59,10 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
             "If true, known buffer values are propagated and used to replace BufferLoad wherever "
             "possible")
         .set_default(false);
+
+    TVM_ATTR_FIELD(convert_boolean_to_and_of_ors)
+        .describe("If true, simplify conditionals into an AND of ORs")
+        .set_default(false);
   }
 
   RewriteSimplifier::Extension GetEnabledExtensions() const {
@@ -65,6 +70,9 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
     if (transitively_prove_inequalities) {
       flags =
           RewriteSimplifier::Extension(flags | RewriteSimplifier::kTransitivelyProveInequalities);
+    }
+    if (convert_boolean_to_and_of_ors) {
+      flags = RewriteSimplifier::Extension(flags | RewriteSimplifier::kConvertBooleanToAndOfOrs);
     }
     return flags;
   }
@@ -277,6 +285,5 @@ Pass Simplify() {
 TVM_REGISTER_GLOBAL("tir.transform.Simplify").set_body_typed(Simplify);
 
 }  // namespace transform
-
 }  // namespace tir
 }  // namespace tvm
