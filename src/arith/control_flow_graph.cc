@@ -1209,7 +1209,6 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
     //
     // TODO: Have a maximum number of times that blocks may be
     // visited, to guard against infinite loops.
-    // if (has_updated_post) {
     if (!visited_once.count(visiting) ||
         !post_state.IsEquivalentTo(block.known_at_block_end, &analyzer)) {
       block.known_at_block_end = std::move(post_state);
