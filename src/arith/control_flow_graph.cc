@@ -1108,8 +1108,8 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
   // preferentially visit nodes near the start of the control flow.
   std::set<size_t> to_visit;
 
-  // Track whether a buffer has been visited at least once.
-  std::unordered_set<size_t> visited_once;
+  // Map from a block's index
+  std::unordered_map<size_t, size_t> visit_count_lookup;
 
   // Initiatize the locations to search from, propagating values
   // forward from all locations that have a known value.
@@ -1137,6 +1137,9 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
   while (to_visit.size()) {
     size_t visiting = *to_visit.begin();
     to_visit.erase(visiting);
+
+    size_t num_previous_visits = visit_count_lookup[visiting]++;
+
     ControlFlowBlock& block = control_flow_[visiting];
 
     // Step 1: Collect known values provided from each precedessor
@@ -1152,7 +1155,7 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
       }
 
       if (std::all_of(block.predecessors.begin(), block.predecessors.end(),
-                      [&](const auto& pred) { return !visited_once.count(pred.from_index); })) {
+                      [&](const auto& pred) { return visit_count_lookup[pred.from_index] == 0; })) {
         // Predecessors, if any, are unvisited.
         return {};
       } else if (block.predecessors.size() == 1) {
@@ -1173,9 +1176,9 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
       // this is the case, assume the best-case scenario that all
       // knowns are consistent, and rely on a later visit to
       // resolve/remove any conflicts.
-      if (!visited_once.count(pred_a.from_index)) {
+      if (visit_count_lookup[pred_a.from_index] == 0) {
         return priors_b;
-      } else if (!visited_once.count(pred_b.from_index)) {
+      } else if (visit_count_lookup[pred_b.from_index] == 0) {
         return priors_a;
       }
 
@@ -1209,15 +1212,13 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
     //
     // TODO: Have a maximum number of times that blocks may be
     // visited, to guard against infinite loops.
-    if (!visited_once.count(visiting) ||
+    if (num_previous_visits == 0 ||
         !post_state.IsEquivalentTo(block.known_at_block_end, &analyzer)) {
       block.known_at_block_end = std::move(post_state);
       for (size_t successor : block.successors) {
         to_visit.insert(successor);
       }
     }
-
-    visited_once.insert(visiting);
   }
 }
 
