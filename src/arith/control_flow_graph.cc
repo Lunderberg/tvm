@@ -340,31 +340,38 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
     MarkControlFlow(before_branching, branch_start);
 
     auto then_start = AppendControlBlock();
-    MarkControlFlow(branch_start, then_start);
+    MarkControlFlow(branch_start, then_start, {}, real_condition);
     {
       InternalConstraintContext context(this, real_condition);
       this->VisitStmt(op->then_case);
     }
     auto then_end = CurrentControlBlock();
 
-    size_t else_start = -1;
+    auto negation = analyzer_.rewrite_simplify(!real_condition);
+
     size_t else_end = -1;
     if (op->else_case.defined()) {
-      else_start = AppendControlBlock();
-      MarkControlFlow(branch_start, else_start);
+      auto else_start = AppendControlBlock();
 
-      auto negation = analyzer_.rewrite_simplify(Not(real_condition));
+      MarkControlFlow(branch_start, else_start, {}, negation);
+
       InternalConstraintContext context(this, real_condition);
       this->VisitStmt(op->else_case);
 
       else_end = CurrentControlBlock();
+    } else {
+      else_end = branch_start;
     }
 
     auto after_branching = AppendControlBlock();
-    MarkControlFlow(then_end, after_branching);
-
-    if (op->else_case.defined()) {
+    if (HasBufferLoad(real_condition)) {
+      // The buffer value may have changed during the body of the
+      // condition, so we can't provide it as a post-condition.
+      MarkControlFlow(then_end, after_branching);
       MarkControlFlow(else_end, after_branching);
+    } else {
+      MarkControlFlow(then_end, after_branching, {}, real_condition);
+      MarkControlFlow(else_end, after_branching, {}, negation);
     }
   }
 
