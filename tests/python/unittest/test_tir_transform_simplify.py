@@ -1787,5 +1787,63 @@ class TestRewriteAsAndOfOrUsingSimplificationWithinOr(BaseBeforeAfter):
         A[0] = (j == 0) or (i != 30)
 
 
+class TestSimplificationBetweenGroupsUsingConstraint(BaseBeforeAfter):
+    """Provide constraints when simplifying across groups
+
+    Similar to TestRewriteAsAndOfOrsWithSimplificationBetweenGroups, with a
+    simplification that depends on the constraints provided by other
+    expressions in the OR group.  That is, when the `AndOfOr` simplifier
+    compares across OR groups that are matched for `N-1` of the `N`
+    expressions, the other `N-1` expressions may all be assumed to be false.
+
+    The general rewriting across groups is in two steps.  First, `(A or B)
+    and (A or C)` is rewritten as `A or (B and C)`.  Then, `A or (B and C)`
+    is rewritten to `A or D`, where `D` is a simplified form of `(B and C)`
+    that does not rely on AND.  Since `(B and C)` is simplified in the
+    context of `A or (B and C)`, it may assume that `A` is false without
+    impacting the overall expression.
+
+    In the example below, `A = (j < 14)`, `B = (j == (i - 1))`, `C = (i < 15)`,
+    and `D = False`.
+    """
+
+    convert_boolean_to_and_of_ors = True
+
+    def before(A: T.Buffer[16, "bool"], j: T.int32):
+        for i in T.serial(16):
+            A[i] = ((j == (i - 1)) or (j < 14)) and ((i < 15) or (j < 14))
+
+    def expected(A: T.Buffer[16, "bool"], j: T.int32):
+        for i in T.serial(16):
+            A[i] = j < 14
+
+
+class TestRegressionSimplificationBetweenGroupsUsingConstraint(BaseBeforeAfter):
+    """Provide constraints when simplifying across groups
+
+    Like TestSimplificationBetweenGroupsUsingConstraint, but with the
+    expression that first demonstrated the need for this simplification.
+
+    In the example below, `A = (j < 14)`, `B = (j == (i - 1))`, `C = (i < 15)`,
+    and `D = False`.
+    """
+
+    transitively_prove_inequalities = True
+    convert_boolean_to_and_of_ors = True
+
+    def before(A: T.Buffer[16, "bool"], j: T.int32):
+        for i in T.serial(16):
+            A[i] = (
+                (0 <= j)
+                and ((j < i) or (i == 15))
+                and ((j == (i - 1)) or (j < 14))
+                and ((i < 15) or (j < 14))
+            )
+
+    def expected(A: T.Buffer[16, "bool"], j: T.int32):
+        for i in T.serial(16):
+            A[i] = (0 <= j) and (j < i) and (j < 14)
+
+
 if __name__ == "__main__":
     tvm.testing.main()

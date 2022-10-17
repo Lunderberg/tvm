@@ -360,8 +360,23 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
           // replace.
           //
           // (A or B) and (A or C) => A or (B and C)
+
           auto& key_i = i_chunk[i_distinct_index.value()];
           auto& key_j = j_chunk[j_distinct_index.value()];
+
+          // When attempting to simplify (B and C), the analyzer may
+          // assume that A is false.
+          PrimExpr known = [&]() {
+            PrimExpr known = Bool(true);
+            for (const auto& key : i_chunk) {
+              if (&key != &key_i) {
+                known = known && analyzer->Simplify(!GetExpr(key));
+              }
+            }
+            return known;
+          }();
+
+          With<ConstraintContext> context(analyzer, known);
           TrySimplifyAnd(&key_i, &key_j, analyzer);
         }
       }
