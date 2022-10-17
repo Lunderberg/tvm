@@ -271,13 +271,14 @@ class TestSimplifyLHSOfBooleanOrUsingRHS(BaseBeforeAfter):
         A[0] = n < 10
 
 
-@pytest.mark.xfail(msg="Fails from RewriteBoolean in OR-based constraint")
 class TestSimplifyBooleanOrWithThreeConditions(BaseBeforeAfter):
     """Boolean expressions can introduce contexts for their arguments.
 
     Like TestSimplifyRHSOfBooleanOrUsingLHS, but the middle condition
     must be used to simplify the right-most condition.
     """
+
+    convert_boolean_to_and_of_ors = True
 
     def before(A: T.Buffer[1, "bool"], n: T.int32, m: T.int32, i: T.int32, j: T.int32):
         A[0] = ((i <= j) or (n <= m)) or (n == m)
@@ -1233,8 +1234,9 @@ class TestInequalities7(BaseBeforeAfter):
         A[0] = i < j + 4
 
 
-@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
 class TestInequalities8(BaseBeforeAfter):
+    convert_boolean_to_and_of_ors = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, f: T.int32):
         A[0] = (
             (0 <= j)
@@ -1288,8 +1290,9 @@ class TestInequalities10(BaseBeforeAfter):
             A[0] = i < j
 
 
-@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
 class TestInequalities11(BaseBeforeAfter):
+    convert_boolean_to_and_of_ors = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, n: T.int32):
         A[0] = (
             (0 <= j)
@@ -1309,8 +1312,11 @@ class TestInequalities11(BaseBeforeAfter):
         A[0] = 0 <= j and j < 24 and 0 <= j + n and (j + n < 3 or 17 <= j + n or i < j + n)
 
 
-@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
+@pytest.mark.xfail(reason="Requires simplification of items inside AND of ORs?")
 class TestInequalities12(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+    convert_boolean_to_and_of_ors = True
+
     def before(A: T.Buffer[16, "bool"], j: T.int32):
         for i in T.serial(16):
             A[i] = (j < i) and ((0 < j) or ((i - 1) <= j)) and (j != 0) and (0 < i)
@@ -1330,8 +1336,9 @@ class TestInequalities13(BaseBeforeAfter):
             A[i] = i <= j + 1
 
 
-@pytest.mark.xfail(reason="Requires SimplifyUsingAndOfOrs, which isn't enabled by default")
 class TestInequalities14(BaseBeforeAfter):
+    convert_boolean_to_and_of_ors = True
+
     def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32):
         A[i] = (i == 0 or j <= 0) and (i == 0 or j != 0)
 
@@ -1464,13 +1471,10 @@ class TestSimplifyUsingPreLoopBufferValueOneBranchOnly(BaseBeforeAfter):
             B[0] = 1
 
 
-@pytest.mark.xfail(reason="not enabled")
 class TestSimplifyNonConditional(BaseBeforeAfter):
-    """Propagate a known value to later expressions
+    """Propagate a known value to later expressions."""
 
-    This test is currently xfail, as the propagation of known buffer
-    values is only enabled when proving conditionals.
-    """
+    propagate_knowns_to_simplify_expressions = True
 
     def before(A: T.Buffer[1, "int32"]):
         A[0] = 0
@@ -1479,6 +1483,21 @@ class TestSimplifyNonConditional(BaseBeforeAfter):
     def expected(A: T.Buffer[1, "int32"]):
         A[0] = 0
         A[0] = 1
+
+
+class TestSuppressSimplifyNonConditional(BaseBeforeAfter):
+    """Propagate a known value to later expressions.
+
+    Like TestSimplifyNonConditional, but with data-propagation turned off.
+    """
+
+    propagate_knowns_to_simplify_expressions = False
+
+    def before(A: T.Buffer[1, "int32"]):
+        A[0] = 0
+        A[0] = A[0] + 1
+
+    expected = before
 
 
 class TestSimplifyUsingTransitiveKnownBufferValue(BaseBeforeAfter):
