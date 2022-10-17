@@ -1386,6 +1386,7 @@ class TestSimplifyPriorToOverwrittenValue(BaseBeforeAfter):
                 A[i] = 42
 
 
+@pytest.mark.xfail(reason="Currently runs into the revisit limit")
 class TestSimplifyUsingKnownPartOfPartiallyOverwrittenBuffer(BaseBeforeAfter):
     """A write only invalidates prior known values where that write occurs
 

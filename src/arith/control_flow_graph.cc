@@ -717,9 +717,9 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
   ControlFlowGraph* out_;
 };
 
-ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt) {
+ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits) {
   ControlFlowGraphBuilder::Build(this, stmt);
-  ForwardPropagateKnownValues();
+  ForwardPropagateKnownValues(max_revisits);
 }
 
 std::ostream& operator<<(std::ostream& os, const ControlFlowGraph::ControlFlowBlock& block) {
@@ -1113,7 +1113,7 @@ bool BufferState::IsEquivalentTo(const BufferState& other, Analyzer* analyzer) c
   return true;
 }
 
-void ControlFlowGraph::ForwardPropagateKnownValues() {
+void ControlFlowGraph::ForwardPropagateKnownValues(size_t max_revisits) {
   // Values to visit when searching.  Using a std::set to
   // preferentially visit nodes near the start of the control flow.
   std::set<size_t> to_visit;
@@ -1154,6 +1154,9 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
 
     // Step 1: Collect known values provided from each precedessor
     block.known_at_block_start = [&]() -> BufferState {
+      if (num_previous_visits >= max_revisits) {
+        return BufferState();
+      }
       ICHECK_LE(block.predecessors.size(), 2) << "Each block should have at most two predecessors";
 
       std::vector<BufferState> states;
@@ -1212,16 +1215,19 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
     }();
 
     // Step 2: Collect knowns provided as a result of executing this block
-    auto post_state = block.known_at_block_start;
-    post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
-    post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+    auto post_state = [&]() {
+      if (num_previous_visits >= max_revisits) {
+        return BufferState();
+      }
+      auto post_state = block.known_at_block_start;
+      post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
+      post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+      return post_state;
+    }();
 
     // Step 3: If any changes are made to the post knowns since the
     // previous time we visited this block, mark the successor block
     // as needing to be visited.
-    //
-    // TODO: Have a maximum number of times that blocks may be
-    // visited, to guard against infinite loops.
     if (num_previous_visits == 0 ||
         !post_state.IsEquivalentTo(block.known_at_block_end, &analyzer)) {
       block.known_at_block_end = std::move(post_state);

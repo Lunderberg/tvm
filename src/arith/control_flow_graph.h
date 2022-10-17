@@ -208,7 +208,7 @@ class ControlFlowGraph {
  public:
   /* \brief Extract the touch pattern from a TIR statement
    */
-  explicit ControlFlowGraph(const tir::Stmt& stmt);
+  explicit ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits = 5);
 
   /* \brief Check if a write is overwritten without impacting final results
    *
@@ -253,7 +253,7 @@ class ControlFlowGraph {
   /*! \brief Propagate known values from known BufferStore/assume
    *  subsequent control flow blocks
    */
-  void ForwardPropagateKnownValues();
+  void ForwardPropagateKnownValues(size_t max_revisits);
 
   struct ControlFlowEdge {
     /* \brief The source block of the control flow edge
