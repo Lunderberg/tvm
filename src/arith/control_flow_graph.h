@@ -138,7 +138,7 @@ class BufferState {
    *
    * \param var_remap The variable remapping to apply.
    */
-  void Substitute(const Map<Var, PrimExpr>& var_remap);
+  void Substitute(const Map<Var, PrimExpr>& var_remap, Analyzer* analyzer);
 
   /*! \brief Simplify the predicate of all constraints
    *

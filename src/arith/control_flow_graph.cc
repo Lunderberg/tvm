@@ -817,10 +817,13 @@ void BufferState::AddCondition(const PrimExpr& condition) {
   }
 }
 
-void BufferState::Substitute(const Map<Var, PrimExpr>& var_remap) {
+void BufferState::Substitute(const Map<Var, PrimExpr>& var_remap, Analyzer* analyzer) {
   if (var_remap.size()) {
     for (auto& prior : constraints) {
-      prior.predicate = tvm::tir::Substitute(prior.predicate, var_remap);
+      PrimExpr updated = tvm::tir::Substitute(prior.predicate, var_remap);
+      if (!updated.same_as(prior.predicate)) {
+        prior.predicate = SimplifyAsAndOfOrs(updated, analyzer);
+      }
     }
   }
 }
@@ -1157,7 +1160,7 @@ void ControlFlowGraph::ForwardPropagateKnownValues() {
       for (const auto& pred : block.predecessors) {
         const auto& pred_block = control_flow_[pred.from_index];
         BufferState state = pred_block.known_at_block_end;
-        state.Substitute(pred.var_remap);
+        state.Substitute(pred.var_remap, &analyzer);
         states.push_back(state);
       }
 
