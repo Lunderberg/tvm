@@ -23,9 +23,20 @@ import pytest
 
 
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
-    @tvm.testing.fixture
+    use_dataflow_analysis = False
+
     def transform(self):
-        return tvm.tir.transform.ReduceBranchingThroughOvercompute()
+        def inner(mod):
+            config = {
+                "tir.ReduceBranchingThroughOvercompute": {
+                    "use_dataflow_analysis": self.use_dataflow_analysis,
+                }
+            }
+            with tvm.transform.PassContext(config=config):
+                mod = tvm.tir.transform.ReduceBranchingThroughOvercompute()(mod)
+            return mod
+
+        return inner
 
 
 class TestIntroduceNoOp(BaseBeforeAfter):
@@ -49,7 +60,6 @@ class TestIntroduceNoOp(BaseBeforeAfter):
             T.evaluate(0)
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceAdditionOfZero(BaseBeforeAfter):
     """Insert a conditionally no-op statement
 
@@ -57,6 +67,8 @@ class TestIntroduceAdditionOfZero(BaseBeforeAfter):
     something that simplifies to a no-op.  Here, when i==0, the
     expression simplifies to ``A[0] = A[0]``, which is a no-op.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[1, "int32"]):
         for i in T.serial(16):
@@ -68,13 +80,14 @@ class TestIntroduceAdditionOfZero(BaseBeforeAfter):
             A[0] = A[0] + i * i
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceAdditionOfKnownZeroInBuffer(BaseBeforeAfter):
     """Insert a conditionally no-op statement
 
     Proving that the overcompute is a no-op may use known values that
     are present in a buffer.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"], B: T.Buffer[1, "int32"]):
         for i in T.serial(16):
@@ -103,6 +116,8 @@ class TestIntroduceOverwrittenWrite(BaseBeforeAfter):
     conditional in the first loop can be removed, with any temporary
     values overwritten by the second loop.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -152,6 +167,8 @@ class TestIdentifyOverwrittenWriteFromEquivalentExpressions(BaseBeforeAfter):
     the same elements.
     """
 
+    use_dataflow_analysis = True
+
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             if i < 14:
@@ -180,6 +197,8 @@ class TestIntroduceSupersetOverwrittenWrite(BaseBeforeAfter):
     are a subset of the writes present in the second loop, the
     overcompute can be introduced.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):

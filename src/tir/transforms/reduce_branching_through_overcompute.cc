@@ -27,6 +27,8 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/transform.h>
 
+#include <optional>
+
 #include "../../arith/ir_mutator_with_analyzer.h"
 #include "../analysis/control_flow_graph.h"
 #include "remove_no_op.h"
@@ -35,12 +37,35 @@
 namespace tvm {
 namespace tir {
 
+struct ReduceBranchingThroughOvercomputeConfigNode
+    : public tvm::AttrsNode<ReduceBranchingThroughOvercomputeConfigNode> {
+  bool use_dataflow_analysis;
+
+  TVM_DECLARE_ATTRS(ReduceBranchingThroughOvercomputeConfigNode,
+                    "tir.transform.ReduceBranchingThroughOvercomputeConfig") {
+    TVM_ATTR_FIELD(use_dataflow_analysis)
+        .describe(
+            "If true, known buffer values are propagated and used "
+            "to statically prove that overcompute is valid.")
+        .set_default(false);
+  }
+};
+
+class ReduceBranchingThroughOvercomputeConfig : public Attrs {
+ public:
+  TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(ReduceBranchingThroughOvercomputeConfig, Attrs,
+                                            ReduceBranchingThroughOvercomputeConfigNode);
+};
+
+TVM_REGISTER_NODE_TYPE(ReduceBranchingThroughOvercomputeConfigNode);
+TVM_REGISTER_PASS_CONFIG_OPTION("tir.ReduceBranchingThroughOvercompute",
+                                ReduceBranchingThroughOvercomputeConfig);
+
 class BranchReducer : public arith::IRMutatorWithAnalyzer {
  public:
-  static Stmt Apply(Stmt stmt) {
+  static Stmt Apply(Stmt stmt, const arith::ControlFlowGraph* touch_pattern) {
     arith::Analyzer analyzer;
-    arith::ControlFlowGraph touch_pattern(stmt);
-    BranchReducer visitor(&analyzer, std::move(touch_pattern));
+    BranchReducer visitor(&analyzer, touch_pattern);
     return visitor(std::move(stmt));
   }
 
@@ -49,7 +74,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
   using Parent::VisitStmt;
   using Parent::VisitStmt_;
 
-  BranchReducer(arith::Analyzer* analyzer, arith::ControlFlowGraph touch_pattern)
+  BranchReducer(arith::Analyzer* analyzer, const arith::ControlFlowGraph* touch_pattern)
       : Parent(analyzer), touch_pattern_(touch_pattern) {}
 
   Stmt VisitStmt_(const IfThenElseNode* op) final {
@@ -60,8 +85,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
       condition = analyzer_->rewrite_simplify(condition);
       With<arith::ConstraintContext> constraint(analyzer_, condition);
       Stmt stmt = general_case;
-      // stmt = Simplify(stmt, analyzer_);
-      stmt = RemoveNoOp(stmt, analyzer_, &touch_pattern_);
+      stmt = RemoveNoOp(stmt, analyzer_, touch_pattern_);
       return StructuralEqual()(stmt, special_case);
     };
 
@@ -77,10 +101,8 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
   }
 
  private:
-  arith::ControlFlowGraph touch_pattern_;
+  const arith::ControlFlowGraph* touch_pattern_;
 };
-
-Stmt ReduceBranchingThroughOvercompute(Stmt stmt) { return BranchReducer::Apply(std::move(stmt)); }
 
 namespace transform {
 
@@ -88,8 +110,19 @@ Pass ReduceBranchingThroughOvercompute() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
     arith::Analyzer analyzer;
 
+    std::optional<arith::ControlFlowGraph> touch_pattern = std::nullopt;
+
+    ReduceBranchingThroughOvercomputeConfig config =
+        ctx->GetConfig<ReduceBranchingThroughOvercomputeConfig>(
+               "tir.ReduceBranchingThroughOvercompute")
+            .value_or(AttrsWithDefaultValues<ReduceBranchingThroughOvercomputeConfig>());
+    if (config->use_dataflow_analysis) {
+      touch_pattern.emplace(f->body);
+    }
+    auto touch_pattern_ptr = touch_pattern.has_value() ? &touch_pattern.value() : nullptr;
+
     auto* n = f.CopyOnWrite();
-    n->body = BranchReducer::Apply(std::move(n->body));
+    n->body = BranchReducer::Apply(std::move(n->body), touch_pattern_ptr);
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.ReduceBranchingThroughOvercompute", {});
