@@ -29,8 +29,8 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/transform.h>
 
-#include "../../arith/control_flow_graph.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
+#include "../../tir/analysis/control_flow_graph.h"
 
 namespace tvm {
 namespace arith {

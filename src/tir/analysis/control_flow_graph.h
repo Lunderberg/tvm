@@ -29,8 +29,11 @@
 #include <tvm/tir/stmt.h>
 #include <tvm/tir/var.h>
 
-#ifndef TVM_ARITH_CONTROL_FLOW_GRAPH_H_
-#define TVM_ARITH_CONTROL_FLOW_GRAPH_H_
+#include <unordered_map>
+#include <vector>
+
+#ifndef TVM_TIR_ANALYSIS_CONTROL_FLOW_GRAPH_H_
+#define TVM_TIR_ANALYSIS_CONTROL_FLOW_GRAPH_H_
 
 namespace tvm {
 namespace arith {
@@ -350,4 +353,4 @@ class ControlFlowGraph {
 
 }  // namespace arith
 }  // namespace tvm
-#endif  // TVM_ARITH_CONTROL_FLOW_GRAPH_H_
+#endif  // TVM_TIR_ANALYSIS_CONTROL_FLOW_GRAPH_H_

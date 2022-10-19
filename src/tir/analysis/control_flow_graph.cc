@@ -36,12 +36,12 @@
 #include <sstream>
 #include <vector>
 
-#include "conjunctive_normal_form.h"
-#include "constraint_extract.h"
-#include "ir_mutator_with_analyzer.h"
-#include "ir_visitor_with_analyzer.h"
-#include "narrow_predicate_expression.h"
-#include "unwrap_vector_expr.h"
+#include "../../arith/conjunctive_normal_form.h"
+#include "../../arith/constraint_extract.h"
+#include "../../arith/ir_mutator_with_analyzer.h"
+#include "../../arith/ir_visitor_with_analyzer.h"
+#include "../../arith/narrow_predicate_expression.h"
+#include "../../arith/unwrap_vector_expr.h"
 
 namespace tvm {
 namespace arith {
