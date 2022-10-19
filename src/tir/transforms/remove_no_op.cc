@@ -30,6 +30,8 @@
 #include <tvm/tir/stmt_functor.h>
 #include <tvm/tir/transform.h>
 
+#include <optional>
+
 #include "../../arith/const_fold.h"
 #include "../../arith/control_flow_graph.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
@@ -292,14 +294,22 @@ namespace transform {
 
 Pass RemoveNoOp() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
-    arith::ControlFlowGraph touch_pattern(f->body);
+    std::optional<arith::ControlFlowGraph> touch_pattern = std::nullopt;
+
+    RemoveNoOpConfig config = ctx->GetConfig<RemoveNoOpConfig>("tir.RemoveNoOp")
+                                  .value_or(AttrsWithDefaultValues<RemoveNoOpConfig>());
+    if (config->propagate_knowns_to_prove_no_op) {
+      touch_pattern.emplace(f->body);
+    }
+    auto touch_pattern_ptr = touch_pattern.has_value() ? &touch_pattern.value() : nullptr;
 
     arith::Analyzer analyzer;
     analyzer.rewrite_simplify.SetEnabledExtensions(
         arith::RewriteSimplifier::kTransitivelyProveInequalities);
 
     auto* n = f.CopyOnWrite();
-    n->body = NoOpRemover::Apply(std::move(n->body), &analyzer, &touch_pattern);
+    // n->body = NoOpRemover::Apply(std::move(n->body), &analyzer, &touch_pattern);
+    n->body = NoOpRemover::Apply(std::move(n->body), &analyzer, touch_pattern_ptr);
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.RemoveNoOp", {});
