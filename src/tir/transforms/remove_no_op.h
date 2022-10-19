@@ -36,8 +36,20 @@ namespace tir {
  *
  * Applies the same behavior as the tir.transform.RemoveNoOp pass, but
  * on a single statement, usable as a subroutine in other passes.
+ *
+ * \param stmt The TIR statement from which to remove no-ops
+ *
+ * \param analyzer The analyzer to use while proving no-ops
+ *
+ * \param control_flow The analyzed control-flow graph, which contains
+ * the `stmt` to be analyzed.  If provided, known buffer values will
+ * be used to remove no-ops.  (e.g. Removing `buf[i] = 0` in cases
+ * where `buf[i]` is known to already contain zero.)  If nullptr,
+ * known buffer values will not be used.
+ *
+ * \return The modified statement with no-ops removed
  */
-Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::ControlFlowGraph* touch_pattern);
+Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, const arith::ControlFlowGraph* touch_pattern);
 
 }  // namespace tir
 }  // namespace tvm

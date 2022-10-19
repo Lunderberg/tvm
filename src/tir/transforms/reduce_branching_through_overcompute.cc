@@ -60,7 +60,7 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
       condition = analyzer_->rewrite_simplify(condition);
       With<arith::ConstraintContext> constraint(analyzer_, condition);
       Stmt stmt = general_case;
-      stmt = Simplify(stmt, analyzer_);
+      // stmt = Simplify(stmt, analyzer_);
       stmt = RemoveNoOp(stmt, analyzer_, &touch_pattern_);
       return StructuralEqual()(stmt, special_case);
     };

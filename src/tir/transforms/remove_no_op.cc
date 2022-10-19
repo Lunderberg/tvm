@@ -38,15 +38,32 @@
 namespace tvm {
 namespace tir {
 
+struct RemoveNoOpConfigNode : public tvm::AttrsNode<RemoveNoOpConfigNode> {
+  bool propagate_knowns_to_prove_no_op;
+
+  TVM_DECLARE_ATTRS(RemoveNoOpConfigNode, "tir.transform.RemoveNoOpConfig") {
+    TVM_ATTR_FIELD(propagate_knowns_to_prove_no_op)
+        .describe(
+            "If true, known buffer values are propagated and used "
+            "to statically prove statements as no-ops.")
+        .set_default(false);
+  }
+};
+
+class RemoveNoOpConfig : public Attrs {
+ public:
+  TVM_DEFINE_NOTNULLABLE_OBJECT_REF_METHODS(RemoveNoOpConfig, Attrs, RemoveNoOpConfigNode);
+};
+
+TVM_REGISTER_NODE_TYPE(RemoveNoOpConfigNode);
+TVM_REGISTER_PASS_CONFIG_OPTION("tir.RemoveNoOp", RemoveNoOpConfig);
+
 // Mark the statement of each stage.
 class NoOpRemover : public arith::IRMutatorWithAnalyzer {
  public:
-  static Stmt Apply(Stmt stmt) {
-    arith::Analyzer analyzer;
-    analyzer.rewrite_simplify.SetEnabledExtensions(
-        arith::RewriteSimplifier::kTransitivelyProveInequalities);
-    arith::ControlFlowGraph touch_pattern(stmt);
-    NoOpRemover visitor(&analyzer, std::move(touch_pattern));
+  static Stmt Apply(Stmt stmt, arith::Analyzer* analyzer,
+                    const arith::ControlFlowGraph* touch_pattern) {
+    NoOpRemover visitor(analyzer, touch_pattern);
     return visitor(std::move(stmt));
   }
 
@@ -55,7 +72,7 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   using Parent::VisitStmt;
   using Parent::VisitStmt_;
 
-  NoOpRemover(arith::Analyzer* analyzer, arith::ControlFlowGraph touch_pattern)
+  NoOpRemover(arith::Analyzer* analyzer, const arith::ControlFlowGraph* touch_pattern)
       : Parent(analyzer), touch_pattern_(touch_pattern) {}
 
   Stmt VisitStmt_(const LetStmtNode* op) final {
@@ -189,24 +206,28 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
       for (const auto& index : store->indices) {
         statements.push_back(MakeEvaluate(index));
       }
-      touch_pattern_.RemoveTouches(store);
       return this->VisitStmt(SeqStmt(statements));
     };
 
-    // A write that is later overwritten is a no-op.
-    if (touch_pattern_.IsOverwrittenWithoutEffect(store, analyzer_)) {
-      return only_side_effects();
+    if (touch_pattern_) {
+      // A write that is later overwritten is a no-op.
+      if (touch_pattern_->IsOverwrittenWithoutEffect(store, analyzer_)) {
+        return only_side_effects();
+      }
+
+      // A write whose destination is known to already contain the
+      // values to be written is a no-op.
+      PrimExpr stores_existing_value = store->value == BufferLoad(store->buffer, store->indices);
+
+      PrimExpr simplified =
+          touch_pattern_->SimplifyInContext(stores_existing_value, store, analyzer_);
+      if (auto* as_int = as_const_int(simplified); as_int && *as_int) {
+        return only_side_effects();
+      }
     }
 
-    // A write whose destination is known to already contain the
-    // values to be written is a no-op.
-    PrimExpr stores_existing_value = store->value == BufferLoad(store->buffer, store->indices);
-
-    PrimExpr simplified = touch_pattern_.SimplifyInContext(stores_existing_value, store, analyzer_);
-    if (auto* as_int = as_const_int(simplified); as_int && *as_int) {
-      return only_side_effects();
-    }
-
+    // If the stored value is a load from the same location, the
+    // statement is a no-op, regardless of contextual information.
     if (const BufferLoadNode* load = store->value.as<BufferLoadNode>()) {
       if (load->buffer->data.same_as(store->buffer->data) &&
           analyzer_->CanProveEqual(load->buffer->elem_offset, store->buffer->elem_offset) &&
@@ -259,23 +280,26 @@ class NoOpRemover : public arith::IRMutatorWithAnalyzer {
   }
 
   std::unordered_map<const VarNode*, arith::IntSet> var_range_map_;
-  arith::ControlFlowGraph touch_pattern_;
+  const arith::ControlFlowGraph* touch_pattern_;
 };
 
-Stmt RemoveNoOp(Stmt stmt) { return NoOpRemover::Apply(std::move(stmt)); }
-
-Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer, arith::ControlFlowGraph* touch_pattern) {
-  return NoOpRemover::Apply(std::move(stmt));
+Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer,
+                const arith::ControlFlowGraph* touch_pattern) {
+  return NoOpRemover::Apply(std::move(stmt), analyzer, touch_pattern);
 }
 
 namespace transform {
 
 Pass RemoveNoOp() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
+    arith::ControlFlowGraph touch_pattern(f->body);
+
     arith::Analyzer analyzer;
+    analyzer.rewrite_simplify.SetEnabledExtensions(
+        arith::RewriteSimplifier::kTransitivelyProveInequalities);
 
     auto* n = f.CopyOnWrite();
-    n->body = NoOpRemover::Apply(std::move(n->body));
+    n->body = NoOpRemover::Apply(std::move(n->body), &analyzer, &touch_pattern);
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.RemoveNoOp", {});
