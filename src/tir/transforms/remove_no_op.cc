@@ -41,10 +41,10 @@ namespace tvm {
 namespace tir {
 
 struct RemoveNoOpConfigNode : public tvm::AttrsNode<RemoveNoOpConfigNode> {
-  bool propagate_knowns_to_prove_no_op;
+  bool use_dataflow_analysis;
 
   TVM_DECLARE_ATTRS(RemoveNoOpConfigNode, "tir.transform.RemoveNoOpConfig") {
-    TVM_ATTR_FIELD(propagate_knowns_to_prove_no_op)
+    TVM_ATTR_FIELD(use_dataflow_analysis)
         .describe(
             "If true, known buffer values are propagated and used "
             "to statically prove statements as no-ops.")
@@ -298,7 +298,7 @@ Pass RemoveNoOp() {
 
     RemoveNoOpConfig config = ctx->GetConfig<RemoveNoOpConfig>("tir.RemoveNoOp")
                                   .value_or(AttrsWithDefaultValues<RemoveNoOpConfig>());
-    if (config->propagate_knowns_to_prove_no_op) {
+    if (config->use_dataflow_analysis) {
       touch_pattern.emplace(f->body);
     }
     auto touch_pattern_ptr = touch_pattern.has_value() ? &touch_pattern.value() : nullptr;

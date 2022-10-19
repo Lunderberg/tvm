@@ -86,13 +86,13 @@ def test_remove_no_op_with_invalid_extent():
 
 
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
-    propagate_knowns_to_prove_no_op = False
+    use_dataflow_analysis = False
 
     def transform(self):
         def inner(mod):
             config = {
                 "tir.RemoveNoOp": {
-                    "propagate_knowns_to_prove_no_op": self.propagate_knowns_to_prove_no_op,
+                    "use_dataflow_analysis": self.use_dataflow_analysis,
                 }
             }
             with tvm.transform.PassContext(config=config):
@@ -199,7 +199,7 @@ class TestRemoveEmptyElseCase(BaseBeforeAfter):
 class TestRemoveUnusedWrite(BaseBeforeAfter):
     """For two sequential writes, the first is a no-op"""
 
-    propagate_knowns_to_prove_no_op = True
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -214,7 +214,7 @@ class TestRemoveUnusedWrite(BaseBeforeAfter):
 class TestKeepSideEffectsOfUnusedWrite(BaseBeforeAfter):
     """For two sequential writes, the first value may have side effects"""
 
-    propagate_knowns_to_prove_no_op = True
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -466,7 +466,7 @@ class TestRemoveReadWriteSameIndexUsingConstraint(BaseBeforeAfter):
 class TestRemoveWritingOfKnownValue(BaseBeforeAfter):
     """Writing a value that already exists at that index is a no-op"""
 
-    propagate_knowns_to_prove_no_op = True
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
