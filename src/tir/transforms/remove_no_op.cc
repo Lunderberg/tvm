@@ -308,7 +308,6 @@ Pass RemoveNoOp() {
         arith::RewriteSimplifier::kTransitivelyProveInequalities);
 
     auto* n = f.CopyOnWrite();
-    // n->body = NoOpRemover::Apply(std::move(n->body), &analyzer, &touch_pattern);
     n->body = NoOpRemover::Apply(std::move(n->body), &analyzer, touch_pattern_ptr);
     return f;
   };
