@@ -97,10 +97,17 @@ bool BufferTouch::IsDistinctFrom(const BufferTouch& other, Analyzer* analyzer) c
 }
 
 std::ostream& operator<<(std::ostream& os, const BufferTouch& tp) {
-  auto touch_type = (tp.touch_type == BufferTouch::AccessType::Read)     ? "read"
-                    : (tp.touch_type == BufferTouch::AccessType::Write)  ? "write"
-                    : (tp.touch_type == BufferTouch::AccessType::Assume) ? "assume"
-                                                                         : "???";
+  auto touch_type = [&]() {
+    if (tp.touch_type == BufferTouch::AccessType::Read) {
+      return "read";
+    } else if (tp.touch_type == BufferTouch::AccessType::Write) {
+      return "write";
+    } else if (tp.touch_type == BufferTouch::AccessType::Assume) {
+      return "assume";
+    } else {
+      return "???";
+    }
+  }();
   os << "BufferTouch(" << tp.buffer->name << ", " << touch_type << ", " << tp.predicate
      << ", value = " << tp.value << ")";
   return os;
