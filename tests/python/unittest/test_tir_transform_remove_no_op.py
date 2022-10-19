@@ -211,6 +211,22 @@ class TestRemoveUnusedWrite(BaseBeforeAfter):
             A[i] = 42
 
 
+class TestSuppressRemovalOfUnusedWrite(BaseBeforeAfter):
+    """Dataflow analysis requires the config to opt-in
+
+    Like TestRemoveUnusedWrite, but dataflow analysis isn't enabled.
+    """
+
+    use_dataflow_analysis = False
+
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            A[i] = 100
+            A[i] = 42
+
+    expected = before
+
+
 class TestKeepSideEffectsOfUnusedWrite(BaseBeforeAfter):
     """For two sequential writes, the first value may have side effects"""
 
