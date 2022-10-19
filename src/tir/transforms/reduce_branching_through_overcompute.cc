@@ -27,8 +27,8 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/transform.h>
 
-#include "../../arith/control_flow_graph.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
+#include "../analysis/control_flow_graph.h"
 #include "remove_no_op.h"
 #include "simplify.h"
 

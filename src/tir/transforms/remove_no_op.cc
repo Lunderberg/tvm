@@ -33,8 +33,8 @@
 #include <optional>
 
 #include "../../arith/const_fold.h"
-#include "../../arith/control_flow_graph.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
+#include "../analysis/control_flow_graph.h"
 #include "ir_utils.h"
 
 namespace tvm {

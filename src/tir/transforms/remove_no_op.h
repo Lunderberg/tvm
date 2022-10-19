@@ -27,7 +27,7 @@
 #include <tvm/arith/analyzer.h>
 #include <tvm/tir/stmt.h>
 
-#include "../../arith/control_flow_graph.h"
+#include "../analysis/control_flow_graph.h"
 
 namespace tvm {
 namespace tir {
