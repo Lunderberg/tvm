@@ -1953,7 +1953,7 @@ class BooleanRewriter : public ExprMutator {
     // Pattern var to match any expression
     PVar<PrimExpr> x, y;
     // Pattern var match IntImm
-    PVar<IntImm> c1, c2;
+    PVar<IntImm> c1, c2, c3;
     PVar<int> lanes;
 
     if (op->dtype.lanes() != 1) {
@@ -2029,6 +2029,38 @@ class BooleanRewriter : public ExprMutator {
 
     TVM_TRY_REWRITE(x == c1 && x != c2, x == c1 && c1 != c2);
     TVM_TRY_REWRITE(x != c2 && x == c1, x == c1 && c1 != c2);
+    TVM_TRY_RECURSIVE_REWRITE(floordiv(x, c2) == c1 && floormod(x, c2) == c3, x == c1 * c2 + c3);
+    TVM_TRY_RECURSIVE_REWRITE(floormod(x, c2) == c3 && floordiv(x, c2) == c1, x == c1 * c2 + c3);
+
+    TVM_TRY_RECURSIVE_REWRITE(0 <= x - y * c1 && x - y * c1 < c1, y == floordiv(x, c1));
+    TVM_TRY_RECURSIVE_REWRITE(x - y * c1 < c1 && 0 <= x - y * c1, y == floordiv(x, c1));
+
+    TVM_TRY_RECURSIVE_REWRITE_IF(x < c1 && floormod(x, c2) < c3, x < c1 - c2 + c3,
+                                 c1.Eval()->value % c2.Eval()->value == 0);
+
+    TVM_TRY_RECURSIVE_REWRITE_IF(x <= c1 && floormod(x, c2) < c3, x < c1 + c3,
+                                 (c1.Eval()->value + 1) % c2.Eval()->value == 0);
+
+    // TODO: See if these rules can be moved into the Transitive
+    // checker instead
+    TVM_TRY_RECURSIVE_REWRITE(floordiv(x, c2) == c1 && floormod(x, c2) < c3,
+                              c1 * c2 <= x && x < c1 * c2 + c3);
+    TVM_TRY_RECURSIVE_REWRITE(floormod(x, c2) < c3 && floordiv(x, c2) == c1,
+                              c1 * c2 <= x && x < c1 * c2 + c3);
+    TVM_TRY_RECURSIVE_REWRITE(floordiv(x, c2) == c1 && floormod(x, c2) <= c3,
+                              c1 * c2 <= x && x <= c1 * c2 + c3);
+    TVM_TRY_RECURSIVE_REWRITE(floormod(x, c2) <= c3 && floordiv(x, c2) == c1,
+                              c1 * c2 <= x && x <= c1 * c2 + c3);
+
+    TVM_TRY_RECURSIVE_REWRITE(floordiv(x, c2) == c1 && c3 <= floormod(x, c2),
+                              c1 * c2 + c3 <= x && x < (c1 + 1) * c2);
+    TVM_TRY_RECURSIVE_REWRITE(c3 <= floormod(x, c2) && floordiv(x, c2) == c1,
+                              c1 * c2 + c3 <= x && x < (c1 + 1) * c2);
+    TVM_TRY_RECURSIVE_REWRITE(floordiv(x, c2) == c1 && c3 < floormod(x, c2),
+                              c1 * c2 + c3 < x && x < (c1 + 1) * c2);
+    TVM_TRY_RECURSIVE_REWRITE(c3 < floormod(x, c2) && floordiv(x, c2) == c1,
+                              c1 * c2 + c3 < x && x < (c1 + 1) * c2);
+
     return std::move(ret);
   }
 

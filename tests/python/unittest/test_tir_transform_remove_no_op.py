@@ -254,12 +254,13 @@ class TestKeepFirstWriteWhenUsed(BaseBeforeAfter):
     expected = before
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveOverwrittenLoop(BaseBeforeAfter):
     """Remove repeated writes to the same region
 
     If two loops write to the same region, the first is a no-op.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -273,7 +274,6 @@ class TestRemoveOverwrittenLoop(BaseBeforeAfter):
             A[i] = 42
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveOverwrittenSubloop(BaseBeforeAfter):
     """Remove repeated writes to the same region
 
@@ -281,6 +281,8 @@ class TestRemoveOverwrittenSubloop(BaseBeforeAfter):
     is a no-op.  Similar to TestRemoveOverwrittenLoop, but the first
     loop's extents are a subset of the second loop.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(4, 12):
@@ -312,7 +314,6 @@ class TestKeepPartiallyOverwrittenLoop(BaseBeforeAfter):
     expected = before
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveOverwrittenPredicatedLoopWithIdenticalCondition(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
@@ -320,6 +321,8 @@ class TestRemoveOverwrittenPredicatedLoopWithIdenticalCondition(BaseBeforeAfter)
     has the same predicate as the second, and can therefore be
     removed.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -333,10 +336,9 @@ class TestRemoveOverwrittenPredicatedLoopWithIdenticalCondition(BaseBeforeAfter)
     def expected(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
             if i < 12:
-                A[i] = 100
+                A[i] = 42
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveOverwrittenPredicatedLoopWithProvableCondition(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
@@ -347,6 +349,8 @@ class TestRemoveOverwrittenPredicatedLoopWithProvableCondition(BaseBeforeAfter):
     loop are a subset of those written in the second loop, they can be
     removed.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -363,13 +367,14 @@ class TestRemoveOverwrittenPredicatedLoopWithProvableCondition(BaseBeforeAfter):
                 A[i] = 42
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestRemoveSeparatedOverwrites(BaseBeforeAfter):
     """Remove repeated writes to the same predicated region.
 
     Similar to TestRemoveOverwrittenLoopRegion, but with an
     independent loop between the first and second write of the buffer.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"], B: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -397,6 +402,8 @@ class TestRemoveSeparatedOverwriteOfPredicatedLoop(BaseBeforeAfter):
     between the first and second writes writes to a different subset
     of the same buffer.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):
@@ -495,7 +502,6 @@ class TestRemoveWritingOfKnownValue(BaseBeforeAfter):
             A[i] = i
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestKeepOneOfDuplicateLoops(BaseBeforeAfter):
     """Must not reason based on a touch point after removing it.
 
@@ -505,6 +511,8 @@ class TestKeepOneOfDuplicateLoops(BaseBeforeAfter):
     longer valid.  In this case, only one of the two should be
     removed.
     """
+
+    use_dataflow_analysis = True
 
     def before(A: T.Buffer[16, "int32"]):
         for i in T.serial(16):

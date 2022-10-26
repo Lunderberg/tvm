@@ -50,7 +50,8 @@ namespace tir {
  * \return The modified statement with no-ops removed
  */
 Stmt RemoveNoOp(Stmt stmt, arith::Analyzer* analyzer,
-                const arith::ControlFlowGraph* touch_pattern = nullptr);
+                const arith::ControlFlowGraph* touch_pattern = nullptr,
+                const StmtNode* context = nullptr);
 
 }  // namespace tir
 }  // namespace tvm

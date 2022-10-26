@@ -107,7 +107,6 @@ class TestIntroduceAdditionOfKnownZeroInBuffer(BaseBeforeAfter):
             B[0] = B[0] + A[i]
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceOverwrittenWrite(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 
@@ -158,7 +157,6 @@ class TestMaintainValuesUsedLater(BaseBeforeAfter):
     expected = before
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestIdentifyOverwrittenWriteFromEquivalentExpressions(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 
@@ -187,7 +185,6 @@ class TestIdentifyOverwrittenWriteFromEquivalentExpressions(BaseBeforeAfter):
                 A[4 * io + ii] = 2
 
 
-@pytest.mark.xfail(reason="Not implemented yet")
 class TestIntroduceSupersetOverwrittenWrite(BaseBeforeAfter):
     """Insert a write that is later overwritten.
 

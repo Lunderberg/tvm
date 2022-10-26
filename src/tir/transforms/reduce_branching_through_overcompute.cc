@@ -61,6 +61,41 @@ TVM_REGISTER_NODE_TYPE(ReduceBranchingThroughOvercomputeConfigNode);
 TVM_REGISTER_PASS_CONFIG_OPTION("tir.ReduceBranchingThroughOvercompute",
                                 ReduceBranchingThroughOvercomputeConfig);
 
+struct ElseBranchFiller : StmtExprMutator {
+  Stmt VisitStmt_(const IfThenElseNode* op) override {
+    IfThenElse ret = Downcast<IfThenElse>(StmtExprMutator::VisitStmt_(op));
+    if (ret->else_case.defined()) {
+      return std::move(ret);
+    } else {
+      auto new_else_clause = Evaluate(0);
+      new_else_clauses.insert(new_else_clause);
+      return IfThenElse(ret->condition, ret->then_case, new_else_clause);
+    }
+  }
+
+  std::unordered_set<Evaluate, ObjectPtrHash, ObjectPtrEqual> new_else_clauses;
+};
+
+class ElseBranchStripper : public StmtExprMutator {
+ public:
+  ElseBranchStripper(
+      const std::unordered_set<Evaluate, ObjectPtrHash, ObjectPtrEqual>& new_else_clauses)
+      : new_else_clauses_(new_else_clauses) {}
+
+ private:
+  Stmt VisitStmt_(const IfThenElseNode* op) override {
+    IfThenElse ret = Downcast<IfThenElse>(StmtExprMutator::VisitStmt_(op));
+    auto as_eval = ret->else_case.as<EvaluateNode>();
+    if (as_eval && new_else_clauses_.count(GetRef<Evaluate>(as_eval))) {
+      return IfThenElse(ret->condition, ret->then_case);
+    } else {
+      return std::move(ret);
+    }
+  }
+
+  const std::unordered_set<Evaluate, ObjectPtrHash, ObjectPtrEqual>& new_else_clauses_;
+};
+
 class BranchReducer : public arith::IRMutatorWithAnalyzer {
  public:
   static Stmt Apply(Stmt stmt, const arith::ControlFlowGraph* touch_pattern) {
@@ -80,15 +115,20 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
   Stmt VisitStmt_(const IfThenElseNode* op) final {
     IfThenElse cond = Downcast<IfThenElse>(Parent::VisitStmt_(op));
 
-    auto is_special_case = [this](PrimExpr condition, Stmt general_case,
-                                  Stmt special_case) -> bool {
+    std::cout << std::string(40, '-') << std::endl;
+    std::cout << "Visiting IfThenElse " << cond << std::endl;
+
+    auto is_special_case = [&](PrimExpr condition, Stmt general_case, Stmt special_case) -> bool {
       condition = analyzer_->rewrite_simplify(condition);
+      std::cout << "Attempting to prove that " << PrettyPrint(special_case)
+                << " is a special case of " << PrettyPrint(general_case)
+                << " under the condition that " << condition << std::endl;
       With<arith::ConstraintContext> constraint(analyzer_, condition);
-      Stmt stmt = general_case;
-      stmt = RemoveNoOp(stmt, analyzer_, touch_pattern_);
+      Stmt stmt = RemoveNoOp(general_case, analyzer_, touch_pattern_, special_case.get());
       return StructuralEqual()(stmt, special_case);
     };
 
+    ICHECK(touch_pattern_ == nullptr || cond->else_case.defined());
     Stmt else_case = cond->else_case.defined() ? cond->else_case : Evaluate(0);
 
     if (is_special_case(cond->condition, else_case, cond->then_case)) {
@@ -110,19 +150,26 @@ Pass ReduceBranchingThroughOvercompute() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
     arith::Analyzer analyzer;
 
-    std::optional<arith::ControlFlowGraph> touch_pattern = std::nullopt;
-
     ReduceBranchingThroughOvercomputeConfig config =
         ctx->GetConfig<ReduceBranchingThroughOvercomputeConfig>(
                "tir.ReduceBranchingThroughOvercompute")
             .value_or(AttrsWithDefaultValues<ReduceBranchingThroughOvercomputeConfig>());
-    if (config->use_dataflow_analysis) {
-      touch_pattern.emplace(f->body);
-    }
-    auto touch_pattern_ptr = touch_pattern.has_value() ? &touch_pattern.value() : nullptr;
 
     auto* n = f.CopyOnWrite();
+
+    std::optional<arith::ControlFlowGraph> touch_pattern = std::nullopt;
+    const arith::ControlFlowGraph* touch_pattern_ptr = nullptr;
+    ElseBranchFiller else_branch_filler;
+    if (config->use_dataflow_analysis) {
+      n->body = else_branch_filler(std::move(n->body));
+      touch_pattern_ptr = &touch_pattern.emplace(n->body);
+    }
+
     n->body = BranchReducer::Apply(std::move(n->body), touch_pattern_ptr);
+
+    if (config->use_dataflow_analysis) {
+      n->body = ElseBranchStripper(else_branch_filler.new_else_clauses)(std::move(n->body));
+    }
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.ReduceBranchingThroughOvercompute", {});

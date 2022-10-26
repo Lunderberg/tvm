@@ -46,6 +46,21 @@ struct BufferTouch {
     Assume,
   };
 
+  BufferTouch(tir::Buffer buffer, PrimExpr predicate, PrimExpr value)
+      : buffer(buffer),
+        predicate(predicate),
+        value(value),
+        loop_var_expressions({}),
+        touch_type(AccessType::Assume) {}
+
+  BufferTouch(tir::Buffer buffer, PrimExpr predicate, PrimExpr value,
+              std::vector<std::pair<Var, PrimExpr>> loop_var_expressions, AccessType touch_type)
+      : buffer(buffer),
+        predicate(predicate),
+        value(value),
+        loop_var_expressions(loop_var_expressions),
+        touch_type(touch_type) {}
+
   /*! \brief The buffer being touched */
   tir::Buffer buffer;
 
@@ -64,12 +79,23 @@ struct BufferTouch {
    */
   PrimExpr value;
 
+  /*! \brief Active loops during the buffer touch
+   *
+   * Used to construct boolean expressions indicating whether the loop
+   * iteration that performs this touch has been reached.
+   */
+  std::vector<std::pair<Var, PrimExpr>> loop_var_expressions;
+
   /*! \brief How the buffer was interacted with
    *
    * When used as a constraint (e.g. in BufferState), should use
    * Assume.
    */
   AccessType touch_type{AccessType::Assume};
+
+  PrimExpr BeforeLoopIteration() const;
+  PrimExpr AtLoopIteration() const;
+  PrimExpr AfterLoopIteration() const;
 
   /* \brief Checks if this touch affects a subset of indices of another
    *
@@ -166,6 +192,9 @@ class BufferState {
   void ApplyTouches(const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
                     const std::vector<BufferTouch>& touch_points, Analyzer* analyzer);
 
+  void BackpropUnusedIndices(const Map<tir::Buffer, Array<tir::Var>>& axis_var_lookup,
+                             const std::vector<BufferTouch>& touch_points, Analyzer* analyzer);
+
   /*! \brief Remove free parameters from the constraints
    *
    * \param free_predicate_parameters
@@ -203,6 +232,7 @@ class BufferState {
   friend std::ostream& operator<<(std::ostream& os, const BufferState&);
 
  private:
+  friend class ControlFlowGraph;
   /*! \brief The known constraints */
   std::vector<BufferTouch> constraints;
 };
@@ -221,7 +251,8 @@ class ControlFlowGraph {
    * overwritten without contributing to any later statements.
    * Returns false otherwise.
    */
-  bool IsOverwrittenWithoutEffect(const tir::BufferStore& store, Analyzer* analyzer) const;
+  bool IsOverwrittenWithoutEffect(const tir::BufferStore& store, Analyzer* analyzer,
+                                  const tir::StmtNode* context = nullptr) const;
 
   /* \brief Simplify the expression, assuming it occurs within the given context
    *
@@ -253,17 +284,44 @@ class ControlFlowGraph {
   friend std::ostream& operator<<(std::ostream& os, const ControlFlowGraph& pattern);
 
  private:
+  /*! \brief Return index variables representing locations within a
+   *   buffer.
+   *
+   * For a given buffer, will always return the same set of variables.
+   *
+   * \param buf The buffer being accessed
+   *
+   * \param indices The indices at which the buffer is being accessed.
+   * These are used to set the dtype of the buffer axis variables.
+   *
+   * \returns Variables representing a position along the buffer's axis.
+   */
+  Array<Var> GetIndexVariables(const tir::Buffer& buf, const Array<PrimExpr>& indices);
+
+  /*! \brief Return index variables representing locations within a
+   *   buffer, if they have been generated before.
+   *
+   * For a given buffer, will always return the same set of variables.
+   *
+   * \param buf The buffer being accessed
+   *
+   * \returns Variables representing a position along the buffer's axis.
+   */
+  Optional<Array<Var>> GetIndexVariables(const tir::Buffer& buf) const;
+
   /*! \brief Propagate known values from known BufferStore/assume
    *  subsequent control flow blocks
    */
   void ForwardPropagateKnownValues(size_t max_revisits);
+
+  void BackwardPropagateUnusedValues(size_t max_revisits);
 
   struct ControlFlowEdge {
     /* \brief The source block of the control flow edge
      *
      * Lookup index into `control_flow_`
      */
-    size_t from_index;
+    size_t index;
 
     /*! \brief Variable remaps
      *
@@ -280,13 +338,36 @@ class ControlFlowGraph {
      */
     Optional<PrimExpr> post_condition;
   };
+  friend std::ostream& operator<<(std::ostream& os, const ControlFlowEdge& edge);
 
   struct ControlFlowBlock {
+    struct LoopEntry {
+      Var loop_var;
+      PrimExpr loop_min;
+      PrimExpr loop_max;
+      Range loop_range;
+    };
+
+    /*! \brief Loop iterators that are active during this block */
+    std::vector<LoopEntry> active_loop_iterators;
+
+    /*! \brief Loop-dependent Let bindings that may appear within the block */
+    Map<Var, PrimExpr> let_bindings_using_loop;
+
+    /*! \brief Predicate that must be true to have reached this block */
+    PrimExpr scope_predicate{Bool(true)};
+
     /*! \brief All known values prior to executing the block */
     BufferState known_at_block_start;
 
     /*! \brief All known values after executing the block */
     BufferState known_at_block_end;
+
+    /*! \brief Indices whose value at the start of the block is known to be unused */
+    BufferState unused_at_block_start;
+
+    /*! \brief Indices whose value at the end of the block is known to be unused */
+    BufferState unused_at_block_end;
 
     /* \brief Buffer touches that occur within the block
      *
@@ -299,10 +380,20 @@ class ControlFlowGraph {
      *
      * Lookup index into `control_flow_`
      */
-    std::vector<size_t> successors;
+    std::vector<ControlFlowEdge> successors;
 
     /* \brief The blocks that occur before this block */
     std::vector<ControlFlowEdge> predecessors;
+
+    BufferTouch MakeBufferTouch(ControlFlowGraph& graph, const tir::Buffer& buf,
+                                const Array<PrimExpr>& indices, BufferTouch::AccessType touch_type,
+                                PrimExpr known_value_expr) const;
+
+    std::pair<BufferTouch, Map<Var, Range>> MakeBufferTouch(const tir::Buffer& buf,
+                                                            Array<Var> index_variables,
+                                                            Array<PrimExpr> indices,
+                                                            BufferTouch::AccessType touch_type,
+                                                            PrimExpr known_value_expr) const;
   };
   friend std::ostream& operator<<(std::ostream& os, const ControlFlowBlock& pattern);
 
