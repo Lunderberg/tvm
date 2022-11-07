@@ -25,6 +25,8 @@
 #ifndef TVM_SUPPORT_TVM_ENUM_H_
 #define TVM_SUPPORT_TVM_ENUM_H_
 
+#include <tvm/ir/expr.h>
+#include <tvm/runtime/container/string.h>
 #include <tvm/runtime/logging.h>
 
 #include <string>
@@ -116,11 +118,19 @@ namespace support {
     static const constexpr char* const value_names[] = {                            \
         MAP_LIST(TVM_ENUM_STRING_NAME, __VA_ARGS__)};                               \
     static const constexpr char* const enum_name = #EnumName;                       \
+    friend class ::tvm::support::EnumCRTP<EnumName>;                                \
   }
 
 template <typename T>
 class EnumCRTP {
  public:
+  static Map<String, Integer> GetValueMap() {
+    Map<String, Integer> output;
+    for (size_t i = 0; i < T::n_values; i++) {
+      output.Set(T::value_names[i], static_cast<int>(T::values[i]));
+    }
+    return output;
+  }
   // TODO: Add the FFI interface here
 };
 

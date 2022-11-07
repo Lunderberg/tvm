@@ -17,7 +17,9 @@
 from xml import dom
 import tvm
 import tvm.testing
+
 from tvm.tir import floormod, floordiv
+from tvm.arith import IterMapLevel
 
 
 def ifuse(inputs, pred_extent=None):
@@ -49,7 +51,11 @@ def convert_iter_expr(expr):
 
 
 def assert_iter_sum_pattern(
-    expect_dict, dom_map, predicate=True, check_level="surjective", simplify_trivial_iterators=True
+    expect_dict,
+    dom_map,
+    predicate=True,
+    check_level=IterMapLevel.Surjective,
+    simplify_trivial_iterators=True,
 ):
     keys = list(expect_dict.keys())
     res = tvm.arith.detect_iter_map(
@@ -84,7 +90,7 @@ def assert_iter_sum_pattern(
             tvm.ir.assert_structural_equal(sum_expr, expect_iter)
 
 
-def assert_iter_sum_failure(iters, dom_map, predicate=True, check_level="surjective"):
+def assert_iter_sum_failure(iters, dom_map, predicate=True, check_level=IterMapLevel.Surjective):
     res = tvm.arith.detect_iter_map(
         list(iters), dom_map, predicate=predicate, check_level=check_level
     ).indices
@@ -104,12 +110,18 @@ def test_trivial():
     assert_iter_sum_failure([x, x, 3], dom_map)
 
     assert_iter_sum_pattern(
-        {x: (3, 0), y: (4, 0)}, dom_map, check_level="bijective", simplify_trivial_iterators=True
+        {x: (3, 0), y: (4, 0)},
+        dom_map,
+        check_level=IterMapLevel.Bijective,
+        simplify_trivial_iterators=True,
     )
     assert_iter_sum_pattern(
-        {x: (3, 0), y: (4, 0)}, dom_map, check_level="bijective", simplify_trivial_iterators=False
+        {x: (3, 0), y: (4, 0)},
+        dom_map,
+        check_level=IterMapLevel.Bijective,
+        simplify_trivial_iterators=False,
     )
-    assert_iter_sum_failure([x, z], dom_map, check_level="bijective")
+    assert_iter_sum_failure([x, z], dom_map, check_level=IterMapLevel.Bijective)
 
 
 def test_fuse():
@@ -334,7 +346,7 @@ def test_predicate():
         {i % 16: (7, 3), i // 16: (8, 4)},
         var_dom([(i, 1024)]),
         predicate=tvm.tir.all(3 <= i % 16, i % 16 < 10, 4 <= i // 16, i // 16 < 12),
-        check_level="bijective",
+        check_level=IterMapLevel.Bijective,
     )
 
     # constraint on split iters, nested case 1
@@ -351,7 +363,7 @@ def test_predicate():
         ],
         var_dom([(i, 5), (j, 32)]),
         predicate=tvm.tir.all(1 <= i * 32 + j, i * 32 + j <= 32),
-        check_level="bijective",
+        check_level=IterMapLevel.Bijective,
     )
     assert_iter_sum_pattern(
         {(i * 32 + j) % 16: (16, 0)},
@@ -929,7 +941,7 @@ def test_padding():
     assert_iter_sum_pattern(
         {fld(sum, 32): (6, 2, 1), flm(sum, 32): (32, 0, 1)},
         dom_map,
-        check_level="bijective",
+        check_level=IterMapLevel.Bijective,
     )
 
     # left padding only, offset non-divisible
@@ -1029,9 +1041,11 @@ def test_overlapped_fuse():
             x * 7 + y: (22, 0, 1),
         },
         var_dom([(x, 3), (y, 8)]),
-        check_level="surjective",
+        check_level=IterMapLevel.Surjective,
     )
-    assert_iter_sum_failure([x * 7 + y], var_dom([(x, 3), (y, 8)]), check_level="bijective")
+    assert_iter_sum_failure(
+        [x * 7 + y], var_dom([(x, 3), (y, 8)]), check_level=IterMapLevel.Bijective
+    )
 
     # non-bijective fuse of three
     assert_iter_sum_pattern(
@@ -1039,13 +1053,19 @@ def test_overlapped_fuse():
             x * 18 + y * 7 + z: (40, 0, 1),
         },
         var_dom([(x, 2), (y, 3), (z, 8)]),
-        check_level="surjective",
+        check_level=IterMapLevel.Surjective,
     )
-    assert_iter_sum_failure([x * 7 + y], var_dom([(x, 2), (y, 3), (z, 8)]), check_level="bijective")
+    assert_iter_sum_failure(
+        [x * 7 + y], var_dom([(x, 2), (y, 3), (z, 8)]), check_level=IterMapLevel.Bijective
+    )
 
     # negative scale fusion is not allowed
-    assert_iter_sum_failure([x * -7 + y], var_dom([(x, 3), (y, 8)]), check_level="surjective")
-    assert_iter_sum_failure([x * 7 - y], var_dom([(x, 3), (y, 8)]), check_level="surjective")
+    assert_iter_sum_failure(
+        [x * -7 + y], var_dom([(x, 3), (y, 8)]), check_level=IterMapLevel.Surjective
+    )
+    assert_iter_sum_failure(
+        [x * 7 - y], var_dom([(x, 3), (y, 8)]), check_level=IterMapLevel.Surjective
+    )
 
     # with predicate
     assert_iter_sum_pattern(
@@ -1054,16 +1074,18 @@ def test_overlapped_fuse():
         },
         var_dom([(a, 3), (b, 2), (x, 2), (y, 6), (z, 8)]),
         predicate=tvm.tir.all(z < 4, 1 < x * 6 + y, x * 6 + y < 10),
-        check_level="surjective",
+        check_level=IterMapLevel.Surjective,
     )
 
     # stride=1 kernel
     assert_iter_sum_pattern(
-        {x + a: (230, 0, 1)}, var_dom([(x, 224), (a, 7)]), check_level="surjective"
+        {x + a: (230, 0, 1)}, var_dom([(x, 224), (a, 7)]), check_level=IterMapLevel.Surjective
     )
 
     # do not allow both strided and overlapped
-    assert_iter_sum_failure([5 * x + 2 * y], var_dom([(x, 4), (y, 3)]), check_level="surjective")
+    assert_iter_sum_failure(
+        [5 * x + 2 * y], var_dom([(x, 4), (y, 3)]), check_level=IterMapLevel.Surjective
+    )
 
 
 if __name__ == "__main__":

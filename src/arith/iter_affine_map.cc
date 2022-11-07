@@ -39,6 +39,8 @@ namespace arith {
 
 using namespace tir;
 
+TVM_REGISTER_GLOBAL("arith.IterMapLevel").set_body_typed(IterMapLevel::GetValueMap);
+
 IterMark::IterMark(PrimExpr source, PrimExpr extent) {
   auto n = make_object<IterMarkNode>();
   n->source = std::move(source);

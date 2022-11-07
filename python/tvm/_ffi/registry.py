@@ -17,8 +17,9 @@
 
 # pylint: disable=invalid-name, unused-import
 """FFI registry to register function and objects."""
-import sys
 import ctypes
+import enum
+import sys
 
 from .base import _LIB, check_call, py_str, c_str, string_types, _FFI_MODE, _RUNTIME_ONLY
 
@@ -80,6 +81,24 @@ def register_object(type_key=None):
         return register
 
     return register(type_key)
+
+
+def register_enum(arg):
+    def register(cls):
+        func = get_global_func(type_key)
+        value_dict = func()
+        enum_def = enum.IntEnum(cls.__name__, value_dict)
+        # TODO: Wrap any docstring or method implementations from cls
+        # into enum_def.
+        return enum_def
+
+    if isinstance(arg, str):
+        type_key = arg
+        return register
+    else:
+        cls = arg
+        type_key = cls.__name__
+        return register(cls)
 
 
 def get_object_type_index(cls):

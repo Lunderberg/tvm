@@ -89,6 +89,11 @@ class IterSumExpr(IterMapExpr):
         self.__init_handle_by_constructor__(_ffi_api.IterSumExpr, args, base)
 
 
+@tvm._ffi.register_enum("arith.IterMapLevel")
+class IterMapLevel:
+    pass
+
+
 class IterMapLevel(IntEnum):
     """Possible kinds of iter mapping check level."""
 
