@@ -166,7 +166,6 @@ struct TypeIndex {
  */
 class TVM_DLL Object {
  public:
-  virtual ~Object() {}
   /*!
    * \brief Object deleter
    * \param self pointer to the Object.
@@ -322,32 +321,6 @@ class TVM_DLL Object {
   friend class ObjectPtr;
   friend class TVMRetValue;
   friend class ObjectInternal;
-
-  template <typename T>
-  struct type_id_holder {
-    static constexpr char id_loc = 0;
-  };
-
- protected:
-  // template <typename T>
-  // static constexpr void* compile_time_type_id() {
-  //   // return reinterpret_cast<size_t>(&type_id_holder<T>::id);
-  //   // return (size_t)(&type_id_holder<T>::id);
-  //   // return nullptr;
-  //   return &type_id_holder<T>::id;
-  // }
-
-  using type_id_type = std::uintptr_t;
-
-  template <typename T>
-  // static constexpr void* compile_time_type_id = &type_id_holder<T>::id;
-  static constexpr type_id_type compile_time_type_id =
-      static_cast<std::uintptr_t>(&type_id_holder<T>::id_loc);
-
- public:
-  // static constexpr size_t constexpr_type_id = compile_time_type_id<Object>();
-  static constexpr type_id_type constexpr_type_id = compile_time_type_id<Object>;
-  virtual type_id_type virtual_type_id() const { return Object::constexpr_type_id; }
 };
 
 /*!
@@ -688,9 +661,7 @@ struct ObjectPtrEqual {
         TypeName::_type_key, TypeName::_type_index, ParentType::_GetOrAllocRuntimeTypeIndex(), \
         TypeName::_type_child_slots, TypeName::_type_child_slots_can_overflow);                \
     return tindex;                                                                             \
-  }                                                                                            \
-  static constexpr type_id_type constexpr_type_id = compile_time_type_id<TypeName>;            \
-  type_id_type virtual_type_id() const override { return TypeName::constexpr_type_id; }
+  }
 
 /*!
  * \brief helper macro to declare type information in a final class.

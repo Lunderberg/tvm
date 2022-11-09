@@ -54,7 +54,7 @@ class UniversalVisitor {
   using RetType = std::conditional_t<is_mutator, T, void>;
 
   template <typename T>
-  using ArgType = std::conditional_t<is_mutator, const T&, T>;
+  using ArgType = std::conditional_t<is_mutator, T, const T&>;
 
   template <typename T>
   auto forward(T& obj) {
@@ -67,9 +67,11 @@ class UniversalVisitor {
 
  public:
   // Exposing scope-dependent
-  virtual std::function<void()> EnterConstraint(const PrimExpr& expr);
-  virtual std::function<void()> EnterDefinition(const Var& var, const Optional<Range>&);
-  virtual std::function<void()> EnterDefinition(const Buffer& buf);
+  virtual std::function<void()> EnterConstraint(const PrimExpr& expr) { return nullptr; }
+  virtual std::function<void()> EnterDefinition(const Var& var, const Optional<Range>&) {
+    return nullptr;
+  }
+  virtual std::function<void()> EnterDefinition(const Buffer& buf) { return nullptr; }
 
   // TODO: Rename these all to "Visit" instead of "VisitExpr",
   // "VisitExpr_", "VisitStmt", and "VisitStmt_".
@@ -146,7 +148,6 @@ class UniversalVisitor {
   virtual RetType<BufferRegion> Visit(ArgType<BufferRegion>);
   virtual RetType<MatchBufferRegion> Visit(ArgType<MatchBufferRegion>);
   virtual RetType<IterVar> Visit(ArgType<IterVar>);
-  /* virtual RetType<BufferLocation> Visit( ArgType<BufferLocation>); */
   virtual RetType<Range> Visit(ArgType<Range>);
 
   // VarDef and Integer have type-specific mutators, but deserve
@@ -162,21 +163,37 @@ class UniversalVisitor {
   /* virtual RetType<Integer> Visit(ArgType<Integer>); */
 
   // Containers
-  template <typename T>
-  auto Visit(const Array<T>& arr) {
-    if constexpr (is_mutator) {
-      return arr.Map([this](T t) { return Visit(std::move(t)); });
+  template <typename T, typename = std::enable_if_t<std::is_same_v<ArgType<Array<T>>, Array<T>>>>
+  Array<T> Visit(Array<T> arr) {
+    auto mutate_func = [this](T t) { return Visit(std::move(t)); };
+    if (arr.unique()) {
+      arr.MutateByApply(mutate_func);
+      return std::move(arr);
     } else {
-      for (const auto& element : arr) {
-        Visit(arr);
-      }
+      return arr.Map(mutate_func);
+    }
+  }
+
+  template <typename T,
+            typename = std::enable_if_t<std::is_same_v<ArgType<Array<T>>, const Array<T>&>>>
+  void Visit(const Array<T>& arr) {
+    for (const auto& element : arr) {
+      Visit(element);
     }
   }
 
   template <typename T>
-  auto Visit(const Optional<T>& opt) {
+  RetType<Optional<T>> Visit(ArgType<Optional<T>> opt) {
     if constexpr (is_mutator) {
-      return opt.has_value() ? Visit(opt.value()) : NullOpt;
+      if (!opt.has_value()) {
+        return NullOpt;
+      } else if (opt.unique()) {
+        T val = opt.value();
+        opt = NullOpt;
+        return Visit(std::move(val));
+      } else {
+        return Visit(opt.value());
+      }
     } else {
       if (opt.has_value()) {
         Visit(opt.value());
@@ -184,152 +201,395 @@ class UniversalVisitor {
     }
   }
 
-  // TODO: Remove backwards-compatibility wrappers
-  virtual PrimExpr VisitExpr(const PrimExpr& expr);
-  virtual PrimExpr VisitExpr_(const VarNode* op);
-  virtual PrimExpr VisitExpr_(const SizeVarNode* op);
-  virtual PrimExpr VisitExpr_(const BufferLoadNode* op);
-  virtual PrimExpr VisitExpr_(const ProducerLoadNode* op);
-  virtual PrimExpr VisitExpr_(const LoadNode* op);
-  virtual PrimExpr VisitExpr_(const LetNode* op);
-  virtual PrimExpr VisitExpr_(const CallNode* op);
-  virtual PrimExpr VisitExpr_(const AddNode* op);
-  virtual PrimExpr VisitExpr_(const SubNode* op);
-  virtual PrimExpr VisitExpr_(const MulNode* op);
-  virtual PrimExpr VisitExpr_(const DivNode* op);
-  virtual PrimExpr VisitExpr_(const ModNode* op);
-  virtual PrimExpr VisitExpr_(const FloorDivNode* op);
-  virtual PrimExpr VisitExpr_(const FloorModNode* op);
-  virtual PrimExpr VisitExpr_(const MinNode* op);
-  virtual PrimExpr VisitExpr_(const MaxNode* op);
-  virtual PrimExpr VisitExpr_(const EQNode* op);
-  virtual PrimExpr VisitExpr_(const NENode* op);
-  virtual PrimExpr VisitExpr_(const LTNode* op);
-  virtual PrimExpr VisitExpr_(const LENode* op);
-  virtual PrimExpr VisitExpr_(const GTNode* op);
-  virtual PrimExpr VisitExpr_(const GENode* op);
-  virtual PrimExpr VisitExpr_(const AndNode* op);
-  virtual PrimExpr VisitExpr_(const OrNode* op);
-  virtual PrimExpr VisitExpr_(const ReduceNode* op);
-  virtual PrimExpr VisitExpr_(const CastNode* op);
-  virtual PrimExpr VisitExpr_(const NotNode* op);
-  virtual PrimExpr VisitExpr_(const SelectNode* op);
-  virtual PrimExpr VisitExpr_(const RampNode* op);
-  virtual PrimExpr VisitExpr_(const BroadcastNode* op);
-  virtual PrimExpr VisitExpr_(const ShuffleNode* op);
-  virtual PrimExpr VisitExpr_(const IntImmNode* op);
-  virtual PrimExpr VisitExpr_(const FloatImmNode* op);
-  virtual PrimExpr VisitExpr_(const StringImmNode* op);
-  virtual PrimExpr VisitExpr_(const AnyNode* op);
+ private:
+#define TVM_UNIVERSAL_VISITOR_DISPATCH(ObjType, RefType)                                 \
+  vtable.template set_dispatch<ObjType>([](const ObjectRef& node, decltype(this) self) { \
+    const Object* ptr = node.get();                                                      \
+    const ObjType* add_ptr = static_cast<const ObjType*>(ptr);                           \
+    RefType add_ref = GetRef<RefType>(add_ptr);                                          \
+    return self->Visit(add_ref);                                                         \
+  })
 
-  virtual Stmt VisitStmt(const Stmt& stmt);
-  virtual Stmt VisitStmt_(const LetStmtNode* op);
-  virtual Stmt VisitStmt_(const AttrStmtNode* op);
-  virtual Stmt VisitStmt_(const IfThenElseNode* op);
-  virtual Stmt VisitStmt_(const ForNode* op);
-  virtual Stmt VisitStmt_(const WhileNode* op);
-  virtual Stmt VisitStmt_(const AllocateNode* op);
-  virtual Stmt VisitStmt_(const AllocateConstNode* op);
-  virtual Stmt VisitStmt_(const DeclBufferNode* op);
-  virtual Stmt VisitStmt_(const StoreNode* op);
-  virtual Stmt VisitStmt_(const BufferStoreNode* op);
-  virtual Stmt VisitStmt_(const BufferRealizeNode* op);
-  virtual Stmt VisitStmt_(const AssertStmtNode* op);
-  virtual Stmt VisitStmt_(const ProducerStoreNode* op);
-  virtual Stmt VisitStmt_(const ProducerRealizeNode* op);
-  virtual Stmt VisitStmt_(const PrefetchNode* op);
-  virtual Stmt VisitStmt_(const SeqStmtNode* op);
-  virtual Stmt VisitStmt_(const EvaluateNode* op);
-  virtual Stmt VisitStmt_(const BlockRealizeNode* op);
+  RetType<PrimExpr> Dispatch(ArgType<PrimExpr> expr) {
+    using FType = NodeFunctor<RetType<PrimExpr>(const ObjectRef&, decltype(this))>;
+    static FType vtable = []() -> FType {
+      FType vtable;
+      TVM_UNIVERSAL_VISITOR_DISPATCH(VarNode, Var);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(SizeVarNode, SizeVar);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(BufferLoadNode, BufferLoad);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ProducerLoadNode, ProducerLoad);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(LoadNode, Load);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(LetNode, Let);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(CallNode, Call);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AddNode, Add);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(SubNode, Sub);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(MulNode, Mul);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(DivNode, Div);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ModNode, Mod);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(FloorDivNode, FloorDiv);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(FloorModNode, FloorMod);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(MinNode, Min);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(MaxNode, Max);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(EQNode, EQ);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(NENode, NE);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(LTNode, LT);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(LENode, LE);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(GTNode, GT);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(GENode, GE);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AndNode, And);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(OrNode, Or);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ReduceNode, Reduce);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(CastNode, Cast);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(NotNode, Not);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(SelectNode, Select);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(RampNode, Ramp);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(BroadcastNode, Broadcast);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ShuffleNode, Shuffle);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(IntImmNode, IntImm);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(FloatImmNode, FloatImm);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(StringImmNode, StringImm);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AnyNode, Any);
+      return vtable;
+    }();
+    return vtable(expr, this);
+  }
+
+  RetType<Stmt> Dispatch(ArgType<Stmt> expr) {
+    using FType = NodeFunctor<RetType<Stmt>(const ObjectRef&, decltype(this))>;
+    static FType vtable = []() -> FType {
+      FType vtable;
+      TVM_UNIVERSAL_VISITOR_DISPATCH(LetStmtNode, LetStmt);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AttrStmtNode, AttrStmt);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(IfThenElseNode, IfThenElse);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ForNode, For);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(WhileNode, While);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AllocateNode, Allocate);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AllocateConstNode, AllocateConst);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(DeclBufferNode, DeclBuffer);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(StoreNode, Store);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(BufferStoreNode, BufferStore);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(BufferRealizeNode, BufferRealize);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(AssertStmtNode, AssertStmt);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ProducerStoreNode, ProducerStore);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(ProducerRealizeNode, ProducerRealize);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(PrefetchNode, Prefetch);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(SeqStmtNode, SeqStmt);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(EvaluateNode, Evaluate);
+      TVM_UNIVERSAL_VISITOR_DISPATCH(BlockRealizeNode, BlockRealize);
+      return vtable;
+    }();
+    return vtable(expr, this);
+  }
+
+#undef TVM_UNIVERSAL_VISITOR_DISPATCH
 };
 
-#define TVM_UNIVERSAL_VISITOR_VISIT_METHOD(Ret, Arg, param)                               \
-  template <VisitorFlag flags>                                                            \
-  typename UniversalVisitor<flags>::template RetType<Ret> UniversalVisitor<flags>::Visit( \
-      UniversalVisitor<flags>::ArgType<Arg> param)
+template <VisitorFlag flags>
+typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+    ArgType<PrimExpr> expr) {
+  return Dispatch(std::move(expr));
+}
 
-TVM_UNIVERSAL_VISITOR_VISIT_METHOD(PrimExpr, PrimExpr, expr) {
-  switch (expr->virtual_type_id()) {
-    case VarNode::constexpr_type_id:
-      return Visit(Var(forward(expr)));
-    case SizeVarNode::constexpr_type_id:
-      return Visit(SizeVar(forward(expr)));
-    case BufferLoadNode::constexpr_type_id:
-      return Visit(BufferLoad(forward(expr)));
-    case ProducerLoadNode::constexpr_type_id:
-      return Visit(ProducerLoad(forward(expr)));
-    case LoadNode::constexpr_type_id:
-      return Visit(Load(forward(expr)));
-    case LetNode::constexpr_type_id:
-      return Visit(Let(forward(expr)));
-    case CallNode::constexpr_type_id:
-      return Visit(Call(forward(expr)));
-    case AddNode::constexpr_type_id:
-      return Visit(Add(forward(expr)));
-    case SubNode::constexpr_type_id:
-      return Visit(Sub(forward(expr)));
-    case MulNode::constexpr_type_id:
-      return Visit(Mul(forward(expr)));
-    case DivNode::constexpr_type_id:
-      return Visit(Div(forward(expr)));
-    case ModNode::constexpr_type_id:
-      return Visit(Mod(forward(expr)));
-    case FloorDivNode::constexpr_type_id:
-      return Visit(FloorDiv(forward(expr)));
-    case FloorModNode::constexpr_type_id:
-      return Visit(FloorMod(forward(expr)));
-    case MinNode::constexpr_type_id:
-      return Visit(Min(forward(expr)));
-    case MaxNode::constexpr_type_id:
-      return Visit(Max(forward(expr)));
-    case EQNode::constexpr_type_id:
-      return Visit(EQ(forward(expr)));
-    case NENode::constexpr_type_id:
-      return Visit(NE(forward(expr)));
-    case LTNode::constexpr_type_id:
-      return Visit(LT(forward(expr)));
-    case LENode::constexpr_type_id:
-      return Visit(LE(forward(expr)));
-    case GTNode::constexpr_type_id:
-      return Visit(GT(forward(expr)));
-    case GENode::constexpr_type_id:
-      return Visit(GE(forward(expr)));
-    case AndNode::constexpr_type_id:
-      return Visit(And(forward(expr)));
-    case OrNode::constexpr_type_id:
-      return Visit(Or(forward(expr)));
-    case ReduceNode::constexpr_type_id:
-      return Visit(Reduce(forward(expr)));
-    case CastNode::constexpr_type_id:
-      return Visit(Cast(forward(expr)));
-    case NotNode::constexpr_type_id:
-      return Visit(Not(forward(expr)));
-    case SelectNode::constexpr_type_id:
-      return Visit(Select(forward(expr)));
-    case RampNode::constexpr_type_id:
-      return Visit(Ramp(forward(expr)));
-    case BroadcastNode::constexpr_type_id:
-      return Visit(Broadcast(forward(expr)));
-    case ShuffleNode::constexpr_type_id:
-      return Visit(Shuffle(forward(expr)));
-    case IntImmNode::constexpr_type_id:
-      return Visit(IntImm(forward(expr)));
-    case FloatImmNode::constexpr_type_id:
-      return Visit(FloatImm(forward(expr)));
-    case StringImmNode::constexpr_type_id:
-      return Visit(StringImm(forward(expr)));
-    case AnyNode::constexpr_type_id:
-      return Visit(Any(forward(expr)));
-    case PrimExprNode::constexpr_type_id:
-      LOG(FATAL) << "Untyped PrimExprNode";
-    default:
-      LOG(FATAL) << "Unsupported type: " << expr->GetTypeKey();
+template <VisitorFlag flags>
+typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+    ArgType<Var> var) {
+  return static_cast<RetType<PrimExpr>>(std::move(var));
+}
+
+template <VisitorFlag flags>
+typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+    ArgType<SizeVar> size_var) {
+  ArgType<Var> var = std::move(size_var);
+  return Visit(std::move(var));
+}
+
+template <VisitorFlag flags>
+typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+    ArgType<BufferLoad> buffer_load) {
+  if constexpr (!is_mutator) {
+    Visit(buffer_load->buffer);
+    Visit(buffer_load->indices);
+  } else if (buffer_load.unique()) {
+    auto* node = buffer_load.CopyOnWrite();
+    node->buffer = Visit(std::move(node->buffer));
+    node->indices = Visit(std::move(node->indices));
+    return std::move(buffer_load);
+  } else {
+    auto buf = Visit(buffer_load->buffer);
+    auto indices = Visit(buffer_load->indices);
+    if (buf.same_as(buffer_load->buffer) && indices.same_as(buffer_load->indices)) {
+      return std::move(buffer_load);
+    } else {
+      return BufferLoad(buf, indices);
+    }
   }
 }
 
-TVM_UNIVERSAL_VISITOR_VISIT_METHOD(PrimExpr, Var, var) { return var; }
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<ProducerLoad> producer_load) {}
 
-#undef TVM_UNIVERSAL_VISITOR_METHOD
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Let> let) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Call> call) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Add> add) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Sub> sub) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Mul> mul) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Div> div) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Mod> mod) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<FloorDiv> floor_div) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<FloorMod> floor_mod) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Min> min_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Max> max_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<EQ> eq) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<NE> ne) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<LT> lt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<LE> le) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<GT> gt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<GE> ge) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<And> and_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Or> or_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Reduce> reduce) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Cast> cast) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Not> not_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Select> select) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Ramp> ramp) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Broadcast> broadcast) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Shuffle> shuffle) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<IntImm> int_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<FloatImm> float_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<StringImm> string) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimExpr> UniversalVisitor<flags>::Visit(
+//     ArgType<Any> any) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<IRModule> UniversalVisitor<flags>::Visit(
+//     ArgType<IRModule> ir_module) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<PrimFunc> UniversalVisitor<flags>::Visit(
+//     ArgType<PrimFunc> prim_func) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<Stmt> stmt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<LetStmt> let_stmt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<AttrStmt> attr_stmt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<IfThenElse> if_then_else) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<For> for_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<While> while_node) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<Allocate> alloc) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<AllocateConst> alloc_const) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<DeclBuffer> decl_buffer) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<BufferStore> buffer_store) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<BufferRealize> buffer_realize) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<AssertStmt> assert_stmt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<ProducerStore> producer_store) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<ProducerRealize> producer_realize) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<Prefetch> prefetch) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<SeqStmt> seq_stmt) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<Evaluate> eval) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Stmt> UniversalVisitor<flags>::Visit(
+//     ArgType<BlockRealize> block_realize) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Block> UniversalVisitor<flags>::Visit(
+//     ArgType<Block> block) {}
+
+template <VisitorFlag flags>
+typename UniversalVisitor<flags>::template RetType<Buffer> UniversalVisitor<flags>::Visit(
+    ArgType<Buffer> buffer) {
+  if constexpr (!is_mutator) {
+    Visit(buffer->shape);
+    Visit(buffer->axis_separators);
+    Visit(buffer->strides);
+    Visit(buffer->elem_offset);
+  } else if (buffer.unique()) {
+    auto* node = buffer.CopyOnWrite();
+    node->shape = Visit(std::move(node->shape));
+    node->axis_separators = Visit(std::move(node->axis_separators));
+    node->strides = Visit(std::move(node->strides));
+    node->elem_offset = Visit(std::move(node->elem_offset));
+    return std::move(buffer);
+  } else {
+    auto data = Visit(buffer->data);
+    auto shape = Visit(buffer->shape);
+    auto axis_separators = Visit(buffer->axis_separators);
+    auto strides = Visit(buffer->strides);
+    auto elem_offset = Visit(buffer->elem_offset);
+    // TODO: Enforce uniqueness
+    if (data.same_as(buffer->data) && shape.same_as(buffer->shape) &&
+        axis_separators.same_as(buffer->axis_separators) && strides.same_as(buffer->strides) &&
+        elem_offset.same_as(buffer->elem_offset)) {
+      return std::move(buffer);
+    } else {
+      return Buffer(Downcast<Var>(data), buffer->dtype, shape, strides, elem_offset, buffer->name,
+                    buffer->data_alignment, buffer->offset_factor, buffer->buffer_type,
+                    axis_separators);
+    }
+  }
+}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<BufferRegion> UniversalVisitor<flags>::Visit(
+//     ArgType<BufferRegion> buffer_region) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<MatchBufferRegion>
+// UniversalVisitor<flags>::Visit(ArgType<MatchBufferRegion> match_buffer_region) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<IterVar> UniversalVisitor<flags>::Visit(
+//     ArgType<IterVar> iter_var) {}
+
+// // template <VisitorFlag flags>
+// // typename UniversalVisitor<flags>::template RetType<VarDef>
+// // UniversalVisitor<flags>::Visit(ArgType<VarDef> var_def) {}
+
+// // template <VisitorFlag flags>
+// // typename UniversalVisitor<flags>::template RetType<Integer>
+// // UniversalVisitor<flags>::Visit(ArgType<Integer> int_obj) {}
+
+// template <VisitorFlag flags>
+// typename UniversalVisitor<flags>::template RetType<Range> UniversalVisitor<flags>::Visit(
+//     ArgType<Range> range) {}
 
 }  // namespace tir
 }  // namespace tvm
