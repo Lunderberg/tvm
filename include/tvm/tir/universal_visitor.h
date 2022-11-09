@@ -155,8 +155,8 @@ class UniversalVisitor {
   // cases where Var/IntImm are used as PrimExprs, they may be
   // replaced with any other PrimExpr.  However, there are cases where
   // a variable *must* be present to define the values, or where a
-  // value *must* be an integer.  In these cases, the more specific
-  // child class may be used.
+  // value *must* be a literal integer.  In these cases, the more
+  // specific child class may be used.
 
   /* virtual RetType<VarDef> Visit(ArgType<VarDef>); */
   /* virtual RetType<Integer> Visit(ArgType<Integer>); */
