@@ -30,6 +30,7 @@
 #include <tvm/tir/stmt_functor.h>
 
 #include <sstream>
+#include <unordered_set>
 
 namespace tvm {
 namespace tir {
@@ -53,6 +54,115 @@ IndexMap IndexMap::FromFunc(int ndim, runtime::TypedPackedFunc<Array<PrimExpr>(A
   return IndexMap(initial_indices, func(initial_indices), std::move(inverse_index_map));
 }
 
+std::vector<std::string> GenerateIndexMapNames(const IndexMap& self,
+                                               const Array<arith::IterSumExpr>& parsed_indices) {
+  const auto& input_vars = self->initial_indices;
+  const auto& output_exprs = self->final_indices;
+
+  std::vector<std::string> names(output_exprs.size(), "");
+  auto is_done = [&names](size_t i) -> bool { return names[i].size(); };
+
+  std::unordered_set<const VarNode*> input_var_lookup;
+  for (const auto& input_var : input_vars) {
+    input_var_lookup.insert(input_var.get());
+  }
+  for (size_t i = 0; i < output_exprs.size(); i++) {
+    if (auto* as_var = output_exprs[i].as<VarNode>(); as_var && input_var_lookup.count(as_var)) {
+      names[i] = as_var->name_hint;
+    }
+  }
+
+  auto extract = [&](const arith::IterSumExpr& sum_expr) -> std::optional<std::pair<Var, size_t>> {
+    if (sum_expr->args.size() != 1) {
+      return std::nullopt;
+    }
+
+    const auto& split = sum_expr->args[0];
+    PrimExpr source = split->source->source;
+
+    size_t lower_factor = 1;
+    if (auto* as_int = split->lower_factor.as<IntImmNode>()) {
+      lower_factor = as_int->value;
+    } else {
+      return std::nullopt;
+    }
+
+    size_t iter = 0;
+    while (auto* inner_sum_expr = source.as<arith::IterSumExprNode>()) {
+      iter++;
+      if (inner_sum_expr->args.size() != 1) {
+        return std::nullopt;
+      }
+      const auto& inner_split = inner_sum_expr->args[0];
+      source = inner_split->source->source;
+    }
+
+    auto* source_var = source.as<VarNode>();
+    if (!source_var) {
+      return std::nullopt;
+    }
+
+    if (input_var_lookup.count(source_var) == 0) {
+      return std::nullopt;
+    }
+
+    return std::pair{GetRef<Var>(source_var), lower_factor};
+  };
+  for (size_t i = 0; i < output_exprs.size(); i++) {
+    if (is_done(i)) continue;
+
+    auto opt_var = extract(parsed_indices[i]);
+    bool is_smallest_split = opt_var.has_value() && opt_var->second == 1;
+    if (!is_smallest_split) continue;
+
+    Var split_var = opt_var->first;
+    std::vector<size_t> split_ordering = {i};
+
+    while (true) {
+      size_t smallest_split = -1;
+      std::optional<size_t> next_split_at = std::nullopt;
+      for (size_t j = 0; j < output_exprs.size(); j++) {
+        if (is_done(j) || std::any_of(split_ordering.begin(), split_ordering.end(),
+                                      [&](size_t prev) { return prev == j; }))
+          continue;
+
+        auto opt_var = extract(parsed_indices[j]);
+        if (opt_var && opt_var->first.same_as(split_var) && opt_var->second < smallest_split) {
+          smallest_split = opt_var->second;
+          next_split_at = j;
+        }
+      }
+      if (next_split_at.has_value()) {
+        split_ordering.push_back(*next_split_at);
+      } else {
+        break;
+      }
+    }
+
+    if (split_ordering.size() == 2) {
+      // Special casing for the common case of outer/inner splits
+      names[split_ordering[0]] = split_var->name_hint + "i";
+      names[split_ordering[1]] = split_var->name_hint + "o";
+    } else {
+      for (size_t split_i = 0; split_i < split_ordering.size(); split_i++) {
+        std::stringstream ss;
+        ss << split_var->name_hint << "_" << split_i;
+        names[split_ordering[split_i]] = ss.str();
+      }
+    }
+  }
+
+  for (size_t i = 0; i < names.size(); i++) {
+    if (!is_done(i)) {
+      std::stringstream ss;
+      ss << "axis" << i;
+      names[i] = ss.str();
+    }
+  }
+
+  return names;
+}
+
 std::pair<IndexMap, PrimExpr> IndexMapInverseImpl(const IndexMap& self,
                                                   const Array<Range>& initial_ranges,
                                                   arith::IterMapLevel check_level) {
@@ -62,21 +172,6 @@ std::pair<IndexMap, PrimExpr> IndexMapInverseImpl(const IndexMap& self,
     // bijective.
     PrimExpr padding_predicate = Bool(false);
     return {Downcast<IndexMap>(self->inverse_index_map.value()), padding_predicate};
-  }
-
-  // Dummy variables to represent the inverse's inputs.
-  Array<Var> output_vars;
-  for (size_t i = 0; i < self->final_indices.size(); i++) {
-    PrimExpr index = self->final_indices[i];
-    // TODO(Lunderberg): Better names for these variables.  A variable
-    // that is passed through unmodified (`index` is an element of
-    // `initial_indices`) should use that input index's name.  A pair
-    // of output indices variables split from a single input index
-    // should be named (X.outer,X.inner).
-    std::stringstream ss;
-    ss << "axis" << i;
-    Var var_index(ss.str(), index.dtype());
-    output_vars.push_back(var_index);
   }
 
   // Dummy ranges for the extent of each input.
@@ -94,6 +189,16 @@ std::pair<IndexMap, PrimExpr> IndexMapInverseImpl(const IndexMap& self,
                                        /*simplify_trivial_iterators=*/false);
   CHECK(padded_iter_map->errors.empty()) << "Could not parse mapping as sum of iterators.  "
                                          << "Error: " << padded_iter_map->errors[0];
+
+  // Dummy variables to represent the inverse's inputs.
+  auto var_names = GenerateIndexMapNames(self, padded_iter_map->indices);
+  Array<Var> output_vars;
+  ICHECK_EQ(self->final_indices.size(), padded_iter_map->indices.size());
+  for (size_t i = 0; i < self->final_indices.size(); i++) {
+    const PrimExpr& index = self->final_indices[i];
+    Var var_index(var_names[i], index.dtype());
+    output_vars.push_back(var_index);
+  }
 
   // Determine expressions for the input variables, in terms of the
   // output variables.
