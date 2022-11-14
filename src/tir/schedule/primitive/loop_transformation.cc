@@ -412,7 +412,10 @@ Array<StmtSRef> Split(ScheduleState self, const StmtSRef& loop_sref, const Array
   new_loop_vars.reserve(n);
   for (int i = 0; i < n; i++) {
     const PrimExpr& factor = factors[i];
-    Var var = loop->loop_var.copy_with_suffix("_" + std::to_string(i)).copy_with_dtype(dtype);
+    std::string suffix = (n == 2 && i == 0)   ? "o"
+                         : (n == 2 && i == 1) ? "i"
+                                              : "_" + std::to_string(i);
+    Var var = loop->loop_var.copy_with_suffix(suffix).copy_with_dtype(dtype);
     substitute_value = substitute_value * factor + var;
     analyzer.Bind(var, Range::FromMinExtent(make_const(dtype, 0), tvm::cast(dtype, factor)));
     new_loop_vars.emplace_back(std::move(var));
