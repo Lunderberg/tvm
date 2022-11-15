@@ -31,11 +31,14 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 
 #include "../../arith/interval_set.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
 #include "../../runtime/thread_storage_scope.h"
 #include "ir_utils.h"
+#include "remove_no_op.h"
+#include "simplify.h"
 
 namespace tvm {
 namespace tir {
@@ -45,7 +48,7 @@ enum class HoistedConditionals : int {
   kIfElseStmt = (1 << 0),
   kIfElseExpr = (1 << 1),
   kBooleanExpression = (1 << 2),
-  kUsingBlockVar = (1 << 3),
+  kUsingThreadBinding = (1 << 3),
 };
 
 enum class HoistedLetBindings : int {
@@ -53,6 +56,7 @@ enum class HoistedLetBindings : int {
   kRequiredByCondition = (1 << 0),
   kLetStmt = (1 << 1),
   kLetExpr = (1 << 2),
+  kUsingBlockIterVar = (1 << 3),
 };
 
 struct HoistExpressionConfigNode : public tvm::AttrsNode<HoistExpressionConfigNode> {
@@ -102,7 +106,7 @@ struct HoistIfThenElseConfigNode : public tvm::AttrsNode<HoistIfThenElseConfigNo
 
   TVM_DECLARE_ATTRS(HoistIfThenElseConfigNode, "tir.transform.HoistIfThenElseConfig") {
     TVM_ATTR_FIELD(support_block_scope_hosting)
-        .describe("Hoist if cond with block scope variables")
+        .describe("Hoist if cond with thread-binding (block scope) variables")
         .set_default(false);
   }
 };
@@ -119,16 +123,16 @@ TVM_REGISTER_PASS_CONFIG_OPTION("tir.HoistIfThenElse", HoistIfThenElseConfig);
 class HoistInfoCollector : public StmtExprVisitor {
  public:
   struct ConditionInfo {
-    ConditionInfo(PrimExpr condition, HoistedConditionals hoist_from, bool uses_block_var,
+    ConditionInfo(PrimExpr condition, HoistedConditionals hoist_from, bool uses_thread_binding,
                   std::unordered_set<const VarNode*> required_let_bindings, bool generate_else_case)
         : condition(condition),
           hoist_from(hoist_from),
-          uses_block_var(uses_block_var),
+          uses_thread_binding(uses_thread_binding),
           required_let_bindings(required_let_bindings),
           generate_else_case(generate_else_case) {}
     PrimExpr condition;
     HoistedConditionals hoist_from;
-    bool uses_block_var;
+    bool uses_thread_binding;
     std::unordered_set<const VarNode*> required_let_bindings;
     bool generate_else_case;
 
@@ -140,9 +144,9 @@ class HoistInfoCollector : public StmtExprVisitor {
           config->FlagSet(HoistedLetBindings::kRequiredByCondition) ||
           config->FlagSet(HoistedLetBindings::kLetStmt);
 
-      bool valid_block_var_usage =
-          config->FlagSet(HoistedConditionals::kUsingBlockVar) || !uses_block_var;
-      return valid_source && all_required_bindings_are_hoisted && valid_block_var_usage;
+      bool valid_thread_binding_usage =
+          config->FlagSet(HoistedConditionals::kUsingThreadBinding) || !uses_thread_binding;
+      return valid_source && all_required_bindings_are_hoisted && valid_thread_binding_usage;
     }
   };
 
@@ -159,10 +163,11 @@ class HoistInfoCollector : public StmtExprVisitor {
   };
 
   struct HoistInfo {
-    // The loop variable
-    Var loop_var;
+    // The loop variable in the case of For/AttrStmt, or iter
+    // variables in the case of Block.
+    std::vector<Var> loop_vars;
 
-    // The For or AttrStmt that defines the loop var.
+    // The For, AttrStmt, or Block that defines the loop var.
     Stmt loop_def;
 
     // Bindings defined in LetStmt inside the for-loop whose value
@@ -182,7 +187,7 @@ class HoistInfoCollector : public StmtExprVisitor {
 
     // True if the loop variable representing a block variable
     // (e.g. blockIdx.x, threadIdx.x), false otherwise.
-    bool IsBlockVariable() const { return !loop_def.as<ForNode>(); }
+    bool IsThreadBinding() const { return !loop_def.as<ForNode>(); }
   };
 
   static std::vector<HoistInfo> Collect(Stmt stmt, HoistExpressionConfig config) {
@@ -205,10 +210,10 @@ class HoistInfoCollector : public StmtExprVisitor {
     }
     if (auto info = FindHoistDestination(cond)) {
       if (!info->reached_sequential_node) {
-        // Record whether this conditional uses any block variables.
-        bool uses_block_var = active_block_vars.size() && UsesVar(cond, [&](const VarNode* var) {
-                                return active_block_vars.count(var);
-                              });
+        // Record whether this conditional uses any thread bindings.
+        bool uses_thread_binding =
+            active_thread_bindings.size() &&
+            UsesVar(cond, [&](const VarNode* var) { return active_thread_bindings.count(var); });
 
         std::unordered_set<const VarNode*> let_bindings_used;
 
@@ -221,7 +226,7 @@ class HoistInfoCollector : public StmtExprVisitor {
             }
           }
         }
-        info->conditions.push_back(ConditionInfo(cond, hoist_from, uses_block_var,
+        info->conditions.push_back(ConditionInfo(cond, hoist_from, uses_thread_binding,
                                                  let_bindings_used, generate_else_block));
       }
     }
@@ -240,7 +245,7 @@ class HoistInfoCollector : public StmtExprVisitor {
   }
 
   void VisitStmt_(const ForNode* op) final {
-    active_loops.push_back({op->loop_var, GetRef<Stmt>(op)});
+    active_loops.push_back({{op->loop_var}, GetRef<Stmt>(op)});
     active_loop_vars.insert(op->loop_var.get());
 
     Parent::VisitStmt_(op);
@@ -260,9 +265,9 @@ class HoistInfoCollector : public StmtExprVisitor {
       return Parent::VisitStmt_(op);
     }
 
-    active_block_vars.insert(var.get());
+    active_thread_bindings.insert(var.get());
     active_loop_vars.insert(var.get());
-    active_loops.push_back({var, GetRef<Stmt>(op)});
+    active_loops.push_back({{var}, GetRef<Stmt>(op)});
 
     Parent::VisitStmt_(op);
 
@@ -270,7 +275,7 @@ class HoistInfoCollector : public StmtExprVisitor {
     active_loops.pop_back();
 
     active_loop_vars.erase(var.get());
-    active_block_vars.erase(var.get());
+    active_thread_bindings.erase(var.get());
   }
 
   void VisitBinding(Var var, PrimExpr value, HoistedLetBindings hoist_from) {
@@ -331,6 +336,18 @@ class HoistInfoCollector : public StmtExprVisitor {
     let_var_to_let_vars.erase(op->var.get());
   }
 
+  void VisitStmt_(const BlockNode* op) final {
+    std::vector<Var> loop_vars;
+    for (const auto& iter_var : op->iter_vars) {
+      loop_vars.push_back(iter_var->var);
+    }
+    active_loops.push_back({loop_vars, GetRef<Stmt>(op)});
+
+    Parent::VisitStmt_(op);
+
+    active_loops.pop_back();
+  }
+
   void VisitStmt_(const IfThenElseNode* op) final {
     AttemptHoistConditional(op->condition, HoistedConditionals::kIfElseStmt,
                             op->else_case.defined());
@@ -361,24 +378,29 @@ class HoistInfoCollector : public StmtExprVisitor {
     }
 
     for (auto it = active_loops.rbegin(); it != active_loops.rend(); it++) {
-      Var loop_var = it->loop_var;
+      const auto& loop_vars = it->loop_vars;
       bool uses_loop_var = UsesVar(expr, [&](const VarNode* var) -> bool {
-        if (var == loop_var.get()) {
-          return true;
-        }
+        return std::any_of(loop_vars.begin(), loop_vars.end(), [&](Var loop_var) -> bool {
+          if (var == loop_var.get()) {
+            return true;
+          }
 
-        auto it = let_var_to_loop_vars.find(var);
-        if (it == let_var_to_loop_vars.end()) {
-          return false;
-        }
+          auto it = let_var_to_loop_vars.find(var);
+          if (it == let_var_to_loop_vars.end()) {
+            return false;
+          }
 
-        return it->second.count(loop_var.get());
+          return it->second.count(loop_var.get());
+        });
       });
 
-      bool is_disabled_hoist_across_block_var =
-          !config->FlagSet(HoistedConditionals::kUsingBlockVar) && it->IsBlockVariable();
+      bool would_hoist_across_tir_block = it->loop_def->IsInstance<BlockNode>();
 
-      if (it->reached_sequential_node || uses_loop_var || is_disabled_hoist_across_block_var) {
+      bool is_disabled_hoist_across_thread_binding =
+          !config->FlagSet(HoistedConditionals::kUsingThreadBinding) && it->IsThreadBinding();
+
+      if (it->reached_sequential_node || uses_loop_var || is_disabled_hoist_across_thread_binding ||
+          would_hoist_across_tir_block) {
         if (it == active_loops.rbegin()) {
           // Cannot hoist beyond the innermost loop iterator.
           return nullptr;
@@ -400,7 +422,7 @@ class HoistInfoCollector : public StmtExprVisitor {
   HoistExpressionConfig config;
 
   // Current thread_extent bindings of block variables.
-  std::unordered_set<const VarNode*> active_block_vars;
+  std::unordered_set<const VarNode*> active_thread_bindings;
 
   // An ordered list of loops that are currently being visited.
   std::vector<HoistInfo> active_loops;
@@ -464,20 +486,55 @@ class ExpressionHoister : public arith::IRMutatorWithAnalyzer {
   }
 
   Stmt WrapHoistedStatements(Stmt stmt, const HoistInfoCollector::HoistInfo& info) {
+    Stmt orig = stmt;
+
+    // std::vector<const HoistInfoCollector::ConditionInfo*> enabled;
+    // for (const auto& cond : info.conditions) {
+    //   if (cond.IsEnabled(config_)) {
+    //     enabled.push_back(&cond);
+    //   }
+    // }
+
     for (auto cond_it = info.conditions.rbegin(); cond_it != info.conditions.rend(); cond_it++) {
       if (cond_it->IsEnabled(config_)) {
+        Stmt before_wrap = stmt;
         if (cond_it->generate_else_case) {
+          // std::cout << "Wrapping if/else condition over " << cond_it->condition << std::endl;
           stmt = IfThenElse(cond_it->condition, stmt, stmt);
         } else {
+          // std::cout << "Wrapping if condition over " << cond_it->condition << std::endl;
           stmt = IfThenElse(cond_it->condition, stmt);
         }
+        Stmt after_wrap = stmt;
+        stmt = ConvertSSA(stmt);
+        Stmt after_ssa = stmt;
+        // if (!after_ssa.same_as(after_wrap)) {
+        //   std::cout << "After SSA: " << after_ssa << std::endl;
+        // }
+        arith::Analyzer analyzer;
+        stmt = Simplify(stmt, &analyzer);
+        Stmt after_simplify = stmt;
+        // if (!after_simplify.same_as(after_ssa)) {
+        //   std::cout << "After simplify: " << stmt << std::endl;
+        // }
+        stmt = RemoveNoOp(stmt, &analyzer);
+        Stmt after_remove_no_op = stmt;
+        // if (!after_remove_no_op.same_as(after_simplify)) {
+        //   std::cout << "After RemoveNoOp: " << after_remove_no_op << std::endl;
+        // }
       }
     }
     for (auto let_it = info.let_bindings.rbegin(); let_it != info.let_bindings.rend(); let_it++) {
       if (hoisted_let_bindings.count(let_it->var.get())) {
+        // std::cout << "Wrapping let binding of " << let_it->value << std::endl;
         stmt = LetStmt(let_it->var, let_it->value, stmt);
       }
     }
+
+    // if (!orig.same_as(stmt)) {
+    //   std::cout << "Wrapping from " << orig << std::endl;
+    //   std::cout << "Wrapping into " << stmt << std::endl;
+    // }
 
     return stmt;
   }
@@ -563,7 +620,7 @@ Pass HoistIfThenElse() {
       cfg = AttrsWithDefaultValues<HoistIfThenElseConfig>();
     }
     int block_var = static_cast<int>(cfg.value()->support_block_scope_hosting
-                                         ? HoistedConditionals::kUsingBlockVar
+                                         ? HoistedConditionals::kUsingThreadBinding
                                          : HoistedConditionals::kNone);
     HoistExpressionConfig config(block_var | static_cast<int>(HoistedConditionals::kIfElseStmt),
                                  static_cast<int>(HoistedLetBindings::kNone));

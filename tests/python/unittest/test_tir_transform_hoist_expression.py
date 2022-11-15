@@ -22,34 +22,25 @@ from tvm.script import tir as T
 from tvm.tir.transform import HoistExpression, HoistedConditionals, HoistedLetBindings
 
 
-class BaseBeforeAfter:
+class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     hoisted_conditionals = tvm.testing.parameter(HoistedConditionals.All)
     hoisted_let_bindings = tvm.testing.parameter(HoistedLetBindings.All)
 
-    def test_hoist(self, hoisted_conditionals, hoisted_let_bindings):
-        before = self.before
-        before_mod = tvm.IRModule.from_expr(before)
-
-        config = {
-            "tir.HoistExpression": {
-                "hoisted_conditionals": hoisted_conditionals.value,
-                "hoisted_let_bindings": hoisted_let_bindings.value,
+    @tvm.testing.fixture
+    def transform(self, hoisted_conditionals, hoisted_let_bindings):
+        def inner(mod):
+            config = {
+                "tir.HoistExpression": {
+                    "hoisted_conditionals": hoisted_conditionals.value,
+                    "hoisted_let_bindings": hoisted_let_bindings.value,
+                }
             }
-        }
 
-        with tvm.transform.PassContext(config=config):
-            after_mod = tvm.tir.transform.HoistExpression()(before_mod)
+            with tvm.transform.PassContext(config=config):
+                mod = tvm.tir.transform.HoistExpression()(mod)
+            return mod
 
-        after = after_mod["main"]
-        expected = self.expected
-
-        try:
-            tvm.ir.assert_structural_equal(after, expected)
-        except ValueError as err:
-            script = tvm.IRModule({"expected": expected, "after": after, "before": before}).script()
-            raise ValueError(
-                f"Function after simplification did not match expected:\n{script}"
-            ) from err
+        return inner
 
 
 class TestHoistToTop(BaseBeforeAfter):
@@ -470,6 +461,37 @@ class TestSuppressHoistLetExpr(BaseBeforeAfter):
             A[i, j] = T.Let(x, T.cast(i + 1, "float32"), 5.0 * x + T.cast(j, "float32"))
 
     expected = before
+
+
+class TestNoHoistAcrossTIRBlock(BaseBeforeAfter):
+    def before(A: T.Buffer[(4, 4), "int32"]):
+        for i, j in T.grid(4, 4):
+            with T.block("block"):
+                vi, vj = T.axis.remap("SS", [i, j])
+                if vi < 2:
+                    A[vi, vj] = 0
+                else:
+                    A[vi, vj] = 1
+
+    expected = before
+
+
+# class TestHoistUpToTIRBlock(BaseBeforeAfter):
+#     def before(A: T.Buffer[(4, 4), "float32"]):
+#         for i, j in T.grid(4, 4):
+#             with T.block("block"):
+#                 vi, vj = T.axis.remap("SS", [i, j])
+#                 A[vi, vj] = T.if_then_else(vi < 2, 0.0, 1.0, dtype="float32") + T.if_then_else(
+#                     vj < 2, 4.0, 6.0, dtype="float32"
+#                 )
+
+#     def expected(A: T.Buffer[(4, 4), "float32"]):
+#         for i, j in T.grid(4, 4):
+#             with T.block("block"):
+#                 vi, vj = T.axis.remap("SS", [i, j])
+#                 A[vi, vj] = T.if_then_else(vi < 2 and vj<2, 2.0, 1.0, dtype="float32") + T.if_then_else(
+#                     vj < 2, 2.0, 3.0, dtype="float32"
+#                 )
 
 
 if __name__ == "__main__":

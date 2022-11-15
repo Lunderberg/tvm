@@ -822,7 +822,10 @@ BufferTouch ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(ControlFlowGraph
 
 ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits)
     : max_revisits_(max_revisits) {
+  std::cout << "Collecting info" << std::endl;
   ControlFlowGraphBuilder::Build(this, stmt);
+  std::cout << "Collected " << *this << std::endl;
+  std::cout << "Starting forward prop" << std::endl;
   ForwardPropagateKnownValues();
   BackwardPropagateUnusedValues();
 }
@@ -1393,7 +1396,10 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
 
     ControlFlowBlock& block = control_flow_[visiting];
 
-    // Step 1: Collect known values provided from each predecessor
+    std::cout << "Visiting control block " << visiting << " / " << control_flow_.size()
+              << std::endl;
+
+    // Step 1: Collect known values provided from each precedessor
     block.known_at_block_start = [&]() -> BufferState {
       if (num_previous_visits >= max_revisits_) {
         return BufferState();

@@ -1157,6 +1157,7 @@ void TransformLayout(ScheduleState self, const StmtSRef& block_sref, int buffer_
 
   // Step 4: Replace the scope block with the new block
   self->Replace(scope_sref, new_scope_block, block_sref_reuse);
+  self->UpdateScopeBlockInfo(new_scope_block);
 }
 
 /*!

@@ -126,7 +126,9 @@ class BranchReducer : public arith::IRMutatorWithAnalyzer {
         << "Temp assert, should be true whenever touch pattern is available";
     Stmt else_case = cond->else_case.value_or(Evaluate(0));
 
-    if (is_special_case(cond->condition, else_case, cond->then_case)) {
+    if (StructuralEqual()(cond->then_case, else_case)) {
+      return cond->then_case;
+    } else if (is_special_case(cond->condition, else_case, cond->then_case)) {
       return else_case;
     } else if (is_special_case(!cond->condition, cond->then_case, else_case)) {
       return cond->then_case;

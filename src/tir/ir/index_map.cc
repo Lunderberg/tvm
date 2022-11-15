@@ -141,8 +141,8 @@ std::vector<std::string> GenerateIndexMapNames(const IndexMap& self,
 
     if (split_ordering.size() == 2) {
       // Special casing for the common case of outer/inner splits
-      names[split_ordering[0]] = split_var->name_hint + "i";
-      names[split_ordering[1]] = split_var->name_hint + "o";
+      names[split_ordering[0]] = split_var->name_hint + "o";
+      names[split_ordering[1]] = split_var->name_hint + "i";
     } else {
       for (size_t split_i = 0; split_i < split_ordering.size(); split_i++) {
         std::stringstream ss;

@@ -291,7 +291,9 @@ std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& c
   size_t old_literal_size = literal_constraints_.size();
   // we will compare the already simplified result with the constraint,
   // so simplify the constraint as well
+
   PrimExpr new_constraint = operator()(constraint);
+
   for (const PrimExpr& subconstraint : ExtractConstraints(new_constraint, false)) {
     if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
       literal_constraints_.push_back(subconstraint);
@@ -850,6 +852,14 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const FloorDivNode* op) {
   }
 
   if (IsIndexType(op->dtype)) {
+    // More aggressive simplification for FloorDiv by a constant.
+    if (is_const_int(op->b)) {
+      auto bound = analyzer_->const_int_bound(ret);
+      if (bound->min_value == bound->max_value) {
+        return IntImm(op->dtype, bound->min_value);
+      }
+    }
+
     // Be-aware of the division rules: this is floor division.
     TVM_TRY_REWRITE_IF(floordiv(floordiv(x, c1), c2), floordiv(x, c1 * c2),
                        c1.Eval()->value > 0 && c2.Eval()->value > 0);
@@ -1370,17 +1380,38 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MaxNode* op) {
 }
 
 Optional<PrimExpr> RewriteSimplifier::Impl::TryMatchLiteralConstraint(const PrimExpr& expr) const {
-  PrimExpr negation = Not(expr);
-
   ExprDeepEqual expr_equal;
-  for (const auto& constraint : literal_constraints_) {
-    if (expr_equal(constraint, expr)) {
-      return make_const(expr->dtype, true);
-    }
-    if (expr_equal(constraint, negation)) {
-      return make_const(expr->dtype, false);
+
+  // If the expression matches a known true statement, or is the
+  // negation of a known true statement, we can substitute the known
+  // value in.
+  if (expr->dtype == DataType::Bool()) {
+    PrimExpr negation = Not(expr);
+    for (const auto& constraint : literal_constraints_) {
+      if (expr_equal(constraint, expr)) {
+        return make_const(expr->dtype, true);
+      }
+      if (expr_equal(constraint, negation)) {
+        return make_const(expr->dtype, false);
+      }
     }
   }
+
+  // If the expression is known to be equal to a specific value, we
+  // can substitute that known value in.  To avoid recursion, this is
+  // only done when the expression is equal to a constant integer.
+  if (IsIndexType(expr->dtype)) {
+    for (const auto& constraint : literal_constraints_) {
+      if (auto* as_equal = constraint.as<EQNode>()) {
+        if (as_equal->a->IsInstance<IntImmNode>() && expr_equal(expr, as_equal->b)) {
+          return as_equal->a;
+        } else if (as_equal->b->IsInstance<IntImmNode>() && expr_equal(expr, as_equal->a)) {
+          return as_equal->b;
+        }
+      }
+    }
+  }
+
   return NullOpt;
 }
 
@@ -1981,12 +2012,20 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const CallNode* op) {
   }
 
   if (op->op.same_as(tir::builtin::if_then_else())) {
-    // Simplify nested if_then_else
-    // if (cond) { if (inner_cond) { inner_then_expr } else { inner_else_expr } } else { else_expr }
-    // => if (cond && inner_cond) { inner_then_expr } else { else_expr }
     const PrimExpr& cond = op->args[0];
     const PrimExpr& then_expr = op->args[1];
     const PrimExpr& else_expr = op->args[2];
+
+    // Simplify unnecessary if_then_else
+    // if (cond) { expr } else { expr }
+    if (SideEffect(cond) <= CallEffectKind::kReadState &&
+        analyzer_->CanProveEqual(then_expr, else_expr)) {
+      return then_expr;
+    }
+
+    // Simplify nested if_then_else
+    // if (cond) { if (inner_cond) { inner_then_expr } else { inner_else_expr } } else { else_expr }
+    // => if (cond && inner_cond) { inner_then_expr } else { else_expr }
     const CallNode* inner_call = then_expr.as<CallNode>();
     if (inner_call != nullptr && inner_call->op.same_as(tir::builtin::if_then_else())) {
       const PrimExpr& inner_cond = inner_call->args[0];
@@ -2005,16 +2044,21 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const CallNode* op) {
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const VarNode* op) {
   Var var = GetRef<Var>(op);
-  if (op->dtype == DataType::Bool()) {
-    if (auto match = TryMatchLiteralConstraint(var)) {
-      return match.value();
+  if (auto match = TryMatchLiteralConstraint(var)) {
+    return match.value();
+  }
+
+  if (auto it = var_map_.find(var); it != var_map_.end()) {
+    return it->second;
+  }
+
+  if (IsIndexType(op->dtype)) {
+    auto bound = analyzer_->const_int_bound(var);
+    if (bound->min_value == bound->max_value) {
+      return IntImm(op->dtype, bound->min_value);
     }
   }
 
-  auto it = var_map_.find(var);
-  if (it != var_map_.end()) {
-    return it->second;
-  }
   return GetRef<PrimExpr>(op);
 }
 

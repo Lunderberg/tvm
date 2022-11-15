@@ -1689,25 +1689,144 @@ class TestSimplifyBufferStore(BaseBeforeAfter):
         A[0] = 12
 
 
-# class TestTemp(BaseBeforeAfter):
-#     """Simplification using prior known"""
+class TestTemp(BaseBeforeAfter):
+    """Simplification using prior known"""
 
-#     transitively_prove_inequalities = False
-#     convert_boolean_to_and_of_ors = False
-#     apply_constraints_to_boolean_branches = False
-#     propagate_knowns_to_prove_conditional = False
-#     propagate_knowns_to_simplify_expressions = False
+    transitively_prove_inequalities = False
+    convert_boolean_to_and_of_ors = False
+    apply_constraints_to_boolean_branches = False
+    propagate_knowns_to_prove_conditional = False
+    propagate_knowns_to_simplify_expressions = False
 
-#     def before(A: T.Buffer[16, "int32"]):
-#         for i in T.serial(16):
-#             if i != 0:
-#                 if i * i == 0:
-#                     A[i] = 5
+    def before(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if i != 0:
+                if i * i == 0:
+                    A[i] = 5
 
-#     def expected(A: T.Buffer[16, "int32"]):
-#         for i in T.serial(16):
-#             if i != 0:
-#                 T.evaluate(0)
+    def expected(A: T.Buffer[16, "int32"]):
+        for i in T.serial(16):
+            if 0 < i:
+                T.evaluate(0)
+
+
+class TestTemp2(BaseBeforeAfter):
+
+    transitively_prove_inequalities = False
+    convert_boolean_to_and_of_ors = False
+    apply_constraints_to_boolean_branches = False
+    propagate_knowns_to_prove_conditional = False
+    propagate_knowns_to_simplify_expressions = False
+
+    def before(
+        Input: T.Buffer[(16, 4, 8, 8, 8, 8, 32), "float32"],
+        Filter_0: T.Buffer[(3, 4, 3, 3, 8, 32, 4), "float32"],
+        Filter_1: T.Buffer[(1, 3, 3, 3, 8, 32, 4), "float32"],
+        Conv2d_1: T.Buffer[(16, 1, 9, 9, 8, 8, 32), "float32"],
+    ) -> None:
+        # function attr dict
+        T.func_attr({"global_symbol": "main", "tir.noalias": True})
+        # body
+        Conv2d_0 = T.decl_buffer([16, 3, 9, 9, 8, 8, 32], dtype="float32")
+        for n, bco, bho, bwo in T.grid(16, 3, 9, 9):
+            for bhi_init, bwi_init, bci_init in T.grid(8, 8, 32):
+                Conv2d_0[n, bco, bho, bwo, bhi_init, bwi_init, bci_init] = T.float32(0)
+            if bho == 0:
+                if bwo == 0:
+                    for aco, bhi in T.grid(4, 8):
+                        if bhi < 6:
+                            for bwi, bci, fh, fw, aci in T.grid(8, 32, 3, 3, 32):
+                                Conv2d_0[n, bco, bho, bwo, bhi, bwi, bci] = T.float32(0)
+                        else:
+                            for bwi in T.serial(8):
+                                if bwi < 6:
+                                    for bci, fh, fw, aci in T.grid(32, 3, 3, 32):
+                                        Conv2d_0[n, bco, bho, bwo, bhi, bwi, bci] = T.float32(0)
+                                else:
+                                    for bci, fh in T.grid(32, 3):
+                                        if 8 <= bho * 8 + bhi + fh:
+                                            for fw in T.serial(3):
+                                                if 8 <= bwo * 8 + bwi + fw:
+                                                    for aci in T.serial(32):
+                                                        Conv2d_0[
+                                                            n, bco, bho, bwo, bhi, bwi, bci
+                                                        ] = (
+                                                            Conv2d_0[
+                                                                n, bco, bho, bwo, bhi, bwi, bci
+                                                            ]
+                                                            + Input[
+                                                                n,
+                                                                aco,
+                                                                (bhi + fh) // 8 + bho - 1,
+                                                                (bwi + fw) // 8 + bwo - 1,
+                                                                (bhi + fh) % 8,
+                                                                (bwi + fw) % 8,
+                                                                aci,
+                                                            ]
+                                                            * Filter_0[
+                                                                bco,
+                                                                aco,
+                                                                fh,
+                                                                fw,
+                                                                aci // 4,
+                                                                bci,
+                                                                aci % 4,
+                                                            ]
+                                                        )
+
+    def expected(
+        Input: T.Buffer[(16, 4, 8, 8, 8, 8, 32), "float32"],
+        Filter_0: T.Buffer[(3, 4, 3, 3, 8, 32, 4), "float32"],
+        Filter_1: T.Buffer[(1, 3, 3, 3, 8, 32, 4), "float32"],
+        Conv2d_1: T.Buffer[(16, 1, 9, 9, 8, 8, 32), "float32"],
+    ) -> None:
+        # function attr dict
+        T.func_attr({"global_symbol": "main", "tir.noalias": True})
+        # body
+        Conv2d_0 = T.decl_buffer([16, 3, 9, 9, 8, 8, 32], dtype="float32")
+        for n, bco, bho, bwo in T.grid(16, 3, 9, 9):
+            for bhi_init, bwi_init, bci_init in T.grid(8, 8, 32):
+                Conv2d_0[n, bco, bho, bwo, bhi_init, bwi_init, bci_init] = T.float32(0)
+            if bho == 0:
+                if bwo == 0:
+                    for aco, bhi in T.grid(4, 8):
+                        if bhi < 6:
+                            for bwi, bci, fh, fw, aci in T.grid(8, 32, 3, 3, 32):
+                                Conv2d_0[n, bco, 0, 0, bhi, bwi, bci] = T.float32(0)
+                        else:
+                            for bwi in T.serial(8):
+                                if bwi < 6:
+                                    for bci, fh, fw, aci in T.grid(32, 3, 3, 32):
+                                        Conv2d_0[n, bco, 0, 0, bhi, bwi, bci] = T.float32(0)
+                                else:
+                                    for bci, fh in T.grid(32, 3):
+                                        if 8 <= bhi + fh:
+                                            for fw in T.serial(3):
+                                                if 8 <= bwi + fw:
+                                                    for aci in T.serial(32):
+                                                        Conv2d_0[n, bco, 0, 0, bhi, bwi, bci] = (
+                                                            Conv2d_0[n, bco, 0, 0, bhi, bwi, bci]
+                                                            + Input[
+                                                                n,
+                                                                aco,
+                                                                # (bhi + fh) // 8 - 1,
+                                                                # (bwi + fw) // 8 - 1,
+                                                                0,
+                                                                0,
+                                                                (bhi + fh) % 8,
+                                                                (bwi + fw) % 8,
+                                                                aci,
+                                                            ]
+                                                            * Filter_0[
+                                                                bco,
+                                                                aco,
+                                                                fh,
+                                                                fw,
+                                                                aci // 4,
+                                                                bci,
+                                                                aci % 4,
+                                                            ]
+                                                        )
 
 
 if __name__ == "__main__":
