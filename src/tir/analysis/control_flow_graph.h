@@ -287,6 +287,8 @@ class BufferState {
   friend std::ostream& operator<<(std::ostream& os, const BufferState&);
 
  private:
+  void RemoveEmptyConstraints();
+
   friend class ControlFlowGraph;
   /*! \brief The known constraints */
   std::vector<BufferTouch> constraints_;

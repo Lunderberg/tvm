@@ -2017,7 +2017,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const CallNode* op) {
     const PrimExpr& else_expr = op->args[2];
 
     // Simplify unnecessary if_then_else
-    // if (cond) { expr } else { expr }
+    // if (cond) { expr } else { expr } => expr
     if (SideEffect(cond) <= CallEffectKind::kReadState &&
         analyzer_->CanProveEqual(then_expr, else_expr)) {
       return then_expr;

@@ -26,6 +26,7 @@
 #include <tvm/tir/expr_functor.h>
 
 #include <algorithm>
+#include <unordered_set>
 
 #include "constraint_extract.h"
 #include "int_operator.h"
@@ -33,6 +34,10 @@
 
 namespace tvm {
 namespace arith {
+
+namespace {
+int depth = 0;
+}
 
 using namespace tir;
 
@@ -76,10 +81,39 @@ struct ConstIntBoundAnalyzer::Entry {
   int64_t min_value;
   int64_t max_value;
 
+  std::unordered_set<int64_t> not_equal;
+
   bool is_const(int64_t value) const { return min_value == max_value && min_value == value; }
 
   bool operator==(const Entry& other) const {
-    return min_value == other.min_value && max_value == other.max_value;
+    return min_value == other.min_value && max_value == other.max_value &&
+           (not_equal == other.not_equal);
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const Entry& entry) {
+    if (entry.min_value != ConstIntBound::kNegInf) {
+      os << entry.min_value << " <= ";
+    }
+    os << "expr";
+    if (entry.max_value != ConstIntBound::kPosInf) {
+      os << " <= " << entry.max_value;
+    }
+    if (entry.not_equal.size()) {
+      os << ", "
+         << "expr"
+         << " not in [";
+      bool first = true;
+      for (auto val : entry.not_equal) {
+        if (first) {
+          first = false;
+        } else {
+          os << ", ";
+        }
+        os << val;
+      }
+      os << "]";
+    }
+    return os;
   }
 };
 
@@ -95,6 +129,30 @@ class ConstIntBoundAnalyzer::Impl
 
     BoundInfo() {}
     BoundInfo(PrimExpr expr, Entry bound) : expr(expr), bound(bound) {}
+
+    friend std::ostream& operator<<(std::ostream& os, const BoundInfo& info) {
+      if (info.bound.min_value != ConstIntBound::kNegInf) {
+        os << info.bound.min_value << " <= ";
+      }
+      os << info.expr;
+      if (info.bound.max_value != ConstIntBound::kPosInf) {
+        os << " <= " << info.bound.max_value;
+      }
+      if (info.bound.not_equal.size()) {
+        os << ", " << info.expr << " not in [";
+        bool first = true;
+        for (auto val : info.bound.not_equal) {
+          if (first) {
+            first = false;
+          } else {
+            os << ", ";
+          }
+          os << val;
+        }
+        os << "]";
+      }
+      return os;
+    }
   };
 
   void Bind(const Var& var, const Range& range, bool allow_override) {
@@ -143,13 +201,25 @@ class ConstIntBoundAnalyzer::Impl
   }
 
   Entry VisitExpr(const PrimExpr& expr) final {
+    // std::cout << std::string(depth * 2, ' ') << "Visiting: " << expr << std::endl;
+    // depth++;
+
     Entry res = ExprFunctor::VisitExpr(expr);
+
+    // std::cout << std::string(depth * 2, ' ') << "Initial bounds: " << BoundInfo(expr, res)
+    //           << std::endl;
+
     tir::ExprDeepEqual equal;
     // a linear search over additional info
     // assume we won't have a lot of conditions
     for (const BoundInfo& info : additional_info_) {
       if (equal(expr, info.expr)) {
+        // std::cout << std::string((depth + 1) * 2, ' ') << "Can use existing bounds: " << info
+        //           << std::endl;
         res = Intersect(res, info.bound);
+        // std::cout << std::string((depth + 1) * 2, ' ') << "Updated bounds: " << BoundInfo(expr,
+        // res)
+        //           << std::endl;
       }
     }
     if (bound_) {
@@ -164,6 +234,7 @@ class ConstIntBoundAnalyzer::Impl
       }
       (*bound_)[expr] = ConstIntBound(res.min_value, res.max_value);
     }
+    // depth--;
     return res;
   }
 
@@ -392,12 +463,26 @@ class ConstIntBoundAnalyzer::Impl
   }
 
   std::function<void()> EnterConstraint(const PrimExpr& constraint) {
+    // std::cout << std::string(depth * 2, ' ') << "Entering constraint: " << constraint <<
+    // std::endl; depth++;
     std::vector<BoundInfo> info = DetectBoundInfo(constraint);
-    if (info.size() == 0) return nullptr;
+    if (info.size() == 0) {
+      // std::cout << std::string(depth * 2, ' ') << "No info, early bail-out" << std::endl;
+      // depth--;
+      return nullptr;
+    }
+    // for (const auto& entry : info) {
+    //   std::cout << std::string(depth * 2, ' ') << "Constraint provides: " << entry << ", with "
+    //             << entry.bound.not_equal.size() << " NE constraints" << std::endl;
+    // }
+
     size_t old_size = additional_info_.size();
     additional_info_.insert(additional_info_.end(), info.begin(), info.end());
     size_t new_size = old_size + info.size();
     auto frecover = [old_size, new_size, this]() {
+      // auto frecover = [old_size, new_size, this, constraint = constraint]() {
+      // std::cout << std::string(depth * 2, ' ') << "Leaving constraint: " << constraint <<
+      // std::endl; depth--;
       ICHECK_EQ(additional_info_.size(), new_size);
       additional_info_.resize(old_size);
     };
@@ -574,10 +659,30 @@ class ConstIntBoundAnalyzer::Impl
   /*!
    * \brief Make a new bound entry.
    */
-  static Entry MakeBound(int64_t min_value, int64_t max_value) {
+  static Entry MakeBound(int64_t min_value, int64_t max_value,
+                         std::unordered_set<int64_t> not_equal = {}) {
     Entry e;
     e.min_value = (min_value == kPosInf) ? min_value - 1 : min_value;
     e.max_value = (max_value == kNegInf) ? max_value + 1 : max_value;
+    e.not_equal = not_equal;
+
+    while (true) {
+      if (auto it = e.not_equal.find(e.min_value); it != e.not_equal.end()) {
+        e.min_value++;
+        e.not_equal.erase(it);
+      } else {
+        break;
+      }
+    }
+    while (true) {
+      if (auto it = e.not_equal.find(e.max_value); it != e.not_equal.end()) {
+        e.max_value--;
+        e.not_equal.erase(it);
+      } else {
+        break;
+      }
+    }
+
     return e;
   }
   /*!
@@ -586,10 +691,17 @@ class ConstIntBoundAnalyzer::Impl
    * \param b the right operand.
    */
   static Entry Union(Entry a, Entry b) {
-    Entry ret;
-    ret.min_value = std::min(a.min_value, b.min_value);
-    ret.max_value = std::max(a.max_value, b.max_value);
-    return ret;
+    auto min_value = std::min(a.min_value, b.min_value);
+    auto max_value = std::max(a.max_value, b.max_value);
+
+    std::unordered_set<int64_t> not_equal;
+    for (auto val : a.not_equal) {
+      if (b.not_equal.count(val)) {
+        not_equal.insert(val);
+      }
+    }
+
+    return MakeBound(min_value, max_value, not_equal);
   }
   /*!
    * \brief Create intersect of two sets.
@@ -597,10 +709,15 @@ class ConstIntBoundAnalyzer::Impl
    * \param b the right operand.
    */
   static Entry Intersect(Entry a, Entry b) {
-    Entry ret;
-    ret.min_value = std::max(a.min_value, b.min_value);
-    ret.max_value = std::min(a.max_value, b.max_value);
-    return ret;
+    auto min_value = std::max(a.min_value, b.min_value);
+    auto max_value = std::min(a.max_value, b.max_value);
+
+    auto not_equal = a.not_equal;
+    for (auto val : b.not_equal) {
+      not_equal.insert(val);
+    }
+
+    return MakeBound(min_value, max_value, not_equal);
   }
   /*!
    * \brief return everything dtype can represent.
@@ -640,11 +757,12 @@ class ConstIntBoundAnalyzer::Impl
     PVar<IntImm> c;
 
     std::vector<BoundInfo> info;
-    auto add_info = [&](const PrimExpr& expr, int64_t min_value, int64_t max_value) {
+    auto add_info = [&](const PrimExpr& expr, int64_t min_value, int64_t max_value,
+                        std::unordered_set<int64_t> not_equal = {}) {
       // If the conditional is comparing two integers, do not assign a
       // value to them.
       if (!expr->IsInstance<IntImmNode>()) {
-        info.push_back(BoundInfo(expr, MakeBound(min_value, max_value)));
+        info.push_back(BoundInfo(expr, MakeBound(min_value, max_value, not_equal)));
       }
     };
 
@@ -662,6 +780,8 @@ class ConstIntBoundAnalyzer::Impl
         add_info(x.Eval(), kNegInf, c.Eval()->value - 1);
       } else if ((x == c).Match(subexpr) || (c == x).Match(subexpr)) {
         add_info(x.Eval(), c.Eval()->value, c.Eval()->value);
+      } else if ((x != c).Match(subexpr) || (c != x).Match(subexpr)) {
+        add_info(x.Eval(), kNegInf, kPosInf, {c.Eval()->value});
       }
     }
 

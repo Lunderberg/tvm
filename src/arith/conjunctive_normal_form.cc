@@ -376,7 +376,33 @@ void AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
           }();
 
           With<ConstraintContext> context(analyzer, known);
+
+          PrimExpr known_from_other_chunks = [&]() -> PrimExpr {
+            PrimExpr known = Bool(true);
+            for (const auto& chunk : chunks_) {
+              if (&chunk != &i_chunk && &chunk != &j_chunk) {
+                PrimExpr chunk_expr = Bool(false);
+                for (const auto& key : chunk) {
+                  chunk_expr = chunk_expr || GetExpr(key);
+                }
+                known = known && chunk_expr;
+              }
+            }
+            return known;
+          }();
+          With<ConstraintContext> context2(analyzer, known_from_other_chunks);
+
+          // std::cout << "Attempting to simplify (" << GetExpr(key_i) << " AND " << GetExpr(key_j)
+          //           << ")" << std::endl;
+          // std::cout << "\t"
+          //           << "Known1: " << known << std::endl;
+          // std::cout << "\t"
+          //           << "Known2: " << known_from_other_chunks << std::endl;
+
           TrySimplifyAnd(&key_i, &key_j, analyzer);
+
+          // std::cout << "\t"
+          //           << "Result: " << (GetExpr(key_i) && GetExpr(key_j)) << std::endl;
         }
       }
     }

@@ -40,10 +40,12 @@
 #include <unordered_set>
 
 #include "../../arith/conjunctive_normal_form.h"
+#include "../../arith/const_fold.h"
 #include "../../arith/constraint_extract.h"
 #include "../../arith/ir_mutator_with_analyzer.h"
 #include "../../arith/ir_visitor_with_analyzer.h"
 #include "../../arith/narrow_predicate_expression.h"
+#include "../../arith/pattern_match.h"
 #include "../../arith/unwrap_vector_expr.h"
 
 namespace tvm {
@@ -62,6 +64,38 @@ bool HasBufferLoad(PrimExpr expr) {
   visitor(expr);
   return visitor.found_buffer_load;
 }
+
+class RemoveLTNodes : public ExprMutator {
+ public:
+  static PrimExpr Apply(PrimExpr expr) { return RemoveLTNodes()(std::move(expr)); }
+
+ private:
+  PrimExpr VisitExpr_(const GTNode* op) final { return VisitExpr(LT(op->b, op->a)); }
+
+  PrimExpr VisitExpr_(const LTNode* op) final {
+    LT ret = Downcast<LT>(ExprMutator::VisitExpr_(op));
+    if (!IsIndexType(ret->a->dtype) || !IsIndexType(ret->b->dtype)) {
+      return std::move(ret);
+    }
+
+    PVar<PrimExpr> x, y;
+    PVar<IntImm> c1;
+    if ((x + c1 < y).Match(ret) || (x < y - c1).Match(ret)) {
+      return (x <= y - (c1 + 1)).Eval();
+    }
+    if ((x - c1 < y).Match(ret) || (x < y + c1).Match(ret)) {
+      return (x <= y + (c1 - 1)).Eval();
+    }
+    if ((x < c1).Match(ret)) {
+      return (x <= (c1 - 1)).Eval();
+    }
+    if ((c1 < x).Match(ret)) {
+      return ((c1 + 1) <= x).Eval();
+    }
+
+    return std::move(ret);
+  }
+};
 
 Optional<PrimExpr> SubstituteParamValues(const Array<Var>& param_vars,
                                          const Array<PrimExpr>& param_values,
@@ -359,38 +393,102 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
     auto before_loop = CurrentControlBlock();
     size_t loop_start = -1;
 
+    std::vector<const ForNode*> loopnest = {op};
+
     {
-      BindActiveLoopVar binding(this, op->loop_var, op->min, op->extent);
+      std::vector<std::unique_ptr<BindActiveLoopVar>> bindings;
+
+      Stmt body = op->body;
+
+      while (auto* loop_body = body.as<ForNode>()) {
+        loopnest.push_back(loop_body);
+        body = loop_body->body;
+      }
+      // if (auto* loop_body = body.as<ForNode>()) {
+      //   loopnest.push_back(loop_body);
+      //   body = loop_body->body;
+      // }
+
+      for (const ForNode* loop : loopnest) {
+        bindings.push_back(
+            std::make_unique<BindActiveLoopVar>(this, loop->loop_var, loop->min, loop->extent));
+        analyzer_.Bind(loop->loop_var, Range::FromMinExtent(loop->min, loop->extent));
+      }
+
       loop_start = AppendControlBlock();
-      Parent::VisitStmt_(op);
+
+      VisitStmt(body);
+
+      while (bindings.size()) {
+        bindings.pop_back();
+      }
+    }
+
+    PrimExpr first_loopnest_iter = Bool(true);
+    PrimExpr last_loopnest_iter = Bool(true);
+    Map<Var, PrimExpr> first_iter_remap;
+    Map<Var, PrimExpr> last_iter_remap;
+
+    for (const ForNode* loop : loopnest) {
+      PrimExpr max_iterator_value = analyzer_.Simplify(op->min + op->extent - 1);
+      first_loopnest_iter = first_loopnest_iter && (loop->loop_var == loop->min);
+      last_loopnest_iter = last_loopnest_iter && (loop->loop_var == max_iterator_value);
+      first_iter_remap.Set(loop->loop_var, loop->min);
+      last_iter_remap.Set(loop->loop_var, max_iterator_value);
+    }
+
+    PrimExpr fused_iter = 0;
+    for (const ForNode* loop : loopnest) {
+      fused_iter = fused_iter * loop->extent + (loop->loop_var - loop->min);
+    }
+    Map<Var, PrimExpr> forward_iter_remap;
+    Map<Var, PrimExpr> backward_iter_remap;
+    PrimExpr stride = 1;
+    for (size_t i = loopnest.size(); i > 0; i--) {
+      const ForNode* loop = loopnest[i - 1];
+      PrimExpr forward = floordiv(fused_iter + 1, stride);
+      PrimExpr backward = floordiv(fused_iter - 1, stride);
+      // Floormod is only required for inner loopnests.  If the
+      // outermost loop would wrap around, the entire loopnest is
+      // about to be exited.
+      if (i > 1) {
+        forward = floormod(forward, loop->extent);
+        backward = floormod(backward, loop->extent);
+      }
+      forward = forward + loop->min;
+      backward = backward + loop->min;
+      forward_iter_remap.Set(loop->loop_var, analyzer_.Simplify(forward));
+      backward_iter_remap.Set(loop->loop_var, analyzer_.Simplify(backward));
+
+      stride = stride * loop->extent;
     }
 
     auto loop_end = CurrentControlBlock();
     auto after_loop = AppendControlBlock();
-    PrimExpr max_iterator_value = analyzer_.Simplify(op->min + op->extent - 1);
     {
       auto [forward, backward] = MarkControlFlow(before_loop, loop_start);
-      backward.post_condition = (op->loop_var == op->min);
-      forward.var_remap = {{op->loop_var, op->min}};
+      backward.post_condition = first_loopnest_iter;
+      forward.var_remap = first_iter_remap;
     }
     {
       auto [forward, backward] = MarkControlFlow(loop_end, after_loop);
-      backward.var_remap = {{op->loop_var, max_iterator_value}};
-      forward.post_condition = (op->loop_var == max_iterator_value);
+      backward.var_remap = last_iter_remap;
+      forward.post_condition = last_loopnest_iter;
     }
     {
       auto [forward, backward] = MarkControlFlow(loop_end, loop_start);
-      backward.var_remap = {{op->loop_var, op->loop_var - 1}};
-      forward.var_remap = {{op->loop_var, op->loop_var + 1}};
-      backward.post_condition = (op->loop_var > op->min);
-      forward.post_condition = (op->loop_var < max_iterator_value);
+      backward.var_remap = backward_iter_remap;
+      forward.var_remap = forward_iter_remap;
+      backward.post_condition = RemoveLTNodes::Apply(analyzer_.Simplify(!first_loopnest_iter));
+      forward.post_condition = RemoveLTNodes::Apply(analyzer_.Simplify(!last_loopnest_iter));
     }
   }
 
   void VisitStmt_(const IfThenElseNode* op) override {
     this->VisitExpr(op->condition);
 
-    PrimExpr real_condition = ExtractRealCondition(op->condition);
+    PrimExpr real_condition =
+        analyzer_.Simplify(RemoveLTNodes::Apply(ExtractRealCondition(op->condition)));
 
     auto before_branching = CurrentControlBlock();
 
@@ -798,7 +896,9 @@ std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::Make
 
   // Deliberately use an analyzer without scope-based information,
   // to avoid simplifying `scope_predicate` to True.
-  PrimExpr predicate_expr = local_analyzer.Simplify(transform_predicate && scope_predicate);
+  PrimExpr predicate_expr = transform_predicate && scope_predicate;
+  predicate_expr = RemoveLTNodes::Apply(predicate_expr);
+  predicate_expr = local_analyzer.Simplify(predicate_expr);
 
   BufferTouch buffer_touch = {buf, predicate_expr, known_value_expr, loop_var_expressions,
                               touch_type};
@@ -822,10 +922,11 @@ BufferTouch ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(ControlFlowGraph
 
 ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits)
     : max_revisits_(max_revisits) {
-  std::cout << "Collecting info" << std::endl;
+  // std::cout << "Collecting info" << std::endl;
   ControlFlowGraphBuilder::Build(this, stmt);
-  std::cout << "Collected " << *this << std::endl;
-  std::cout << "Starting forward prop" << std::endl;
+  // std::cout << "Collected " << *this << std::endl;
+  // std::cout << "Total block count: " << control_flow_.size() << std::endl;
+  // std::cout << "Starting forward prop" << std::endl;
   ForwardPropagateKnownValues();
   BackwardPropagateUnusedValues();
 }
@@ -972,12 +1073,21 @@ void BufferState::Substitute(const Map<Var, PrimExpr>& var_remap, Analyzer* anal
       }
     }
   }
+  RemoveEmptyConstraints();
 }
 
 void BufferState::Simplify(Analyzer* analyzer) {
   for (auto& constraint : constraints_) {
     constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate, analyzer);
   }
+  RemoveEmptyConstraints();
+}
+
+void BufferState::RemoveEmptyConstraints() {
+  constraints_.erase(
+      std::remove_if(constraints_.begin(), constraints_.end(),
+                     [](const BufferTouch& touch) { return is_zero(touch.predicate); }),
+      constraints_.end());
 }
 
 void BufferState::Union(const BufferState& b, Analyzer* analyzer) {
@@ -1396,8 +1506,10 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
 
     ControlFlowBlock& block = control_flow_[visiting];
 
-    std::cout << "Visiting control block " << visiting << " / " << control_flow_.size()
-              << std::endl;
+    // std::cout << "----------- Control block " << visiting << " -------------" << std::endl;
+
+    // std::cout << "Visiting control block " << visiting << " / " << control_flow_.size() << ", "
+    //           << num_previous_visits << " previous visits" << std::endl;
 
     // Step 1: Collect known values provided from each precedessor
     block.known_at_block_start = [&]() -> BufferState {
@@ -1416,15 +1528,23 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       for (const auto& pred : block.predecessors) {
         const auto& pred_block = control_flow_[pred.index];
         BufferState state = pred_block.known_at_block_end;
-        state.Substitute(pred.var_remap, &analyzer);
+        if (pred.var_remap.size()) {
+          state.Substitute(pred.var_remap, &analyzer);
+          // std::cout << "Pred " << pred.index << " has " << pred.var_remap.size()
+          //           << " replacements, remaps to: " << state << std::endl;
+        }
         states.push_back(state);
       }
 
       if (std::all_of(block.predecessors.begin(), block.predecessors.end(),
                       [&](const auto& pred) { return visit_count_lookup[pred.index] == 0; })) {
         // Predecessors, if any, are unvisited.
+        // std::cout << "Neither predecessor has been visited, starting with a blank slate"
+        //           << std::endl;
         return {};
       } else if (block.predecessors.size() == 1) {
+        // std::cout << "Block " << block.predecessors[0].index
+        //           << " is the only predecessor, using its known values" << std::endl;
         // Block has only a single predecessor
         return states[0];
       }
@@ -1443,8 +1563,20 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       // knowns are consistent, and rely on a later visit to
       // resolve/remove any conflicts.
       if (visit_count_lookup[pred_a.index] == 0) {
+        // std::cout << "Haven't visited block " << pred_a.index
+        //           << " before, assuming that it produces the same knowns as block " <<
+        //           pred_b.index
+        //           << ": "
+        //           << "\n"
+        //           << priors_b << std::endl;
         return priors_b;
       } else if (visit_count_lookup[pred_b.index] == 0) {
+        // std::cout << "Haven't visited block " << pred_b.index
+        //           << " before, assuming that it produces the same knowns as block " <<
+        //           pred_a.index
+        //           << ": "
+        //           << "\n"
+        //           << priors_a << std::endl;
         return priors_a;
       }
 
@@ -1455,14 +1587,25 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
         // constraints, conditional on having come from the
         // predecessor that provides it.
         priors_a.AddCondition(pred_a.post_condition.value());
+        // std::cout << "First pred with conditions: " << priors_a << std::endl;
         priors_b.AddCondition(pred_b.post_condition.value());
+        // std::cout << "Second pred with conditions: " << priors_b << std::endl;
         priors_a.Union(priors_b, &analyzer);
+
+        // std::cout << "From merging 2 predecessors, known at block start: "
+        //           << "\n"
+        //           << priors_a << std::endl;
+
         return priors_a;
       } else {
         // We don't know which predecessor applies.  Therefore, the
         // only buffer constraints that can be used are those that
         // appear in both predecessors.
         priors_a.Intersection(priors_b, &analyzer);
+        // std::cout
+        //     << "From merging 2 predecessors with a data-dependent branch, known at block start: "
+        //     << "\n"
+        //     << priors_a << std::endl;
         return priors_a;
       }
     }();
@@ -1474,9 +1617,20 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       }
       auto post_state = block.known_at_block_start;
       post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
+      // std::cout << "Afer applying " << block.touch_points.size() << " touches: " << post_state
+      //           << std::endl;
       post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+      // std::cout << "Afer removing free parameters: " << post_state << std::endl;
       return post_state;
     }();
+
+    // if (block.touch_points.size()) {
+    //   std::cout << "After applying touches: "
+    //             << "\n"
+    //             << post_state << std::endl;
+    // } else {
+    //   std::cout << "No touches in this block." << std::endl;
+    // }
 
     // Step 3: If any changes are made to the post knowns since the
     // previous time we visited this block, mark the successor block
@@ -1485,9 +1639,12 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
         !post_state.IsEquivalentTo(block.known_at_block_end, &analyzer)) {
       block.known_at_block_end = std::move(post_state);
       for (const auto& successor : block.successors) {
+        // std::cout << "Queueing successor " << successor.index << " to be visited" << std::endl;
         to_visit.insert(successor.index);
       }
     }
+
+    // std::cout << "---------------------------------------" << std::endl;
   }
 }
 
