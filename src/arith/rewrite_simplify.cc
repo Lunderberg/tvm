@@ -2052,12 +2052,14 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const VarNode* op) {
     return it->second;
   }
 
-  if (IsIndexType(op->dtype)) {
-    auto bound = analyzer_->const_int_bound(var);
-    if (bound->min_value == bound->max_value) {
-      return IntImm(op->dtype, bound->min_value);
-    }
-  }
+  // Commented-out for now, causes failure in data-flow analysis.
+  //
+  // if (IsIndexType(op->dtype)) {
+  //   auto bound = analyzer_->const_int_bound(var);
+  //   if (bound->min_value == bound->max_value) {
+  //     return IntImm(op->dtype, bound->min_value);
+  //   }
+  // }
 
   return GetRef<PrimExpr>(op);
 }
