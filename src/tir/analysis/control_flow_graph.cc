@@ -488,7 +488,7 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
     this->VisitExpr(op->condition);
 
     PrimExpr real_condition =
-        analyzer_.Simplify(RemoveLTNodes::Apply(ExtractRealCondition(op->condition)));
+        RemoveLTNodes::Apply(analyzer_.Simplify(ExtractRealCondition(op->condition)));
 
     auto before_branching = CurrentControlBlock();
 
@@ -508,7 +508,7 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
     }
     auto then_end = CurrentControlBlock();
 
-    auto negation = analyzer_.rewrite_simplify(!real_condition);
+    auto negation = RemoveLTNodes::Apply(analyzer_.rewrite_simplify(!real_condition));
     {
       InternalConstraintContext context(this, negation);
       auto else_start = AppendControlBlock();
