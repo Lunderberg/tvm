@@ -288,13 +288,14 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
 }
 
 std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& constraint) {
+  // Since the literal constraints are compared against the already
+  // simplified results, the constraints should be simplified before
+  // use.  However, for internally-provided constraints, the
+  // simplification may already have been performed.
+  PrimExpr new_constraint = rewrite_constraints_ ? operator()(constraint) : constraint;
+
   size_t old_literal_size = literal_constraints_.size();
-  // we will compare the already simplified result with the constraint,
-  // so simplify the constraint as well
-
-  PrimExpr new_constraint = operator()(constraint);
-
-  for (const PrimExpr& subconstraint : ExtractConstraints(new_constraint, false)) {
+  for (const PrimExpr& subconstraint : ExtractConstraints(constraint, false)) {
     if (SideEffect(subconstraint) <= CallEffectKind::kPure) {
       literal_constraints_.push_back(subconstraint);
       PrimExpr negation;
@@ -1738,7 +1739,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AndNode* op) {
       PrimExpr& to_update = (i % 2 == 0) ? a : b;
       const PrimExpr& constraint = (i % 2 == 0) ? b : a;
 
+      bool cache = rewrite_constraints_;
+      rewrite_constraints_ = false;
       With<ConstraintContext> context(analyzer_, constraint);
+      rewrite_constraints_ = cache;
+
       PrimExpr updated = VisitExpr(to_update);
 
       if (!to_update.same_as(updated)) {
@@ -1879,7 +1884,11 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
       PrimExpr& to_update = (i % 2 == 0) ? a : b;
       const PrimExpr& constraint = (i % 2 == 0) ? b : a;
 
+      bool cache = rewrite_constraints_;
+      rewrite_constraints_ = false;
       With<ConstraintContext> context(analyzer_, NormalizeBooleanOperators(Not(constraint)));
+      rewrite_constraints_ = cache;
+
       PrimExpr updated = VisitExpr(to_update);
 
       if (!to_update.same_as(updated)) {

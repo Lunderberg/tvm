@@ -88,6 +88,18 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   Extension GetEnabledExtensions() const;
 
  protected:
+  /* \brief Whether expressions provided to EnterConstraint should be
+   * simplified before use
+   *
+   * For externally-provided constraints, the rewrite should be
+   * performed in order to compare literal values against the
+   * simplified form.  For internally-provided constraints, such as
+   * those entered while evaluating one side of a boolean branch, the
+   * scope providing the constraint may have already simplified the
+   * provided constraint.
+   */
+  bool rewrite_constraints_{true};
+
   // counter to record recursive rewrite depth.
   int recur_depth_{0};
   // internal variable map

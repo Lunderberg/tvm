@@ -993,6 +993,61 @@ class TestSimplifyLHSOfBooleanOrUsingRHSWithoutConst(BaseBeforeAfter):
         A[0] = n < m + 10
 
 
+class TestDeeplyNestedBooleanExpression(BaseBeforeAfter):
+    """Deeply-nested boolean expressions should not have exponential runtime
+
+    Previous versions of RewriteSimplifier would rewrite any
+    expression passed to `RewriteSimplifier::Impl::EnterConstraint`.
+    For long boolean expressions, this resulted in repeated visiting
+    of the same expression.
+
+    This exponential behavior is most easily observed in the number of
+    calls to `RewriteSimplifier::Impl::VisitExpr` as a function of the
+    number of elements in the AND chain, summarized in the table below.
+
+    .. code-block
+
+       | Num Elements | Before Fix | With Fix |
+       |--------------|------------|----------|
+       | 2            | 9          | 5        |
+       | 4            | 51         | 11       |
+       | 6            | 219        | 17       |
+       | 8            | 891        | 23       |
+       | 10           | 3579       | 29       |
+       | 12           | 14331      | 35       |
+       | 14           | 57339      | 41       |
+       | 16           | 229371     | 47       |
+
+    TODO(Lunderberg): Implement statistics tracking for
+    `arith::Analyzer`, so that the number of expressions visited can
+    be validated in this test.
+    """
+
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[16, "bool"]):
+        T.evaluate(
+            A[0]
+            and A[1]
+            and A[2]
+            and A[3]
+            and A[4]
+            and A[5]
+            and A[6]
+            and A[7]
+            and A[8]
+            and A[9]
+            and A[10]
+            and A[11]
+            and A[12]
+            and A[13]
+            and A[14]
+            and A[15]
+        )
+
+    expected = before
+
+
 class TestProvableConditionWithOffset(BaseBeforeAfter):
     """Use scoped-constraint to prove inequalities"""
 
