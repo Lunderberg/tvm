@@ -174,6 +174,8 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   CompareResult TryCompareUsingKnownInequalities(const PrimExpr& x, const PrimExpr& y);
   CompareResult TryCompareUsingConstIntBounds(const PrimExpr& x, const PrimExpr y);
 
+  Optional<PrimExpr> TryFindExpressionExtrema(LT node);
+
   // Whether x >= val
   bool CanProveGreaterEqual(const PrimExpr& x, int64_t val) {
     return analyzer_->CanProveGreaterEqual(x, val);
@@ -207,6 +209,18 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
     return PConstWithTypeLike<TA>(pattern.derived(), 1);
   }
 };
+
+/* Utility for rewriting only boolean portions of an expression
+ *
+ * Performs a subset of simplifications done by RewriteSimplifier,
+ * sufficient to negate a simplified expression.  Intended for
+ * application on an expression that has previously been simplified.
+ *
+ * \param expr The boolean expression to be normalized
+ *
+ * \returns The normalized boolean expression
+ */
+PrimExpr NormalizeBooleanOperators(PrimExpr expr);
 
 }  // namespace arith
 }  // namespace tvm

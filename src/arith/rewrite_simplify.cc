@@ -1666,6 +1666,10 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
     TVM_TRY_REWRITE_IF(floordiv(x + c2, c1) * c1 < x - y,
                        y < floormod(x + c2, c1) + (0 - c2), c1.Eval()->value > 0);
 
+    if(auto opt = TryFindExpressionExtrema(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
+
     // canonicalization rule
     TVM_TRY_RECURSIVE_REWRITE(min(x, y) < z, x < z || y < z);
     TVM_TRY_RECURSIVE_REWRITE(max(x, y) < z, x < z && y < z);
@@ -1688,6 +1692,169 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
     // clang-format on
   }
   return std::move(ret);
+}
+
+Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
+  // Only applies to integer data types
+  if (!IsIndexType(ret->a->dtype) || !IsIndexType(ret->b->dtype)) {
+    return NullOpt;
+  }
+
+  std::optional<int64_t> lower_bound = std::nullopt;
+  std::optional<int64_t> upper_bound = std::nullopt;
+  PrimExpr sum_expr;
+  if (const IntImmNode* lhs_as_int = ret->a.as<IntImmNode>()) {
+    lower_bound = lhs_as_int->value;
+    sum_expr = ret->b;
+  } else if (const IntImmNode* rhs_as_int = ret->b.as<IntImmNode>()) {
+    upper_bound = rhs_as_int->value;
+    sum_expr = ret->a;
+  } else {
+    return NullOpt;
+  }
+
+  struct Term {
+    PrimExpr expr;
+    int64_t scale{0};
+    std::optional<int64_t> expr_min{std::nullopt};
+    std::optional<int64_t> expr_max{std::nullopt};
+  };
+
+  PVar<IntImm> c1, c2;
+  PVar<PrimExpr> x, y;
+
+  std::vector<Term> sum;
+  std::vector<Term> to_check = {Term{sum_expr, 1}};
+  while (!to_check.empty()) {
+    Term term = to_check.back();
+    to_check.pop_back();
+
+    if ((x + y).Match(term.expr)) {
+      to_check.push_back({x.Eval(), term.scale});
+      to_check.push_back({y.Eval(), term.scale});
+    } else if ((x - y).Match(term.expr)) {
+      to_check.push_back({x.Eval(), term.scale});
+      to_check.push_back({y.Eval(), -term.scale});
+    } else if ((c1 * x).Match(term.expr) || (x * c1).Match(term.expr)) {
+      to_check.push_back({x.Eval(), c1.Eval()->value * term.scale});
+    } else {
+      sum.push_back(term);
+    }
+  }
+
+  if (sum.size() < 2) {
+    return NullOpt;
+  }
+
+  std::stable_sort(sum.begin(), sum.end(), [](const Term& a, const Term& b) {
+    return std::abs(a.scale) < std::abs(b.scale);
+  });
+
+  for (auto& term : sum) {
+    ConstIntBound expr_bound = analyzer_->const_int_bound(term.expr);
+    if (expr_bound->min_value != ConstIntBound::kNegInf) {
+      term.expr_min = expr_bound->min_value;
+    }
+    if (expr_bound->max_value != ConstIntBound::kPosInf) {
+      term.expr_max = expr_bound->max_value;
+    }
+  }
+
+  std::optional<int64_t> sum_min = 0;
+  std::optional<int64_t> sum_max = 0;
+  for (const auto& term : sum) {
+    if (term.expr_min && sum_min) {
+      *sum_min += *term.expr_min * term.scale;
+    } else {
+      sum_min = std::nullopt;
+    }
+    if (term.expr_max && sum_max) {
+      *sum_max += *term.expr_max * term.scale;
+    } else {
+      sum_max = std::nullopt;
+    }
+  }
+
+  std::vector<std::function<PrimExpr(PrimExpr)>> wrappers;
+  auto remember_and_condition = [&wrappers](PrimExpr expr) {
+    wrappers.push_back([expr](PrimExpr rhs) { return expr && rhs; });
+  };
+  auto remember_or_condition = [&wrappers](PrimExpr expr) {
+    wrappers.push_back([expr](PrimExpr rhs) { return expr || rhs; });
+  };
+
+  while (!sum.empty()) {
+    Term term = sum.back();
+
+    if (term.expr_min && term.expr_max && *term.expr_min == *term.expr_max) {
+      // No condition needed, but we can proceed to the next term
+    } else if (term.scale > 0 && lower_bound && sum_min && *lower_bound <= *sum_min + term.scale) {
+      ICHECK(term.expr_min);
+      remember_or_condition(IntImm(term.expr.dtype(), *term.expr_min) < term.expr);
+      // TODO: Why isn't this symmetric?
+      //*lower_bound -= expr_bound->max_value * term.scale;
+    } else if (term.scale > 0 && upper_bound && sum_min && *upper_bound <= *sum_min + term.scale) {
+      ICHECK(term.expr_min);
+      remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_min));
+      // TODO: Why isn't this symmetric?
+      //*upper_bound -= expr_bound->max_value * term.scale;
+    } else if (term.scale > 0 && lower_bound && sum_max && *lower_bound > *sum_max - term.scale) {
+      ICHECK(term.expr_max);
+      remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_max));
+      *lower_bound -= *term.expr_max * term.scale;
+    } else if (term.scale > 0 && upper_bound && sum_max && *upper_bound > *sum_max - term.scale) {
+      ICHECK(term.expr_max);
+      remember_or_condition(term.expr < IntImm(term.expr.dtype(), *term.expr_max));
+      *upper_bound -= *term.expr_max * term.scale;
+    } else {
+      // This term had the largest scale, so if it can't be extracted
+      // out, neither can any no remaining terms.
+      break;
+    }
+
+    if (sum_min) {
+      ICHECK(term.expr_min);
+      *sum_min -= *term.expr_min * term.scale;
+    }
+    if (sum_max) {
+      ICHECK(term.expr_max);
+      *sum_max -= *term.expr_max * term.scale;
+    }
+
+    sum.pop_back();
+  }
+
+  if (wrappers.empty()) {
+    return NullOpt;
+  }
+
+  PrimExpr sum_terms = [&]() {
+    PrimExpr expr = 0;
+    for (auto it = sum.rbegin(); it != sum.rend(); it++) {
+      const Term& term = *it;
+      expr = expr + term.expr * IntImm(term.expr->dtype, term.scale);
+    }
+    return expr;
+  }();
+  PrimExpr remaining_bounds = [&]() {
+    if (lower_bound) {
+      return IntImm(sum_terms->dtype, *lower_bound) < sum_terms;
+    } else if (upper_bound) {
+      return sum_terms < IntImm(sum_terms->dtype, *upper_bound);
+    } else {
+      LOG(FATAL) << "Internal error, neither upper bound nor lower bound defined";
+      return PrimExpr();
+    }
+  }();
+  PrimExpr wrapped_condition = [&]() {
+    PrimExpr cond = remaining_bounds;
+    for (auto it = wrappers.rbegin(); it != wrappers.rend(); it++) {
+      cond = (*it)(cond);
+    }
+    return cond;
+  }();
+
+  return wrapped_condition;
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {

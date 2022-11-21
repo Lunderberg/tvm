@@ -1966,5 +1966,286 @@ class TestTemp4(BaseBeforeAfter):
 #             )
 
 
+class TestRangeToAnd_Case1_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = bho * 8 + bhi <= 6
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (bho == 0) and bhi <= 6
+
+
+class TestRangeToAnd_Case2_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = bho * 8 + bhi < 6
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (bho == 0) and bhi < 6
+
+
+class TestRangeToAnd_Case3_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = 6 <= bho * 8 + bhi
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (0 < bho) or 6 <= bhi
+
+
+class TestRangeToAnd_Case4_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = 6 < bho * 8 + bhi
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (0 < bho) or 6 < bhi
+
+
+class TestRangeToAnd_Case5_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = bho * 8 + bhi <= 124
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (bho < 15) or bhi <= 4
+
+
+class TestRangeToAnd_Case6_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = bho * 8 + bhi < 124
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (bho < 15) or bhi < 4
+
+
+class TestRangeToAnd_Case7_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = 124 <= bho * 8 + bhi
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (bho == 15) and 4 <= bhi
+
+
+class TestRangeToAnd_Case8_2Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = 124 < bho * 8 + bhi
+
+    def expected(A: T.Buffer[(16, 8), "bool"]):
+        for bho, bhi in T.grid(16, 8):
+            A[bho, bhi] = (bho == 15) and 4 < bhi
+
+
+class TestRangeToAnd_Case1_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = bho * 8 + bhi + fh <= 6
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (bho == 0) and bhi + fh <= 6
+
+
+class TestRangeToAnd_Case2_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = bho * 8 + bhi + fh < 6
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (bho == 0) and bhi + fh < 6
+
+
+class TestRangeToAnd_Case3_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = 6 <= bho * 8 + bhi + fh
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (0 < bho) or 6 <= bhi + fh
+
+
+class TestRangeToAnd_Case4_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = 6 < bho * 8 + bhi + fh
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (0 < bho) or 6 < bhi + fh
+
+
+class TestRangeToAnd_Case5_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = bho * 8 + bhi + fh <= 124
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (bho < 15) or bhi + fh <= 4
+
+
+class TestRangeToAnd_Case6_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = bho * 8 + bhi + fh < 124
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (bho < 15) or bhi + fh < 4
+
+
+class TestRangeToAnd_Case7_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = 124 <= bho * 8 + bhi + fh
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (bho == 15) and 4 <= bhi + fh
+
+
+class TestRangeToAnd_Case8_3Variables(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = 124 < bho * 8 + bhi + fh
+
+    def expected(A: T.Buffer[(16, 8, 3), "bool"]):
+        for bho, bhi, fh in T.grid(16, 8, 3):
+            A[bho, bhi, fh] = (bho == 15) and 4 < bhi + fh
+
+
+class TestExtractConditionsFromRange_NestedAndLowAndLow(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = i * 256 + j * 16 + k < 8
+
+    def expected(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = (i == 0) and (j == 0) and k < 8
+
+
+class TestExtractConditionsFromRange_OuterLoopOnly(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = i * 256 + j * 16 + k < 256
+
+    def expected(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = i == 0
+
+
+class TestExtractConditionsFromRange_NestedAndLowAndHigh(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            # A[i, j, k] = (240 <= i * 256 + j * 16 + k) and (i * 256 + j * 16 + k < 248)
+            A[i, j, k] = (i * 256 + j * 16 + k < 248) and (240 <= i * 256 + j * 16 + k)
+
+    def expected(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = (i == 0) and (k < 8) and (j == 15)
+
+
+class TestExtractConditionsFromRange_NestedOrLowOrLow(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(1, 16, 16), "bool"]):
+        for i, j, k in T.grid(1, 16, 16):
+            A[i, j, k] = 8 < i * 256 + j * 16 + k
+
+    def expected(A: T.Buffer[(1, 16, 16), "bool"]):
+        for i, j, k in T.grid(1, 16, 16):
+            A[0, j, k] = (0 < j) or 8 < k
+
+
+class TestExtractConditionsFromRange_NestedAndLowOrLow(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = (i * 256 + j * 16 + k < 256) and (8 < i * 256 + j * 16 + k)
+
+    def expected(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = (i == 0) and ((0 < j) or 8 < k)
+
+
+class TestExtractConditionsFromRange_NestedAndLowOrHigh(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = i * 256 + j * 16 + k < 248
+
+    def expected(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = (i == 0) and ((j < 15) or k < 8)
+
+
+class TestExtractConditionsFromRange_NestedOrLowAndHigh(BaseBeforeAfter):
+    """Convert lower bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = 248 < i * 256 + j * 16 + k
+
+    def expected(A: T.Buffer[(16, 16, 16), "bool"]):
+        for i, j, k in T.grid(16, 16, 16):
+            A[i, j, k] = (0 < i) or ((j == 15) and 8 < k)
+
+
 if __name__ == "__main__":
     tvm.testing.main()
