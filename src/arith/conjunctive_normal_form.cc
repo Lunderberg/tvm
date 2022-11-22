@@ -32,11 +32,14 @@
 #include <utility>
 #include <vector>
 
+#include "../support/debug_timer.h"
 #include "pattern_match.h"
 #include "rewrite_simplify.h"
 
 namespace tvm {
 namespace arith {
+
+using tvm::support::DebugTimer;
 
 namespace {
 /* \brief A utility for simplifying expressions using conjunctive/disjuctive normal forms */
@@ -277,10 +280,22 @@ void AndOfOrs::TrySimplifyAnd(Key* a_ptr, Key* b_ptr, Analyzer* analyzer) {
 }
 
 void AndOfOrs::Simplify(Analyzer* analyzer) {
-  SimplifyWithinChunks(analyzer);
-  RemoveTrueFalse();
-  SimplifyAcrossChunks(analyzer);
-  RemoveTrueFalse();
+  {
+    DebugTimer timer("Simplifying within chunks", 5);
+    SimplifyWithinChunks(analyzer);
+  }
+  {
+    DebugTimer timer("Cleanup true/false", 5);
+    RemoveTrueFalse();
+  }
+  {
+    DebugTimer timer("Simplifying across chunks", 5);
+    SimplifyAcrossChunks(analyzer);
+  }
+  {
+    DebugTimer timer("Cleanup true/false", 5);
+    RemoveTrueFalse();
+  }
 }
 
 void AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
@@ -461,9 +476,41 @@ class DisableAndOfOrRecursion {
 
 PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer) {
   DisableAndOfOrRecursion context(analyzer);
-  AndOfOrs repr(analyzer->Simplify(expr));
+
+  static bool currently_calling = false;
+
+  if (currently_calling) {
+    std::cout << "Recursively called SimplifyAsAndOfOrs, which shouldn't be possible" << std::endl;
+  }
+
+  bool cache = currently_calling;
+  currently_calling = true;
+
+  DebugTimer timer(
+      [&]() {
+        std::stringstream ss;
+        ss << "Simplifying " << expr;
+        return ss.str();
+      }(),
+      5);
+
+  // PrimExpr pre_simplified = [&]() {
+  //   DebugTimer timer(
+  //       [&]() {
+  //         std::stringstream ss;
+  //         ss << "Pre-simplification step for " << expr;
+  //         return ss.str();
+  //       }(),
+  //       5);
+  //   return analyzer->Simplify(expr);
+  // }();
+  PrimExpr pre_simplified = expr;
+
+  AndOfOrs repr(pre_simplified);
   repr.Simplify(analyzer);
-  return repr.AsPrimExpr();
+  auto out = repr.AsPrimExpr();
+  currently_calling = cache;
+  return out;
 }
 
 }  // namespace arith

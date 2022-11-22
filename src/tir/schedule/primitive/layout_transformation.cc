@@ -495,14 +495,13 @@ class TransformLayoutPlanner : private StmtExprVisitor {
                                                          IndexMap inverse,
                                                          PrimExpr padding_predicate,
                                                          Optional<IndexMap> pad_value) const {
-    if (write_info_.empty() || is_zero(padding_predicate) || !pad_value.defined()) {
+    if (write_info_.empty() || !pad_value.defined()) {
       return std::nullopt;
     }
 
     Map<Block, Block> new_block_to_old;
     auto generate_if_then_else_block = [&](const WriteInfo& info) -> Optional<Stmt> {
-      if (!info.contains_row_major_traversal || !pad_value.defined() ||
-          is_zero(padding_predicate)) {
+      if (!info.contains_row_major_traversal || !pad_value.defined()) {
         return NullOpt;
       }
 

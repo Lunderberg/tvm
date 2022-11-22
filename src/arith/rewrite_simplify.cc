@@ -184,6 +184,11 @@ void RewriteSimplifier::Impl::Update(const Var& var, const PrimExpr& info, bool 
   var_map_[var] = info;
 }
 
+PrimExpr RewriteSimplifier::Impl::VisitExpr(const PrimExpr& expr) {
+  expr_visit_count_++;
+  return IRMutatorWithAnalyzer::VisitExpr(expr);
+}
+
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
   PrimExpr ret = IRMutatorWithAnalyzer::VisitExpr_(op);
   op = ret.as<AddNode>();
@@ -292,7 +297,8 @@ std::function<void()> RewriteSimplifier::Impl::EnterConstraint(const PrimExpr& c
   // simplified results, the constraints should be simplified before
   // use.  However, for internally-provided constraints, the
   // simplification may already have been performed.
-  PrimExpr new_constraint = rewrite_constraints_ ? operator()(constraint) : constraint;
+  // PrimExpr new_constraint = rewrite_constraints_ ? operator()(constraint) : constraint;
+  PrimExpr new_constraint = constraint;
 
   size_t old_literal_size = literal_constraints_.size();
   for (const PrimExpr& subconstraint : ExtractConstraints(constraint, false)) {
@@ -1509,7 +1515,9 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const LENode* op) {
   // simplifies to (ceildiv(A,B)<=x) when (A%B!=0).  Performing the
   // TryCompare first would simplify to the equivalent
   // (floordiv(A,B)<x) in these cases instead.
-  ret = ApplyRewriteRules(Not(ApplyRewriteRules(LT(op->b, op->a))));
+  auto inv = LT(op->b, op->a);
+  auto rewritten_LT = ApplyRewriteRules(inv);
+  ret = ApplyRewriteRules(Not(rewritten_LT));
 
   if (auto op = ret.as<LENode>(); op && IsIndexType(op->a.dtype())) {
     CompareResult result = TryCompare(op->a, op->b);
@@ -2300,6 +2308,12 @@ RewriteSimplifier::Extension RewriteSimplifier::GetEnabledExtensions() const {
 RewriteSimplifier::RewriteSimplifier(Analyzer* parent) : impl_(new Impl(parent)) {}
 
 RewriteSimplifier::~RewriteSimplifier() { delete impl_; }
+
+RewriteSimplifier::Impl::~Impl() {
+  if (expr_visit_count_) {
+    std::cout << "Simplifier visited " << expr_visit_count_ << " expressions" << std::endl;
+  }
+}
 
 }  // namespace arith
 }  // namespace tvm

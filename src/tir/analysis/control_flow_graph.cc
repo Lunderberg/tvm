@@ -32,6 +32,7 @@
 #include <tvm/tir/stmt_functor.h>
 
 #include <algorithm>
+#include <chrono>
 #include <numeric>
 #include <optional>
 #include <queue>
@@ -47,13 +48,16 @@
 #include "../../arith/narrow_predicate_expression.h"
 #include "../../arith/pattern_match.h"
 #include "../../arith/unwrap_vector_expr.h"
+#include "../../support/debug_timer.h"
 
 namespace tvm {
 namespace tir {
 
 using namespace arith;
+using tvm::support::DebugTimer;
 
 namespace {
+
 bool HasBufferLoad(PrimExpr expr) {
   struct Visitor : public ExprVisitor {
     void VisitExpr_(const BufferLoadNode* node) override { found_buffer_load = true; }
@@ -404,10 +408,6 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
         loopnest.push_back(loop_body);
         body = loop_body->body;
       }
-      // if (auto* loop_body = body.as<ForNode>()) {
-      //   loopnest.push_back(loop_body);
-      //   body = loop_body->body;
-      // }
 
       for (const ForNode* loop : loopnest) {
         bindings.push_back(
@@ -922,13 +922,21 @@ BufferTouch ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(ControlFlowGraph
 
 ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits)
     : max_revisits_(max_revisits) {
-  // std::cout << "Collecting info" << std::endl;
-  ControlFlowGraphBuilder::Build(this, stmt);
-  // std::cout << "Collected " << *this << std::endl;
-  // std::cout << "Total block count: " << control_flow_.size() << std::endl;
-  // std::cout << "Starting forward prop" << std::endl;
-  ForwardPropagateKnownValues();
-  BackwardPropagateUnusedValues();
+  {
+    DebugTimer timer("Collecting info");
+    ControlFlowGraphBuilder::Build(this, stmt);
+  }
+  std::cout << "-------------- Blocks ------------------" << std::endl;
+  std::cout << *this << std::endl;
+  std::cout << "----------------------------------------" << std::endl;
+  {
+    DebugTimer timer("Forward propagation");
+    ForwardPropagateKnownValues();
+  }
+  {
+    DebugTimer timer("Backward propagation");
+    BackwardPropagateUnusedValues();
+  }
 }
 
 void ControlFlowGraph::RemoveStore(const tir::BufferStore& store) {
@@ -963,43 +971,62 @@ std::ostream& operator<<(std::ostream& os, const ControlFlowGraph::ControlFlowEd
 }
 
 std::ostream& operator<<(std::ostream& os, const ControlFlowGraph::ControlFlowBlock& block) {
-  os << "Predecessors: [";
-  for (size_t i = 0; i < block.predecessors.size(); i++) {
-    if (i) {
-      os << ", ";
+  if (block.predecessors.size()) {
+    os << "\t"
+       << "Predecessors: [";
+    for (size_t i = 0; i < block.predecessors.size(); i++) {
+      if (i) {
+        os << ", ";
+      }
+      os << block.predecessors[i];
     }
-    os << block.predecessors[i];
+    os << "]\n";
   }
-  os << "]\n";
 
-  os << "Active loop iterators: [";
-  for (size_t i = 0; i < block.active_loop_iterators.size(); i++) {
-    if (i) {
-      os << ", ";
-    }
-    os << block.active_loop_iterators[i].loop_var;
+  // os << "\t" << "Active loop iterators: [";
+  // for (size_t i = 0; i < block.active_loop_iterators.size(); i++) {
+  //   if (i) {
+  //     os << ", ";
+  //   }
+  //   os << block.active_loop_iterators[i].loop_var;
+  // }
+  // os << "]\n";
+
+  if (!block.known_at_block_start.empty()) {
+    os << "\t"
+       << "Before block knowns: " << block.known_at_block_start << "\n";
   }
-  os << "]\n";
 
-  os << "Before block knowns: " << block.known_at_block_start << "\n";
-
-  os << "Before block unused: " << block.unused_at_block_start << "\n";
+  if (!block.unused_at_block_start.empty()) {
+    os << "\t"
+       << "Before block unused: " << block.unused_at_block_start << "\n";
+  }
 
   for (size_t i = 0; i < block.touch_points.size(); i++) {
-    os << "Touch[" << i << "] = " << block.touch_points[i] << "\n";
+    os << "\t"
+       << "Touch[" << i << "] = " << block.touch_points[i] << "\n";
   }
-  os << "After block: " << block.known_at_block_end << "\n";
+  if (!block.known_at_block_end.empty()) {
+    os << "\t"
+       << "After block: " << block.known_at_block_end << "\n";
+  }
 
-  os << "After block unused: " << block.unused_at_block_end << "\n";
+  if (!block.unused_at_block_end.empty()) {
+    os << "\t"
+       << "After block unused: " << block.unused_at_block_end << "\n";
+  }
 
-  os << "Successors: [";
-  for (size_t i = 0; i < block.successors.size(); i++) {
-    if (i) {
-      os << ", ";
+  if (block.successors.size()) {
+    os << "\t"
+       << "Successors: [";
+    for (size_t i = 0; i < block.successors.size(); i++) {
+      if (i) {
+        os << ", ";
+      }
+      os << block.successors[i];
     }
-    os << block.successors[i];
+    os << "]";
   }
-  os << "]";
   return os;
 }
 
@@ -1007,8 +1034,7 @@ std::ostream& operator<<(std::ostream& os, const ControlFlowGraph& pattern) {
   os << "Touch pattern contains " << pattern.control_flow_.size() << " control blocks."
      << (pattern.control_flow_.size() ? "\n" : "");
   for (size_t i = 0; i < pattern.control_flow_.size(); i++) {
-    os << "\t"
-       << "ControlBlock[" << i << "] = " << pattern.control_flow_[i] << "\n";
+    os << "ControlBlock[" << i << "]: \n" << pattern.control_flow_[i] << "\n";
   }
 
   return os;
@@ -1269,6 +1295,9 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
   std::vector<BufferTouch> new_knowns;
   Map<Buffer, PrimExpr> keep_prior_known_at;
 
+  std::optional<DebugTimer> timer;
+  timer.emplace("Looping over touch points");
+
   for (auto& touch : touch_points) {
     if (touch.touch_type == BufferTouch::AccessType::Read) {
       continue;
@@ -1303,6 +1332,8 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
     }
   }
 
+  timer.emplace("Reducing extent of prior knowns");
+
   if (keep_prior_known_at.size()) {
     for (auto& constraint : constraints_) {
       if (auto it = keep_prior_known_at.find(constraint.buffer); it != keep_prior_known_at.end()) {
@@ -1310,6 +1341,8 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
       }
     }
   }
+
+  timer.emplace("Extending extent of new knowns");
 
   if (new_knowns.size()) {
     std::vector<bool> used(new_knowns.size(), false);
@@ -1342,6 +1375,8 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
       }
     }
   }
+
+  timer.emplace("Removing empty constraints");
 
   constraints_.erase(
       std::remove_if(constraints_.begin(), constraints_.end(),
@@ -1502,6 +1537,12 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
     size_t visiting = *to_visit.begin();
     to_visit.erase(visiting);
 
+    DebugTimer timer([&]() {
+      std::stringstream ss;
+      ss << "Visiting " << visiting;
+      return ss.str();
+    }());
+
     size_t num_previous_visits = visit_count_lookup[visiting]++;
 
     ControlFlowBlock& block = control_flow_[visiting];
@@ -1516,6 +1557,11 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       if (num_previous_visits >= max_revisits_) {
         return BufferState();
       }
+      DebugTimer timer([&]() {
+        std::stringstream ss;
+        ss << "Collecting priors knowns for " << visiting;
+        return ss.str();
+      }());
 
       // Validate internal constraint.  This should be true by
       // construction, as ControlFlowGraphBuilder only builds graphs
@@ -1615,11 +1661,26 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       if (num_previous_visits >= max_revisits_) {
         return BufferState();
       }
+
       auto post_state = block.known_at_block_start;
-      post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
+      {
+        DebugTimer timer([&]() {
+          std::stringstream ss;
+          ss << "Applying touches for block " << visiting;
+          return ss.str();
+        }());
+        post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
+      }
       // std::cout << "Afer applying " << block.touch_points.size() << " touches: " << post_state
       //           << std::endl;
-      post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+      {
+        DebugTimer timer([&]() {
+          std::stringstream ss;
+          ss << "Removing free parameters for block " << visiting;
+          return ss.str();
+        }());
+        post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+      }
       // std::cout << "Afer removing free parameters: " << post_state << std::endl;
       return post_state;
     }();

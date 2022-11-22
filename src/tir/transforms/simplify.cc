@@ -32,7 +32,9 @@
 #include <optional>
 
 #include "../../arith/ir_mutator_with_analyzer.h"
+#include "../../support/debug_timer.h"
 #include "../../tir/analysis/control_flow_graph.h"
+using tvm::support::DebugTimer;
 
 namespace tvm {
 namespace arith {
@@ -108,10 +110,15 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
     std::optional<ControlFlowGraph> touch_pattern = std::nullopt;
     if (config->propagate_knowns_to_prove_conditional ||
         config->propagate_knowns_to_simplify_expressions) {
+      DebugTimer timer("Generating touch pattern");
       touch_pattern = ControlFlowGraph(stmt);
     }
-    StmtSimplifier simplifier(analyzer, config, std::move(touch_pattern));
-    return simplifier(std::move(stmt));
+    {
+      DebugTimer timer("Performing simplification");
+      StmtSimplifier simplifier(analyzer, config, std::move(touch_pattern));
+      stmt = simplifier(std::move(stmt));
+    }
+    return stmt;
   }
 
  private:

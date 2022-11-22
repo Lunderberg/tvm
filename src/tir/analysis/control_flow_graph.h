@@ -284,6 +284,8 @@ class BufferState {
    */
   void Intersection(const BufferState& other, arith::Analyzer* analyzer);
 
+  bool empty() const { return constraints_.empty(); }
+
   friend std::ostream& operator<<(std::ostream& os, const BufferState&);
 
  private:

@@ -49,6 +49,9 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   using IRMutatorWithAnalyzer::VisitExpr_;
 
   explicit Impl(Analyzer* parent) : IRMutatorWithAnalyzer(parent) {}
+  ~Impl();
+
+  PrimExpr VisitExpr(const PrimExpr& expr) override;
 
   void Update(const Var& var, const PrimExpr& info, bool override_info);
   PrimExpr VisitExpr_(const AddNode* op) override;
@@ -99,6 +102,8 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
    * provided constraint.
    */
   bool rewrite_constraints_{true};
+
+  size_t expr_visit_count_{0};
 
   // counter to record recursive rewrite depth.
   int recur_depth_{0};
