@@ -1771,15 +1771,28 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
   std::optional<int64_t> sum_min = 0;
   std::optional<int64_t> sum_max = 0;
   for (const auto& term : sum) {
-    if (term.expr_min && sum_min) {
-      *sum_min += *term.expr_min * term.scale;
-    } else {
-      sum_min = std::nullopt;
-    }
-    if (term.expr_max && sum_max) {
-      *sum_max += *term.expr_max * term.scale;
-    } else {
-      sum_max = std::nullopt;
+    if (term.scale > 0) {
+      if (term.expr_min && sum_min) {
+        *sum_min += *term.expr_min * term.scale;
+      } else {
+        sum_min = std::nullopt;
+      }
+      if (term.expr_max && sum_max) {
+        *sum_max += *term.expr_max * term.scale;
+      } else {
+        sum_max = std::nullopt;
+      }
+    } else if (term.scale < 0) {
+      if (term.expr_min && sum_max) {
+        *sum_max += *term.expr_min * term.scale;
+      } else {
+        sum_max = std::nullopt;
+      }
+      if (term.expr_max && sum_min) {
+        *sum_min += *term.expr_max * term.scale;
+      } else {
+        sum_min = std::nullopt;
+      }
     }
   }
 
@@ -1796,21 +1809,21 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
 
     if (term.expr_min && term.expr_max && *term.expr_min == *term.expr_max) {
       // No condition needed, but we can proceed to the next term
-    } else if (term.scale > 0 && lower_bound && sum_min && *lower_bound <= *sum_min + term.scale) {
+    } else if (term.scale > 0 && lower_bound && sum_min && *sum_min < *lower_bound &&
+               *lower_bound <= *sum_min + term.scale) {
       ICHECK(term.expr_min);
       remember_or_condition(IntImm(term.expr.dtype(), *term.expr_min) < term.expr);
-      // TODO: Why isn't this symmetric?
-      //*lower_bound -= expr_bound->max_value * term.scale;
-    } else if (term.scale > 0 && upper_bound && sum_min && *upper_bound <= *sum_min + term.scale) {
+    } else if (term.scale > 0 && upper_bound && sum_min && *sum_min < *upper_bound &&
+               *upper_bound <= *sum_min + term.scale) {
       ICHECK(term.expr_min);
       remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_min));
-      // TODO: Why isn't this symmetric?
-      //*upper_bound -= expr_bound->max_value * term.scale;
-    } else if (term.scale > 0 && lower_bound && sum_max && *lower_bound > *sum_max - term.scale) {
+    } else if (term.scale > 0 && lower_bound && sum_max && *sum_max - term.scale < *lower_bound &&
+               *lower_bound <= *sum_max) {
       ICHECK(term.expr_max);
       remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_max));
       *lower_bound -= *term.expr_max * term.scale;
-    } else if (term.scale > 0 && upper_bound && sum_max && *upper_bound > *sum_max - term.scale) {
+    } else if (term.scale > 0 && upper_bound && sum_max && *sum_max - term.scale < *upper_bound &&
+               *upper_bound <= *sum_max) {
       ICHECK(term.expr_max);
       remember_or_condition(term.expr < IntImm(term.expr.dtype(), *term.expr_max));
       *upper_bound -= *term.expr_max * term.scale;
