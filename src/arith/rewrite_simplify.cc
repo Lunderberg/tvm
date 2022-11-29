@@ -2323,9 +2323,9 @@ RewriteSimplifier::RewriteSimplifier(Analyzer* parent) : impl_(new Impl(parent))
 RewriteSimplifier::~RewriteSimplifier() { delete impl_; }
 
 RewriteSimplifier::Impl::~Impl() {
-  if (expr_visit_count_) {
-    std::cout << "Simplifier visited " << expr_visit_count_ << " expressions" << std::endl;
-  }
+  // if (expr_visit_count_) {
+  //   std::cout << "Simplifier visited " << expr_visit_count_ << " expressions" << std::endl;
+  // }
 }
 
 }  // namespace arith

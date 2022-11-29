@@ -923,18 +923,18 @@ BufferTouch ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(ControlFlowGraph
 ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits)
     : max_revisits_(max_revisits) {
   {
-    DebugTimer timer("Collecting info");
+    // DebugTimer timer("Collecting info");
     ControlFlowGraphBuilder::Build(this, stmt);
   }
-  std::cout << "-------------- Blocks ------------------" << std::endl;
-  std::cout << *this << std::endl;
-  std::cout << "----------------------------------------" << std::endl;
+  // std::cout << "-------------- Blocks ------------------" << std::endl;
+  // std::cout << *this << std::endl;
+  // std::cout << "----------------------------------------" << std::endl;
   {
-    DebugTimer timer("Forward propagation");
+    // DebugTimer timer("Forward propagation");
     ForwardPropagateKnownValues();
   }
   {
-    DebugTimer timer("Backward propagation");
+    // DebugTimer timer("Backward propagation");
     BackwardPropagateUnusedValues();
   }
 }

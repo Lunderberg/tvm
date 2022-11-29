@@ -281,19 +281,19 @@ void AndOfOrs::TrySimplifyAnd(Key* a_ptr, Key* b_ptr, Analyzer* analyzer) {
 
 void AndOfOrs::Simplify(Analyzer* analyzer) {
   {
-    DebugTimer timer("Simplifying within chunks", 5);
+    // DebugTimer timer("Simplifying within chunks", 5);
     SimplifyWithinChunks(analyzer);
   }
   {
-    DebugTimer timer("Cleanup true/false", 5);
+    // DebugTimer timer("Cleanup true/false", 5);
     RemoveTrueFalse();
   }
   {
-    DebugTimer timer("Simplifying across chunks", 5);
+    // DebugTimer timer("Simplifying across chunks", 5);
     SimplifyAcrossChunks(analyzer);
   }
   {
-    DebugTimer timer("Cleanup true/false", 5);
+    // DebugTimer timer("Cleanup true/false", 5);
     RemoveTrueFalse();
   }
 }
@@ -477,22 +477,23 @@ class DisableAndOfOrRecursion {
 PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer) {
   DisableAndOfOrRecursion context(analyzer);
 
-  static bool currently_calling = false;
+  // static bool currently_calling = false;
 
-  if (currently_calling) {
-    std::cout << "Recursively called SimplifyAsAndOfOrs, which shouldn't be possible" << std::endl;
-  }
+  // if (currently_calling) {
+  //   std::cout << "Recursively called SimplifyAsAndOfOrs, which shouldn't be possible" <<
+  //   std::endl;
+  // }
 
-  bool cache = currently_calling;
-  currently_calling = true;
+  // bool cache = currently_calling;
+  // currently_calling = true;
 
-  DebugTimer timer(
-      [&]() {
-        std::stringstream ss;
-        ss << "Simplifying " << expr;
-        return ss.str();
-      }(),
-      5);
+  // DebugTimer timer(
+  //     [&]() {
+  //       std::stringstream ss;
+  //       ss << "Simplifying " << expr;
+  //       return ss.str();
+  //     }(),
+  //     5);
 
   // PrimExpr pre_simplified = [&]() {
   //   DebugTimer timer(
@@ -509,7 +510,7 @@ PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer) {
   AndOfOrs repr(pre_simplified);
   repr.Simplify(analyzer);
   auto out = repr.AsPrimExpr();
-  currently_calling = cache;
+  // currently_calling = cache;
   return out;
 }
 
