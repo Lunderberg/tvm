@@ -240,7 +240,7 @@ class TestHoistIfElse(BaseBeforeAfter):
                     A[i, j] = 0.0
             else:
                 for j in T.serial(4):
-                    A[i, j] = 1.0
+                    A[3, j] = 1.0
 
 
 class TestHoistSequentialAssign(BaseBeforeAfter):
@@ -264,8 +264,8 @@ class TestHoistSequentialAssign(BaseBeforeAfter):
                     B[i, j] = 0.0
             else:
                 for j in T.serial(4):
-                    A[i, j] = 1.0
-                    B[i, j] = 1.0
+                    A[3, j] = 1.0
+                    B[3, j] = 1.0
 
 
 class TestHoistMultiIf(BaseBeforeAfter):
@@ -351,7 +351,7 @@ class TestHoistMultiIfElse(BaseBeforeAfter):
                             A[i, j] = 0.0
                     else:
                         for k in T.serial(4):
-                            A[i, j] = 2.0
+                            A[i, 3] = 2.0
             else:
                 for j in T.serial(4):
                     if j < 3:
@@ -359,7 +359,7 @@ class TestHoistMultiIfElse(BaseBeforeAfter):
                             A[i, j] = 1.0
                     else:
                         for k in T.serial(4):
-                            A[i, j] = 3.0
+                            A[i, 3] = 3.0
 
 
 class TestHoistMultiIfElseDifferentBranches(BaseBeforeAfter):
@@ -390,15 +390,15 @@ class TestHoistMultiIfElseDifferentBranches(BaseBeforeAfter):
                                 A[i, j] = 0.0
                         else:
                             for k in T.serial(4):
-                                A[i, j] = 2.0
+                                A[i, 3] = 2.0
                 else:
                     for j in T.serial(4):
                         if j < 3:
                             for k in T.serial(4):
-                                A[i, j] = 0.0
+                                A[1, j] = 0.0
                         else:
                             for k in T.serial(4):
-                                A[i, j] = 3.0
+                                A[1, 3] = 3.0
             else:
                 for j in T.serial(4):
                     if j < 3:
@@ -406,7 +406,7 @@ class TestHoistMultiIfElseDifferentBranches(BaseBeforeAfter):
                             A[i, j] = 1.0
                     else:
                         for k in T.serial(4):
-                            A[i, j] = 3.0
+                            A[i, 3] = 3.0
 
 
 class TestHoistIfElseExpr(BaseBeforeAfter):
