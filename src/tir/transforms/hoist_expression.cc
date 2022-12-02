@@ -62,6 +62,7 @@ enum class HoistedLetBindings : int {
 struct HoistExpressionConfigNode : public tvm::AttrsNode<HoistExpressionConfigNode> {
   int hoisted_conditionals;
   int hoisted_let_bindings;
+  Optional<Array<String>> restrict_hoisted_loop_vars;
 
   TVM_DECLARE_ATTRS(HoistExpressionConfigNode, "tir.transform.HoistExpressionConfig") {
     TVM_ATTR_FIELD(hoisted_conditionals)
@@ -74,6 +75,10 @@ struct HoistExpressionConfigNode : public tvm::AttrsNode<HoistExpressionConfigNo
         .set_default(static_cast<int>(HoistedLetBindings::kRequiredByCondition) |
                      static_cast<int>(HoistedLetBindings::kLetStmt) |
                      static_cast<int>(HoistedLetBindings::kLetExpr));
+
+    TVM_ATTR_FIELD(restrict_hoisted_loop_vars)
+        .describe("If provided, only loop variables matching one of these names may be hoisted")
+        .set_default(NullOpt);
   }
 
   bool FlagSet(HoistedConditionals flag) const {
@@ -124,16 +129,21 @@ class HoistInfoCollector : public StmtExprVisitor {
  public:
   struct ConditionInfo {
     ConditionInfo(PrimExpr condition, HoistedConditionals hoist_from, bool uses_thread_binding,
-                  std::unordered_set<const VarNode*> required_let_bindings, bool generate_else_case)
+                  std::unordered_set<const VarNode*> required_let_bindings,
+                  std::unordered_set<Var, ObjectHash, ObjectEqual> loop_vars_used,
+                  bool generate_else_case)
         : condition(condition),
           hoist_from(hoist_from),
           uses_thread_binding(uses_thread_binding),
           required_let_bindings(required_let_bindings),
+          loop_vars_used(loop_vars_used),
           generate_else_case(generate_else_case) {}
     PrimExpr condition;
     HoistedConditionals hoist_from;
     bool uses_thread_binding;
     std::unordered_set<const VarNode*> required_let_bindings;
+    std::unordered_set<Var, ObjectHash, ObjectEqual> loop_vars_used;
+
     bool generate_else_case;
 
     bool IsEnabled(const HoistExpressionConfig& config) const {
@@ -146,7 +156,31 @@ class HoistInfoCollector : public StmtExprVisitor {
 
       bool valid_thread_binding_usage =
           config->FlagSet(HoistedConditionals::kUsingThreadBinding) || !uses_thread_binding;
-      return valid_source && all_required_bindings_are_hoisted && valid_thread_binding_usage;
+
+      bool only_uses_allowed_loop_vars = [&]() -> bool {
+        if (!config->restrict_hoisted_loop_vars.defined()) {
+          return true;
+        }
+        auto arr = config->restrict_hoisted_loop_vars.value();
+
+        for (const auto& loop_var_used : loop_vars_used) {
+          bool is_allowed = false;
+          for (const auto& allowed_name : arr) {
+            if (loop_var_used->name_hint == allowed_name) {
+              is_allowed = true;
+              break;
+            }
+          }
+          if (!is_allowed) {
+            return false;
+          }
+        }
+
+        return true;
+      }();
+
+      return valid_source && all_required_bindings_are_hoisted && valid_thread_binding_usage &&
+             only_uses_allowed_loop_vars;
     }
   };
 
@@ -226,8 +260,17 @@ class HoistInfoCollector : public StmtExprVisitor {
             }
           }
         }
+
+        std::unordered_set<Var, ObjectHash, ObjectEqual> loop_variables_used;
+        for (Var var : UndefinedVars(cond)) {
+          if (active_loop_vars.count(var.get())) {
+            loop_variables_used.insert(var);
+          }
+        }
+
         info->conditions.push_back(ConditionInfo(cond, hoist_from, uses_thread_binding,
-                                                 let_bindings_used, generate_else_block));
+                                                 let_bindings_used, loop_variables_used,
+                                                 generate_else_block));
       }
     }
   }

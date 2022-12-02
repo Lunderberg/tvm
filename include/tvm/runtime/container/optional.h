@@ -24,6 +24,7 @@
 #ifndef TVM_RUNTIME_CONTAINER_OPTIONAL_H_
 #define TVM_RUNTIME_CONTAINER_OPTIONAL_H_
 
+#include <ostream>
 #include <utility>
 
 #include "./base.h"
@@ -32,7 +33,11 @@ namespace tvm {
 namespace runtime {
 
 /*! \brief Helper to represent nullptr for optional. */
-struct NullOptType {};
+struct NullOptType {
+  friend std::ostream& operator<<(std::ostream& os, const NullOptType&) {
+    return os << "(nullptr)";
+  }
+};
 
 /*!
  * \brief Optional container that to represent to a Nullable variant of T.

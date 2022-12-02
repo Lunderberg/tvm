@@ -14,6 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+import pytest
+
 import tvm
 from tvm import tir
 import tvm.testing
@@ -25,14 +28,16 @@ from tvm.tir.transform import HoistExpression, HoistedConditionals, HoistedLetBi
 class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     hoisted_conditionals = tvm.testing.parameter(HoistedConditionals.All)
     hoisted_let_bindings = tvm.testing.parameter(HoistedLetBindings.All)
+    restrict_hoisted_loop_vars = tvm.testing.parameter(None)
 
     @tvm.testing.fixture
-    def transform(self, hoisted_conditionals, hoisted_let_bindings):
+    def transform(self, hoisted_conditionals, hoisted_let_bindings, restrict_hoisted_loop_vars):
         def inner(mod):
             config = {
                 "tir.HoistExpression": {
                     "hoisted_conditionals": hoisted_conditionals.value,
                     "hoisted_let_bindings": hoisted_let_bindings.value,
+                    "restrict_hoisted_loop_vars": restrict_hoisted_loop_vars,
                 }
             }
 
@@ -492,6 +497,59 @@ class TestNoHoistAcrossTIRBlock(BaseBeforeAfter):
 #                 A[vi, vj] = T.if_then_else(vi < 2 and vj<2, 2.0, 1.0, dtype="float32") + T.if_then_else(
 #                     vj < 2, 2.0, 3.0, dtype="float32"
 #                 )
+
+
+class TestRestrictHoistedLoopIterator(BaseBeforeAfter):
+    restrict_hoisted_loop_vars = tvm.testing.parameter([], ["i"], ["j"], ["i", "j"])
+
+    def before(A: T.Buffer[(4, 4, 4), "float32"]):
+        for i, j, k in T.grid(4, 4, 4):
+            if i < 3 and j < 3 and k < 3:
+                A[i, j, k] = 0.0
+
+    @pytest.fixture
+    def expected(self, restrict_hoisted_loop_vars):
+        if restrict_hoisted_loop_vars == []:
+
+            @T.prim_func
+            def func(A: T.Buffer[(4, 4, 4), "float32"]):
+                for i, j, k in T.grid(4, 4, 4):
+                    if i < 3 and j < 3 and k < 3:
+                        A[i, j, k] = 0.0
+
+        elif restrict_hoisted_loop_vars == ["i"]:
+
+            @T.prim_func
+            def func(A: T.Buffer[(4, 4, 4), "float32"]):
+                for i in T.serial(4):
+                    if i < 3:
+                        for j, k in T.grid(4, 4):
+                            if j < 3 and k < 3:
+                                A[i, j, k] = 0.0
+
+        elif restrict_hoisted_loop_vars == ["j"]:
+
+            @T.prim_func
+            def func(A: T.Buffer[(4, 4, 4), "float32"]):
+                for i, j in T.grid(4, 4):
+                    if j < 3:
+                        for k in T.serial(4):
+                            if i < 3 and k < 3:
+                                A[i, j, k] = 0.0
+
+        elif restrict_hoisted_loop_vars == ["i", "j"]:
+
+            @T.prim_func
+            def func(A: T.Buffer[(4, 4, 4), "float32"]):
+                for i in T.serial(4):
+                    if i < 3:
+                        for j in T.serial(4):
+                            if j < 3:
+                                for k in T.serial(4):
+                                    if k < 3:
+                                        A[i, j, k] = 0.0
+
+        return func
 
 
 if __name__ == "__main__":
