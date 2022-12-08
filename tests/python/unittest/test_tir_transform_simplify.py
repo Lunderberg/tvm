@@ -2247,5 +2247,29 @@ class TestExtractConditionsFromRange_NestedOrLowAndHigh(BaseBeforeAfter):
             A[i, j, k] = (0 < i) or ((j == 15) and 8 < k)
 
 
+class TestExtractConditionsFromSum_MinMin(BaseBeforeAfter):
+    """Convert equality bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = i * 7 + j * 3 == 0
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i == 0) and (j == 0)
+
+
+class TestExtractConditionsFromSum_MaxMax(BaseBeforeAfter):
+    """Convert equality bound into known value of a term"""
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = i * 7 + j * 3 == 150
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i == 15) and (j == 15)
+
+
 if __name__ == "__main__":
     tvm.testing.main()

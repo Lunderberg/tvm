@@ -179,7 +179,7 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   CompareResult TryCompareUsingKnownInequalities(const PrimExpr& x, const PrimExpr& y);
   CompareResult TryCompareUsingConstIntBounds(const PrimExpr& x, const PrimExpr y);
 
-  Optional<PrimExpr> TryFindExpressionExtrema(LT node);
+  Optional<PrimExpr> TryFindExpressionExtrema(PrimExpr node);
 
   // Whether x >= val
   bool CanProveGreaterEqual(const PrimExpr& x, int64_t val) {

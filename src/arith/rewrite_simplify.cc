@@ -1456,12 +1456,17 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(EQ ret) {
                result == CompareResult::kLT) {
       return make_const(ret->dtype, false);
     }
-    TVM_TRY_REWRITE(c1 == x, x == c1);
+    TVM_TRY_RECURSIVE_REWRITE(c1 == x, x == c1);
 
-    TVM_TRY_REWRITE(x - c1 == 0, x == c1);
-    TVM_TRY_REWRITE(c1 - x == 0, x == c1);
-    TVM_TRY_REWRITE(x + c1 == 0, x == 0 - c1);
+    TVM_TRY_RECURSIVE_REWRITE(x - c1 == 0, x == c1);
+    TVM_TRY_RECURSIVE_REWRITE(c1 - x == 0, x == c1);
     TVM_TRY_RECURSIVE_REWRITE(x * y == 0, x == 0 || y == 0);
+
+    if (auto opt = TryFindExpressionExtrema(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
+
+    TVM_TRY_REWRITE(x + c1 == 0, x == 0 - c1);
   }
   return std::move(ret);
 }
@@ -1702,22 +1707,28 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
   return std::move(ret);
 }
 
-Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
-  // Only applies to integer data types
-  if (!IsIndexType(ret->a->dtype) || !IsIndexType(ret->b->dtype)) {
-    return NullOpt;
-  }
+Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr ret) {
+  PVar<IntImm> c1;
+  PVar<PrimExpr> x;
 
   std::optional<int64_t> lower_bound = std::nullopt;
+  std::optional<int64_t> equality_bound = std::nullopt;
   std::optional<int64_t> upper_bound = std::nullopt;
-  PrimExpr sum_expr;
-  if (const IntImmNode* lhs_as_int = ret->a.as<IntImmNode>()) {
-    lower_bound = lhs_as_int->value;
-    sum_expr = ret->b;
-  } else if (const IntImmNode* rhs_as_int = ret->b.as<IntImmNode>()) {
-    upper_bound = rhs_as_int->value;
-    sum_expr = ret->a;
+
+  if ((c1 < x).Match(ret)) {
+    lower_bound = c1.Eval()->value;
+  } else if ((x < c1).Match(ret)) {
+    upper_bound = c1.Eval()->value;
+  } else if ((x == c1).Match(ret) || (c1 == x).Match(ret)) {
+    equality_bound = c1.Eval()->value;
+  } else if ((x == 0 - c1).Match(ret) || (x + c1 == 0).Match(ret)) {
+    equality_bound = -c1.Eval()->value;
   } else {
+    return NullOpt;
+  }
+  PrimExpr sum_expr = x.Eval();
+
+  if (!IsIndexType(sum_expr->dtype)) {
     return NullOpt;
   }
 
@@ -1728,28 +1739,30 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
     std::optional<int64_t> expr_max{std::nullopt};
   };
 
-  PVar<IntImm> c1, c2;
-  PVar<PrimExpr> x, y;
+  auto sum = [&sum_expr]() {
+    PVar<IntImm> c1, c2;
+    PVar<PrimExpr> x, y;
 
-  std::vector<Term> sum;
-  std::vector<Term> to_check = {Term{sum_expr, 1}};
-  while (!to_check.empty()) {
-    Term term = to_check.back();
-    to_check.pop_back();
+    std::vector<Term> sum;
+    std::vector<Term> to_check = {Term{sum_expr, 1}};
+    while (!to_check.empty()) {
+      Term term = to_check.back();
+      to_check.pop_back();
 
-    if ((x + y).Match(term.expr)) {
-      to_check.push_back({x.Eval(), term.scale});
-      to_check.push_back({y.Eval(), term.scale});
-    } else if ((x - y).Match(term.expr)) {
-      to_check.push_back({x.Eval(), term.scale});
-      to_check.push_back({y.Eval(), -term.scale});
-    } else if ((c1 * x).Match(term.expr) || (x * c1).Match(term.expr)) {
-      to_check.push_back({x.Eval(), c1.Eval()->value * term.scale});
-    } else {
-      sum.push_back(term);
+      if ((x + y).Match(term.expr)) {
+        to_check.push_back({x.Eval(), term.scale});
+        to_check.push_back({y.Eval(), term.scale});
+      } else if ((x - y).Match(term.expr)) {
+        to_check.push_back({x.Eval(), term.scale});
+        to_check.push_back({y.Eval(), -term.scale});
+      } else if ((c1 * x).Match(term.expr) || (x * c1).Match(term.expr)) {
+        to_check.push_back({x.Eval(), c1.Eval()->value * term.scale});
+      } else {
+        sum.push_back(term);
+      }
     }
-  }
-
+    return sum;
+  }();
   if (sum.size() < 2) {
     return NullOpt;
   }
@@ -1827,6 +1840,16 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
       ICHECK(term.expr_max);
       remember_or_condition(term.expr < IntImm(term.expr.dtype(), *term.expr_max));
       *upper_bound -= *term.expr_max * term.scale;
+    } else if (term.scale > 0 && equality_bound && sum_max &&
+               *sum_max - term.scale < *equality_bound && *equality_bound <= *sum_max) {
+      ICHECK(term.expr_max);
+      remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_max));
+      *equality_bound -= *term.expr_max * term.scale;
+    } else if (term.scale > 0 && equality_bound && sum_min && *sum_min <= *equality_bound &&
+               *equality_bound < *sum_min + term.scale) {
+      ICHECK(term.expr_min);
+      remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_min));
+      *equality_bound -= *term.expr_min * term.scale;
     } else {
       // This term had the largest scale, so if it can't be extracted
       // out, neither can any no remaining terms.
@@ -1862,6 +1885,8 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(LT ret) {
       return IntImm(sum_terms->dtype, *lower_bound) < sum_terms;
     } else if (upper_bound) {
       return sum_terms < IntImm(sum_terms->dtype, *upper_bound);
+    } else if (equality_bound) {
+      return sum_terms == IntImm(sum_terms->dtype, *equality_bound);
     } else {
       LOG(FATAL) << "Internal error, neither upper bound nor lower bound defined";
       return PrimExpr();
