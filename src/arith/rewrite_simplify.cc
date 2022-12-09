@@ -1466,6 +1466,10 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(EQ ret) {
       return RecursiveRewrite(opt.value());
     }
 
+    if (auto opt = TryFindTwoValueTerms(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
+
     TVM_TRY_REWRITE(x + c1 == 0, x == 0 - c1);
   }
   return std::move(ret);
@@ -1707,6 +1711,45 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
   return std::move(ret);
 }
 
+struct Term {
+  PrimExpr expr;
+  int64_t scale{0};
+  std::optional<int64_t> expr_min{std::nullopt};
+  std::optional<int64_t> expr_max{std::nullopt};
+
+  static std::vector<Term> Collect(const PrimExpr& sum_expr, Analyzer* analyzer) {
+    PVar<IntImm> c1, c2;
+    PVar<PrimExpr> x, y;
+
+    std::vector<Term> sum;
+    std::vector<Term> to_check = {Term{sum_expr, 1}};
+    while (!to_check.empty()) {
+      Term term = to_check.back();
+      to_check.pop_back();
+
+      if ((x + y).Match(term.expr)) {
+        to_check.push_back({x.Eval(), term.scale});
+        to_check.push_back({y.Eval(), term.scale});
+      } else if ((x - y).Match(term.expr)) {
+        to_check.push_back({x.Eval(), term.scale});
+        to_check.push_back({y.Eval(), -term.scale});
+      } else if ((c1 * x).Match(term.expr) || (x * c1).Match(term.expr)) {
+        to_check.push_back({x.Eval(), c1.Eval()->value * term.scale});
+      } else {
+        ConstIntBound expr_bound = analyzer->const_int_bound(term.expr);
+        if (expr_bound->min_value != ConstIntBound::kNegInf) {
+          term.expr_min = expr_bound->min_value;
+        }
+        if (expr_bound->max_value != ConstIntBound::kPosInf) {
+          term.expr_max = expr_bound->max_value;
+        }
+        sum.push_back(term);
+      }
+    }
+    return sum;
+  }
+};
+
 Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr ret) {
   PVar<IntImm> c1;
   PVar<PrimExpr> x;
@@ -1732,37 +1775,9 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr re
     return NullOpt;
   }
 
-  struct Term {
-    PrimExpr expr;
-    int64_t scale{0};
-    std::optional<int64_t> expr_min{std::nullopt};
-    std::optional<int64_t> expr_max{std::nullopt};
-  };
 
-  auto sum = [&sum_expr]() {
-    PVar<IntImm> c1, c2;
-    PVar<PrimExpr> x, y;
+  auto sum = Term::Collect(sum_expr, analyzer_);
 
-    std::vector<Term> sum;
-    std::vector<Term> to_check = {Term{sum_expr, 1}};
-    while (!to_check.empty()) {
-      Term term = to_check.back();
-      to_check.pop_back();
-
-      if ((x + y).Match(term.expr)) {
-        to_check.push_back({x.Eval(), term.scale});
-        to_check.push_back({y.Eval(), term.scale});
-      } else if ((x - y).Match(term.expr)) {
-        to_check.push_back({x.Eval(), term.scale});
-        to_check.push_back({y.Eval(), -term.scale});
-      } else if ((c1 * x).Match(term.expr) || (x * c1).Match(term.expr)) {
-        to_check.push_back({x.Eval(), c1.Eval()->value * term.scale});
-      } else {
-        sum.push_back(term);
-      }
-    }
-    return sum;
-  }();
   if (sum.size() < 2) {
     return NullOpt;
   }
@@ -1770,16 +1785,6 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr re
   std::stable_sort(sum.begin(), sum.end(), [](const Term& a, const Term& b) {
     return std::abs(a.scale) < std::abs(b.scale);
   });
-
-  for (auto& term : sum) {
-    ConstIntBound expr_bound = analyzer_->const_int_bound(term.expr);
-    if (expr_bound->min_value != ConstIntBound::kNegInf) {
-      term.expr_min = expr_bound->min_value;
-    }
-    if (expr_bound->max_value != ConstIntBound::kPosInf) {
-      term.expr_max = expr_bound->max_value;
-    }
-  }
 
   std::optional<int64_t> sum_min = 0;
   std::optional<int64_t> sum_max = 0;
@@ -1901,6 +1906,72 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr re
   }();
 
   return wrapped_condition;
+}
+
+Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(EQ ret) {
+  PVar<IntImm> c1;
+  PVar<PrimExpr> x;
+
+  PrimExpr sum_expr;
+  IntImm bound_value;
+  if ((x == c1).Match(ret) || (c1 == x).Match(ret)) {
+    sum_expr = x.Eval();
+    bound_value = c1.Eval();
+  } else if ((x == 0 - c1).Match(ret) || (x + c1 == 0).Match(ret)) {
+    sum_expr = x.Eval();
+    bound_value = IntImm(c1.Eval()->dtype, -c1.Eval()->value);
+  } else {
+    return NullOpt;
+  }
+
+  std::vector<Term> sum = Term::Collect(sum_expr, analyzer_);
+
+  auto can_extract_term = [](const Term& term) -> bool {
+    return term.expr.as<FloorDivNode>() && term.expr_min && term.expr_max &&
+           *term.expr_min + 1 == *term.expr_max;
+  };
+
+  if (!std::any_of(sum.begin(), sum.end(), can_extract_term)) {
+    return NullOpt;
+  }
+
+  PrimExpr remainder = 0;
+
+  std::unordered_map<int64_t, PrimExpr> offsets;
+  offsets[0] = Bool(true);
+
+  for (const auto& term : sum) {
+    if (can_extract_term(term)) {
+      std::unordered_map<int64_t, PrimExpr> new_offsets;
+
+      FloorDiv fdiv = Downcast<FloorDiv>(term.expr);
+      PrimExpr cutoff = fdiv->b * IntImm(fdiv->b->dtype, *term.expr_max);
+
+      for (const auto& [old_offset, old_cond] : offsets) {
+        auto handle_cond = [&](PrimExpr new_inequality, int64_t term_value) {
+          PrimExpr new_cond = old_cond && new_inequality;
+          int64_t new_offset = old_offset + term_value * term.scale;
+          if (auto it = new_offsets.find(new_offset); it != new_offsets.end()) {
+            it->second = it->second || new_cond;
+          } else {
+            new_offsets[new_offset] = new_cond;
+          }
+        };
+
+        handle_cond(fdiv->a < cutoff, *term.expr_min);
+        handle_cond(cutoff <= fdiv->a, *term.expr_max);
+      }
+      offsets = std::move(new_offsets);
+    } else {
+      remainder = remainder + term.expr;
+    }
+  }
+
+  PrimExpr output = Bool(false);
+  for (const auto& [offset, cond] : offsets) {
+    output = output || (cond && (remainder == bound_value - IntImm(bound_value->dtype, offset)));
+  }
+  return output;
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {

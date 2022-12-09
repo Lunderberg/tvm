@@ -2271,5 +2271,60 @@ class TestExtractConditionsFromSum_MaxMax(BaseBeforeAfter):
             A[i, j] = (i == 15) and (j == 15)
 
 
+class TestExtractLowerBoundFromFloorDiv(BaseBeforeAfter):
+    """Convert an equality on floordiv to a lower bound"""
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i + 4) // 16 == 0
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = i < 12
+
+
+class TestExtractUpperBoundFromFloorDiv(BaseBeforeAfter):
+    """Convert an equality on floordiv to a lower bound"""
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i + 4) // 16 == 1
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = 12 <= i
+
+
+class TestDoNotExtractMultipleBounds(BaseBeforeAfter):
+    """If a floordiv equality would require multiple inequalities, do not extract
+
+    This could be expressed as `4 <= i and i < 12`, but that becomes
+    less readable than the floordiv.
+    """
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i + 4) // 8 == 1
+
+    expected = before
+
+
+class TestExtractIndependentConditionFromEquality(BaseBeforeAfter):
+    """Convert equality bound into known value of a term
+
+    Here, (i+4)//16 has two possible values, which correspond to two
+    possible values for j.
+    """
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i + 4) // 16 + j == 1
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = ((12 <= i) and (j == 0)) or ((i < 12) and (j == 1))
+            # A[i, j] = ((12 < i) or (j == 1)) and ((i <= 12) or (j == 0))
+
+
 if __name__ == "__main__":
     tvm.testing.main()
