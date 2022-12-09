@@ -1440,7 +1440,7 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(EQ ret) {
   // Pattern var to match any expression
   PVar<PrimExpr> x, y;
   // Pattern var match IntImm
-  PVar<IntImm> c1;
+  PVar<IntImm> c1, c2;
   PVar<int> lanes;
 
   // vector rule
@@ -1458,8 +1458,9 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(EQ ret) {
     }
     TVM_TRY_RECURSIVE_REWRITE(c1 == x, x == c1);
 
-    TVM_TRY_RECURSIVE_REWRITE(x - c1 == 0, x == c1);
-    TVM_TRY_RECURSIVE_REWRITE(c1 - x == 0, x == c1);
+    TVM_TRY_RECURSIVE_REWRITE(x + c1 == c2, x == c2 - c1);
+    TVM_TRY_RECURSIVE_REWRITE(x - c1 == c2, x == c2 + c1);
+    TVM_TRY_RECURSIVE_REWRITE(c1 - x == c2, x == c1 + c2);
     TVM_TRY_RECURSIVE_REWRITE(x * y == 0, x == 0 || y == 0);
 
     if (auto opt = TryFindExpressionExtrema(ret)) {
@@ -1470,7 +1471,9 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(EQ ret) {
       return RecursiveRewrite(opt.value());
     }
 
-    TVM_TRY_REWRITE(x + c1 == 0, x == 0 - c1);
+    if (auto opt = TryUnwrapFloorMod(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
   }
   return std::move(ret);
 }
@@ -1701,6 +1704,10 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
     TVM_TRY_RECURSIVE_REWRITE(x + c1 < c2, x < c2 - c1);
     TVM_TRY_RECURSIVE_REWRITE(x - c1 < c2, x < c2 + c1);
     TVM_TRY_REWRITE(x - c1 < 0, x < c1);
+
+    if (auto opt = TryUnwrapFloorMod(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
 
     TVM_TRY_RECURSIVE_REWRITE(x - 1 < y, x <= y);
     TVM_TRY_RECURSIVE_REWRITE(x < y + 1, x <= y);
@@ -1972,6 +1979,70 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(EQ ret) {
     output = output || (cond && (remainder == bound_value - IntImm(bound_value->dtype, offset)));
   }
   return output;
+}
+
+Optional<PrimExpr> RewriteSimplifier::Impl::TryUnwrapFloorMod(PrimExpr expr) {
+  enum class Pattern {
+    Equal,
+    UpperBound,
+    LowerBound,
+  } pattern;
+
+  // Subexpressions already simplified by the time TryUnwrapFloorMod
+  // has been called, with `a <= b` being simplified as `not (b < a)`.
+  // Therefore, we only need to handle EQ and LT here.
+  PVar<IntImm> c1, c2;
+  PVar<PrimExpr> x;
+  if ((floormod(x, c1) == c2).Match(expr)) {
+    pattern = Pattern::Equal;
+  } else if ((floormod(x, c1) < c2).Match(expr)) {
+    pattern = Pattern::UpperBound;
+  } else if ((c2 < floormod(x, c1)).Match(expr)) {
+    pattern = Pattern::LowerBound;
+  } else {
+    return NullOpt;
+  }
+
+  PrimExpr arg = x.Eval();
+  IntImm denominator = c1.Eval();
+  IntImm bound = c2.Eval();
+  ConstIntBound arg_bounds = analyzer_->const_int_bound(arg);
+
+  if (arg_bounds->min_value == ConstIntBoundNode::kNegInf ||
+      arg_bounds->max_value == ConstIntBound::kPosInf ||
+      arg_bounds->max_value - arg_bounds->min_value >= denominator->value) {
+    return NullOpt;
+  }
+
+  IntImm arg_min(arg->dtype, arg_bounds->min_value);
+
+  // If we reached this point, the floormod's range is no greater than
+  // the argument's range, and so the floormod is bijective.
+  // Therefore, we may be able to rewrite the condition to remove the
+  // floormod altogether.
+  auto make_bound = [&](PrimExpr bound) {
+    return bound + denominator * ceildiv(arg_min - bound, denominator);
+  };
+  if (pattern == Pattern::Equal) {
+    // (x % c1 == c2) => (x == c2 + N * c1)
+    return (arg == make_bound(bound));
+  } else if (pattern == Pattern::LowerBound && bound->value == 0) {
+    // (x % c1 > 0) => (x % c1 != 0) => (x != N * c1)
+    return (arg != make_bound(bound));
+  } else if (pattern == Pattern::UpperBound && bound->value + 1 == denominator->value) {
+    // (x % c1 < (c1-1)) => (x%c1 != (c1-1)) => (x != (c1-1) + N * c1)
+    return (arg != make_bound(bound));
+  }
+
+  if (pattern == Pattern::LowerBound && bound->value + 2 == denominator->value) {
+    // (x % c1 > (c1-2)) => (x % c1 == (c1-1)) => (x == (c1-1) + N * c1)
+    return (arg == make_bound(bound + 1));
+  } else if (pattern == Pattern::UpperBound && bound->value == 1) {
+    // (x % c1 < 1) => (x%c1 == 1) => (x == 1 + N * c1)
+    return (arg == make_bound(IntImm(arg->dtype, 0)));
+  }
+
+  return NullOpt;
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {

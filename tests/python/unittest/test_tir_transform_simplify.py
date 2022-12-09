@@ -2326,5 +2326,100 @@ class TestExtractIndependentConditionFromEquality(BaseBeforeAfter):
             # A[i, j] = ((12 < i) or (j == 1)) and ((i <= 12) or (j == 0))
 
 
+class TestUnwrapFloorModFromEquals(BaseBeforeAfter):
+    """Remove unnecessary floormod"""
+
+    arg_offset = tvm.testing.parameter(0, 37)
+    compared_against = tvm.testing.parameter(*range(16))
+
+    @tvm.testing.fixture
+    def before(self, arg_offset, compared_against):
+        @T.prim_func
+        def func(A: T.Buffer[16, "bool"]):
+            for i in T.serial(16):
+                A[i] = (i + arg_offset) % 16 == compared_against
+
+        return func
+
+    @tvm.testing.fixture
+    def expected(self, arg_offset, compared_against):
+        if arg_offset == 0:
+            # (i % 16 == N), becomes i == N
+            new_comparison = compared_against
+        elif arg_offset == 37 and compared_against < 5:
+            # ((i+37) % 16 == N), becomes i == N+5
+            new_comparison = compared_against + 11
+        elif arg_offset == 37 and compared_against >= 5:
+            # ((i+37) % 16 == N), becomes i == N-11
+            new_comparison = compared_against - 5
+
+        @T.prim_func
+        def func(A: T.Buffer[16, "bool"]):
+            for i in T.serial(16):
+                A[i] = i == new_comparison
+
+        return func
+
+
+class TestUnwrapFloorModNotEquals(BaseBeforeAfter):
+    """Remove unnecessary floormod"""
+
+    def before(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = i % 16 != 4
+
+    def expected(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = i != 4
+
+
+class TestUnwrapFloorModGreaterThanIntoNotEquals(BaseBeforeAfter):
+    """Remove unnecessary floormod"""
+
+    def before(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = 0 < (i + 3) % 16
+
+    def expected(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = i != 13
+
+
+class TestUnwrapFloorModLessThanIntoNotEquals(BaseBeforeAfter):
+    """Remove unnecessary floormod"""
+
+    def before(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = (i + 7) % 16 < 15
+
+    def expected(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = i != 8
+
+
+class TestUnwrapFloorModGreaterThanIntoEquals(BaseBeforeAfter):
+    """Remove unnecessary floormod"""
+
+    def before(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = 14 < (i + 3) % 16
+
+    def expected(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = i == 12
+
+
+class TestUnwrapFloorModLessThanIntoEquals(BaseBeforeAfter):
+    """Remove unnecessary floormod"""
+
+    def before(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = (i + 11) % 16 < 1
+
+    def expected(A: T.Buffer[16, "bool"]):
+        for i in T.serial(16):
+            A[i] = i == 5
+
+
 if __name__ == "__main__":
     tvm.testing.main()
