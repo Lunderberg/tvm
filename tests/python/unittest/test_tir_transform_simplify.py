@@ -2326,6 +2326,38 @@ class TestExtractIndependentConditionFromEquality(BaseBeforeAfter):
             # A[i, j] = ((12 < i) or (j == 1)) and ((i <= 12) or (j == 0))
 
 
+class TestExtractIndependentConditionFromUpperBound(BaseBeforeAfter):
+    """Convert equality bound into known value of a term
+
+    Here, (i+4)//16 has two possible values, which correspond to two
+    possible values for j.
+    """
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = (i + 4) // 16 + j < 7
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = ((12 <= i) and (j < 6)) or ((i < 12) and (j < 7))
+
+
+class TestExtractIndependentConditionFromLowerBound(BaseBeforeAfter):
+    """Convert equality bound into known value of a term
+
+    Here, (i+4)//16 has two possible values, which correspond to two
+    possible values for j.
+    """
+
+    def before(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = 7 < (i + 4) // 16 + j
+
+    def expected(A: T.Buffer[(16, 16), "bool"]):
+        for i, j in T.grid(16, 16):
+            A[i, j] = ((12 <= i) and (6 < j)) or ((i < 12) and (7 < j))
+
+
 class TestUnwrapFloorModFromEquals(BaseBeforeAfter):
     """Remove unnecessary floormod"""
 

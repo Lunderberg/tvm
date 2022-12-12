@@ -180,6 +180,7 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   CompareResult TryCompareUsingConstIntBounds(const PrimExpr& x, const PrimExpr y);
 
   Optional<PrimExpr> TryFindExpressionExtrema(PrimExpr node);
+  Optional<PrimExpr> TryFindTwoValueTerms(PrimExpr node);
   Optional<PrimExpr> TryUnwrapFloorMod(PrimExpr node);
 
   // Whether x >= val

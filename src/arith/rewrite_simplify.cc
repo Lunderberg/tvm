@@ -1686,10 +1686,6 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
     TVM_TRY_REWRITE_IF(floordiv(x + c2, c1) * c1 < x - y,
                        y < floormod(x + c2, c1) + (0 - c2), c1.Eval()->value > 0);
 
-    if(auto opt = TryFindExpressionExtrema(ret)) {
-      return RecursiveRewrite(opt.value());
-    }
-
     // canonicalization rule
     TVM_TRY_RECURSIVE_REWRITE(min(x, y) < z, x < z || y < z);
     TVM_TRY_RECURSIVE_REWRITE(max(x, y) < z, x < z && y < z);
@@ -1704,6 +1700,14 @@ PrimExpr RewriteSimplifier::Impl::ApplyRewriteRules(LT ret) {
     TVM_TRY_RECURSIVE_REWRITE(x + c1 < c2, x < c2 - c1);
     TVM_TRY_RECURSIVE_REWRITE(x - c1 < c2, x < c2 + c1);
     TVM_TRY_REWRITE(x - c1 < 0, x < c1);
+
+    if(auto opt = TryFindExpressionExtrema(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
+
+    if (auto opt = TryFindTwoValueTerms(ret)) {
+      return RecursiveRewrite(opt.value());
+    }
 
     if (auto opt = TryUnwrapFloorMod(ret)) {
       return RecursiveRewrite(opt.value());
@@ -1915,21 +1919,34 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr re
   return wrapped_condition;
 }
 
-Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(EQ ret) {
+Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(PrimExpr ret) {
+  enum class Pattern {
+    Equal,
+    UpperBound,
+    LowerBound,
+  } pattern;
+
   PVar<IntImm> c1;
   PVar<PrimExpr> x;
 
-  PrimExpr sum_expr;
   IntImm bound_value;
   if ((x == c1).Match(ret) || (c1 == x).Match(ret)) {
-    sum_expr = x.Eval();
+    pattern = Pattern::Equal;
     bound_value = c1.Eval();
   } else if ((x == 0 - c1).Match(ret) || (x + c1 == 0).Match(ret)) {
-    sum_expr = x.Eval();
+    pattern = Pattern::Equal;
     bound_value = IntImm(c1.Eval()->dtype, -c1.Eval()->value);
+  } else if ((x < c1).Match(ret)) {
+    pattern = Pattern::UpperBound;
+    bound_value = c1.Eval();
+  } else if ((c1 < x).Match(ret)) {
+    pattern = Pattern::LowerBound;
+    bound_value = c1.Eval();
   } else {
     return NullOpt;
   }
+
+  PrimExpr sum_expr = x.Eval();
 
   std::vector<Term> sum = Term::Collect(sum_expr, analyzer_);
 
@@ -1976,7 +1993,19 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(EQ ret) {
 
   PrimExpr output = Bool(false);
   for (const auto& [offset, cond] : offsets) {
-    output = output || (cond && (remainder == bound_value - IntImm(bound_value->dtype, offset)));
+    PrimExpr new_bound = bound_value - IntImm(bound_value->dtype, offset);
+
+    PrimExpr new_cond;
+    if (pattern == Pattern::Equal) {
+      new_cond = (remainder == new_bound);
+    } else if (pattern == Pattern::LowerBound) {
+      new_cond = (new_bound < remainder);
+    } else if (pattern == Pattern::UpperBound) {
+      new_cond = (remainder < new_bound);
+    } else {
+      LOG(FATAL) << "Internal error, unknown value " << static_cast<int>(pattern) << " for pattern";
+    }
+    output = output || (cond && new_cond);
   }
   return output;
 }
