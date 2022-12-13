@@ -182,6 +182,7 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
   Optional<PrimExpr> TryFindExpressionExtrema(PrimExpr node);
   Optional<PrimExpr> TryFindTwoValueTerms(PrimExpr node);
   Optional<PrimExpr> TryUnwrapFloorMod(PrimExpr node);
+  Optional<PrimExpr> TryMergeConstIntBounds(PrimExpr node);
 
   // Whether x >= val
   bool CanProveGreaterEqual(const PrimExpr& x, int64_t val) {

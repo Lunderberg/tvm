@@ -2124,6 +2124,86 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryUnwrapFloorMod(PrimExpr expr) {
   return NullOpt;
 }
 
+Optional<PrimExpr> RewriteSimplifier::Impl::TryMergeConstIntBounds(PrimExpr ret) {
+  auto* as_or = ret.as<OrNode>();
+  if (!as_or) {
+    return NullOpt;
+  }
+
+  PVar<PrimExpr> x;
+  PVar<IntImm> c1, c2;
+
+  Optional<PrimExpr> expr = NullOpt;
+  auto is_same_expr = [&expr](const PrimExpr& new_expr) -> bool {
+    if (expr.defined()) {
+      return StructuralEqual()(expr.value(), new_expr);
+    } else {
+      expr = new_expr;
+      return true;
+    }
+  };
+
+  std::optional<int64_t> upper_bound = std::nullopt;
+  std::vector<int64_t> equality_bounds;
+  std::optional<int64_t> lower_bound = std::nullopt;
+
+  for (const auto& subexpr : {as_or->a, as_or->b}) {
+    if ((x < c1).Match(subexpr)) {
+      if (is_same_expr(x.Eval())) {
+        upper_bound = c1.Eval()->value - 1;
+      } else {
+        break;
+      }
+    } else if ((x <= c1).Match(subexpr)) {
+      if (is_same_expr(x.Eval())) {
+        upper_bound = c1.Eval()->value;
+      } else {
+        break;
+      }
+    } else if ((c1 < x).Match(subexpr)) {
+      if (is_same_expr(x.Eval())) {
+        lower_bound = c1.Eval()->value + 1;
+      } else {
+        break;
+      }
+    } else if ((c1 <= x).Match(subexpr)) {
+      if (is_same_expr(x.Eval())) {
+        lower_bound = c1.Eval()->value;
+      } else {
+        break;
+      }
+    } else if ((x == c1).Match(subexpr)) {
+      if (is_same_expr(x.Eval())) {
+        equality_bounds.push_back(c1.Eval()->value);
+      } else {
+        break;
+      }
+    }
+  }
+
+  if (upper_bound && lower_bound && *upper_bound + 2 == *lower_bound) {
+    return expr.value() != IntImm(expr.value()->dtype, *upper_bound + 1);
+  } else if (*lower_bound && equality_bounds.size() && *lower_bound - 2 == equality_bounds[0]) {
+    auto bounds = analyzer_->const_int_bound(expr.value());
+    if (bounds->min_value == equality_bounds[0]) {
+      return expr.value() != IntImm(expr.value()->dtype, *lower_bound - 1);
+    }
+  } else if (*upper_bound && equality_bounds.size() && *upper_bound + 2 == equality_bounds[0]) {
+    auto bounds = analyzer_->const_int_bound(expr.value());
+    if (bounds->max_value == equality_bounds[0]) {
+      return expr.value() != IntImm(expr.value()->dtype, *upper_bound + 1);
+    }
+  } else if (equality_bounds.size() == 2) {
+    std::sort(equality_bounds.begin(), equality_bounds.end());
+    auto bounds = analyzer_->const_int_bound(expr.value());
+    if (bounds->min_value == equality_bounds[0] && bounds->max_value == equality_bounds[1]) {
+      return const_true();
+    }
+  }
+
+  return NullOpt;
+}
+
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
   Not ret = Downcast<Not>(IRMutatorWithAnalyzer::VisitExpr_(op));
   if (auto const_res = TryConstFold<Not>(ret->a)) return const_res.value();
@@ -2373,6 +2453,10 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const OrNode* op) {
   TVM_TRY_REWRITE(y < x || x <= y, ctrue);
 
   TVM_TRY_REWRITE(x < y || y < x, x != y);
+
+  if (auto opt = TryMergeConstIntBounds(ret)) {
+    return opt.value();
+  }
 
   TVM_TRY_REWRITE_IF(x < c1 || c2 < x, ctrue, c2.Eval()->value < c1.Eval()->value);
   TVM_TRY_REWRITE_IF(c2 < x || x < c1, ctrue, c2.Eval()->value < c1.Eval()->value);
