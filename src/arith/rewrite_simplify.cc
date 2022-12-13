@@ -1842,10 +1842,12 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindExpressionExtrema(PrimExpr re
                *lower_bound <= *sum_min + term.scale) {
       ICHECK(term.expr_min);
       remember_or_condition(IntImm(term.expr.dtype(), *term.expr_min) < term.expr);
+      *upper_bound -= *term.expr_min * term.scale;
     } else if (term.scale > 0 && upper_bound && sum_min && *sum_min < *upper_bound &&
                *upper_bound <= *sum_min + term.scale) {
       ICHECK(term.expr_min);
       remember_and_condition(term.expr == IntImm(term.expr.dtype(), *term.expr_min));
+      *upper_bound -= *term.expr_min * term.scale;
     } else if (term.scale > 0 && lower_bound && sum_max && *sum_max - term.scale < *lower_bound &&
                *lower_bound <= *sum_max) {
       ICHECK(term.expr_max);
@@ -1927,9 +1929,9 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(PrimExpr ret) {
   } pattern;
 
   PVar<IntImm> c1;
-  PVar<PrimExpr> x;
+  PVar<PrimExpr> x, y;
 
-  IntImm bound_value;
+  PrimExpr bound_value;
   if ((x == c1).Match(ret) || (c1 == x).Match(ret)) {
     pattern = Pattern::Equal;
     bound_value = c1.Eval();
@@ -1942,6 +1944,18 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryFindTwoValueTerms(PrimExpr ret) {
   } else if ((c1 < x).Match(ret)) {
     pattern = Pattern::LowerBound;
     bound_value = c1.Eval();
+  } else if ((x == y).Match(ret) && !y.Eval().as<AddNode>() && !y.Eval().as<FloorDivNode>()) {
+    pattern = Pattern::Equal;
+    bound_value = y.Eval();
+  } else if ((y == x).Match(ret) && !y.Eval().as<AddNode>() && !y.Eval().as<FloorDivNode>()) {
+    pattern = Pattern::Equal;
+    bound_value = y.Eval();
+  } else if ((x < y).Match(ret) && !y.Eval().as<AddNode>() && !y.Eval().as<FloorDivNode>()) {
+    pattern = Pattern::UpperBound;
+    bound_value = y.Eval();
+  } else if ((y < x).Match(ret) && !y.Eval().as<AddNode>() && !y.Eval().as<FloorDivNode>()) {
+    pattern = Pattern::LowerBound;
+    bound_value = y.Eval();
   } else {
     return NullOpt;
   }
@@ -2020,55 +2034,91 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryUnwrapFloorMod(PrimExpr expr) {
   // Subexpressions already simplified by the time TryUnwrapFloorMod
   // has been called, with `a <= b` being simplified as `not (b < a)`.
   // Therefore, we only need to handle EQ and LT here.
+  std::optional<int64_t> int_bound = std::nullopt;
+  PrimExpr bound;
   PVar<IntImm> c1, c2;
-  PVar<PrimExpr> x;
-  if ((floormod(x, c1) == c2).Match(expr)) {
+  PVar<PrimExpr> x, y;
+  if ((floormod(x, c1) == y).Match(expr)) {
     pattern = Pattern::Equal;
+    bound = y.Eval();
   } else if ((floormod(x, c1) < c2).Match(expr)) {
     pattern = Pattern::UpperBound;
+    bound = c2.Eval();
+    int_bound = c2.Eval()->value;
   } else if ((c2 < floormod(x, c1)).Match(expr)) {
     pattern = Pattern::LowerBound;
+    bound = c2.Eval();
+    int_bound = c2.Eval()->value;
+  } else if ((floormod(x, c1) < y).Match(expr) && !y.Eval().as<FloorModNode>()) {
+    pattern = Pattern::UpperBound;
+    bound = y.Eval();
+  } else if ((y < floormod(x, c1)).Match(expr) && !y.Eval().as<FloorModNode>()) {
+    pattern = Pattern::LowerBound;
+    bound = y.Eval();
   } else {
     return NullOpt;
   }
 
   PrimExpr arg = x.Eval();
   IntImm denominator = c1.Eval();
-  IntImm bound = c2.Eval();
+
   ConstIntBound arg_bounds = analyzer_->const_int_bound(arg);
 
-  if (arg_bounds->min_value == ConstIntBoundNode::kNegInf ||
-      arg_bounds->max_value == ConstIntBound::kPosInf ||
-      arg_bounds->max_value - arg_bounds->min_value >= denominator->value) {
-    return NullOpt;
+  if (arg_bounds->min_value != ConstIntBoundNode::kNegInf ||
+      arg_bounds->max_value != ConstIntBound::kPosInf ||
+      arg_bounds->max_value - arg_bounds->min_value < denominator->value) {
+    // If we reached this point, the floormod's range is no greater than
+    // the argument's range, and so the floormod is bijective.
+    // Therefore, we may be able to rewrite the condition to remove the
+    // floormod altogether.
+    IntImm arg_min(arg->dtype, arg_bounds->min_value);
+
+    auto make_bound = [&](PrimExpr bound) {
+      return bound + denominator * ceildiv(arg_min - bound, denominator);
+    };
+    if (pattern == Pattern::Equal) {
+      // (x % c1 == c2) => (x == c2 + N * c1)
+      return (arg == make_bound(bound));
+    } else if (pattern == Pattern::LowerBound && int_bound && *int_bound == 0) {
+      // (x % c1 > 0) => (x % c1 != 0) => (x != N * c1)
+      return (arg != make_bound(bound));
+    } else if (pattern == Pattern::UpperBound && int_bound &&
+               *int_bound + 1 == denominator->value) {
+      // (x % c1 < (c1-1)) => (x%c1 != (c1-1)) => (x != (c1-1) + N * c1)
+      return (arg != make_bound(bound));
+    }
+
+    if (pattern == Pattern::LowerBound && int_bound && *int_bound + 2 == denominator->value) {
+      // (x % c1 > (c1-2)) => (x % c1 == (c1-1)) => (x == (c1-1) + N * c1)
+      return (arg == make_bound(bound + 1));
+    } else if (pattern == Pattern::UpperBound && int_bound && *int_bound == 1) {
+      // (x % c1 < 1) => (x%c1 == 1) => (x == 1 + N * c1)
+      return (arg == make_bound(IntImm(arg->dtype, 0)));
+    }
   }
 
-  IntImm arg_min(arg->dtype, arg_bounds->min_value);
-
-  // If we reached this point, the floormod's range is no greater than
-  // the argument's range, and so the floormod is bijective.
-  // Therefore, we may be able to rewrite the condition to remove the
-  // floormod altogether.
-  auto make_bound = [&](PrimExpr bound) {
-    return bound + denominator * ceildiv(arg_min - bound, denominator);
-  };
-  if (pattern == Pattern::Equal) {
-    // (x % c1 == c2) => (x == c2 + N * c1)
-    return (arg == make_bound(bound));
-  } else if (pattern == Pattern::LowerBound && bound->value == 0) {
-    // (x % c1 > 0) => (x % c1 != 0) => (x != N * c1)
-    return (arg != make_bound(bound));
-  } else if (pattern == Pattern::UpperBound && bound->value + 1 == denominator->value) {
-    // (x % c1 < (c1-1)) => (x%c1 != (c1-1)) => (x != (c1-1) + N * c1)
-    return (arg != make_bound(bound));
-  }
-
-  if (pattern == Pattern::LowerBound && bound->value + 2 == denominator->value) {
-    // (x % c1 > (c1-2)) => (x % c1 == (c1-1)) => (x == (c1-1) + N * c1)
-    return (arg == make_bound(bound + 1));
-  } else if (pattern == Pattern::UpperBound && bound->value == 1) {
-    // (x % c1 < 1) => (x%c1 == 1) => (x == 1 + N * c1)
-    return (arg == make_bound(IntImm(arg->dtype, 0)));
+  auto div_min = floordiv(arg_bounds->min_value, denominator->value);
+  auto div_max = floordiv(arg_bounds->max_value, denominator->value);
+  if (div_min + 1 == div_max) {
+    // This isn't as clean of a rewrite as the previous, but iteration
+    // in fused loops often results in this case when checking for
+    // overflow into the next iterator being fused.
+    //
+    // If the floormod's output consists of two monotonic regions, it
+    // may be cleaner to express as a conditional, as the bounds may
+    // be used for further simplifications.
+    IntImm offset_low(denominator->dtype, div_min * denominator->value);
+    IntImm offset_high(denominator->dtype, div_max * denominator->value);
+    if (pattern == Pattern::Equal) {
+      return (arg < offset_high && arg - offset_low == bound) ||
+             (offset_high <= arg && arg - offset_high == bound);
+    } else if (pattern == Pattern::UpperBound) {
+      return (arg < offset_high && arg - offset_low < bound) ||
+             (offset_high <= arg && arg - offset_high < bound);
+    } else if (pattern == Pattern::LowerBound) {
+      return (arg < offset_high && bound < arg - offset_low) ||
+             (offset_high <= arg && bound < arg - offset_high);
+    }
   }
 
   return NullOpt;
