@@ -2268,6 +2268,35 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryMergeConstIntBounds(PrimExpr ret)
         }
       }
 
+      if (inequality_bounds.size()) {
+        if (unique_equalities.count(inequality_bounds[0])) {
+          // (x != c) || (x == c) => true
+          is_unconditionally_true = true;
+        } else {
+          // (x != c1) || (x == c2) => (x != c1)
+          unique_equalities.clear();
+        }
+      }
+
+      if (upper_bounds.size() && inequality_bounds.size()) {
+        if (inequality_bounds[0] < upper_bounds[0]) {
+          // (x != c1) || (x < c2) => true, when c1 < c2
+          is_unconditionally_true = true;
+        } else {
+          // (x != c1) || (x < c2) => (x != c2), when c1 >= c2
+          upper_bounds = {};
+        }
+      }
+      if (lower_bounds.size() && inequality_bounds.size()) {
+        if (lower_bounds[0] < inequality_bounds[0]) {
+          // (x != c1) || (c2 < x) => true, when c2 < c1
+          is_unconditionally_true = true;
+        } else {
+          // (x != c1) || (c2 < x) => (x != c2), when c2 >= c1
+          lower_bounds = {};
+        }
+      }
+
       equality_bounds = std::vector<int64_t>(unique_equalities.begin(), unique_equalities.end());
       std::sort(equality_bounds.begin(), equality_bounds.end());
 
