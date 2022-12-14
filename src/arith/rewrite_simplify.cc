@@ -2125,83 +2125,237 @@ Optional<PrimExpr> RewriteSimplifier::Impl::TryUnwrapFloorMod(PrimExpr expr) {
 }
 
 Optional<PrimExpr> RewriteSimplifier::Impl::TryMergeConstIntBounds(PrimExpr ret) {
-  auto* as_or = ret.as<OrNode>();
-  if (!as_or) {
+  if (!ret.as<OrNode>()) {
     return NullOpt;
   }
 
-  PVar<PrimExpr> x;
-  PVar<IntImm> c1, c2;
+  struct ExprInfo {
+    bool is_unconditionally_true{false};
+    std::vector<int64_t> equality_bounds;
+    std::vector<int64_t> inequality_bounds;
+    std::vector<int64_t> upper_bounds;
+    std::vector<int64_t> lower_bounds;
 
-  Optional<PrimExpr> expr = NullOpt;
-  auto is_same_expr = [&expr](const PrimExpr& new_expr) -> bool {
-    if (expr.defined()) {
-      return StructuralEqual()(expr.value(), new_expr);
-    } else {
-      expr = new_expr;
-      return true;
+    // Simplifies the OR of all bounds.  Returns true if any
+    // simplifications are made.
+    bool Simplify(ConstIntBound expr_bounds) {
+      std::sort(equality_bounds.begin(), equality_bounds.end());
+      std::sort(inequality_bounds.begin(), inequality_bounds.end());
+      std::sort(lower_bounds.begin(), lower_bounds.end());
+      std::sort(upper_bounds.begin(), upper_bounds.end());
+
+      ExprInfo before_simplify = *this;
+
+      std::unordered_set<int64_t> unique_equalities(equality_bounds.begin(), equality_bounds.end());
+
+      if (upper_bounds.size() > 1) {
+        // (x < c1) || (x < c2) => x < max(c1,c2)
+        int64_t max_val = upper_bounds[upper_bounds.size() - 1];
+        upper_bounds = {max_val};
+      }
+
+      if (lower_bounds.size() > 1) {
+        // (c1 < x) || (c2 < x) => min(c1,c2) < x
+        int64_t max_val = lower_bounds[0];
+        lower_bounds = {max_val};
+      }
+
+      auto get_lower_bound = [&]() { return (lower_bounds.empty()) ? nullptr : &lower_bounds[0]; };
+      auto get_upper_bound = [&]() { return (upper_bounds.empty()) ? nullptr : &upper_bounds[0]; };
+
+      {
+        // These two changes are reversed later, if nothing has
+        // altered them in the meantime.  By representing an equality
+        // at the edge of the allowed values as an inequality, the
+        // merging of inequalities with adjacent equalities does not
+        // need any special logic to handle the known const-int
+        // bounds.
+        if (!get_upper_bound()) {
+          if (unique_equalities.count(expr_bounds->min_value)) {
+            // (x == c) => (x < c+1), if it is known that (c <= x)
+            upper_bounds.push_back(expr_bounds->min_value + 1);
+          }
+        }
+
+        if (!get_lower_bound()) {
+          if (unique_equalities.count(expr_bounds->max_value)) {
+            // (x == c) => (c-1 < x), if it is known that (x <= c)
+            lower_bounds.push_back(expr_bounds->max_value - 1);
+          }
+        }
+      }
+
+      // (x < c) || (x == c) => (x < c+1)
+      if (auto upper_bound = get_upper_bound()) {
+        while (true) {
+          if (auto it = unique_equalities.find(*upper_bound); it != unique_equalities.end()) {
+            (*upper_bound)++;
+          } else {
+            break;
+          }
+        }
+      }
+
+      // (c < x) || (x == c) => (c-1 < x)
+      if (auto lower_bound = get_lower_bound()) {
+        while (true) {
+          if (auto it = unique_equalities.find(*lower_bound); it != unique_equalities.end()) {
+            (*lower_bound)--;
+          } else {
+            break;
+          }
+        }
+      }
+
+      if (auto upper_bound = get_upper_bound()) {
+        if (auto lower_bound = get_lower_bound()) {
+          if (*upper_bound < *lower_bound) {
+            // (x < c1) || (c2 < x) => true, if (c1 < c2)
+            is_unconditionally_true = true;
+            upper_bounds = {};
+            lower_bounds = {};
+          } else if (*upper_bound == *lower_bound) {
+            // (c < x) || (x < c) => (x!=c)
+            inequality_bounds.push_back(*upper_bound);
+            upper_bounds = {};
+            lower_bounds = {};
+          }
+        }
+      }
+
+      // (x < c+1) => (x == c), if it is known that (c <= x)
+      if (auto* upper_bound = get_upper_bound()) {
+        if (*upper_bound - 1 == expr_bounds->min_value) {
+          unique_equalities.insert(expr_bounds->min_value);
+          upper_bounds = {};
+        }
+      }
+
+      // (c-1 < x) => (x == c), if it is known that (x <= c)
+      if (auto* lower_bound = get_lower_bound()) {
+        if (*lower_bound + 1 == expr_bounds->max_value) {
+          unique_equalities.insert(expr_bounds->max_value);
+          lower_bounds = {};
+        }
+      }
+
+      if (get_upper_bound() || get_lower_bound()) {
+        // (x < c1) || (x == c2) => (x < c1), if c2<c1
+        // (c1 < x) || (x == c2) => (c1 < x), if c1<c2
+        auto upper_bound = get_upper_bound();
+        auto lower_bound = get_lower_bound();
+        std::vector<int64_t> removable;
+        for (int64_t val : unique_equalities) {
+          if ((lower_bound && (*lower_bound < val)) || (upper_bound && (val < *upper_bound))) {
+            removable.push_back(val);
+          }
+        }
+
+        for (int64_t val : removable) {
+          unique_equalities.erase(val);
+        }
+      }
+
+      if (inequality_bounds.size() > 1) {
+        bool all_equal = std::all_of(inequality_bounds.begin() + 1, inequality_bounds.end(),
+                                     [&](int64_t val) { return val == inequality_bounds[0]; });
+        if (all_equal) {
+          // (x != c) || (x != c) => (x != c)
+          inequality_bounds.resize(1);
+        } else {
+          // (x != c1) || (x != c2) => true, when (c1 != c2)
+          is_unconditionally_true = true;
+        }
+      }
+
+      equality_bounds = std::vector<int64_t>(unique_equalities.begin(), unique_equalities.end());
+      std::sort(equality_bounds.begin(), equality_bounds.end());
+
+      return (is_unconditionally_true != before_simplify.is_unconditionally_true ||
+              equality_bounds != before_simplify.equality_bounds ||
+              inequality_bounds != before_simplify.inequality_bounds ||
+              upper_bounds != before_simplify.upper_bounds ||
+              lower_bounds != before_simplify.lower_bounds);
+    }
+
+    PrimExpr AsPrimExpr(PrimExpr expr) const {
+      if (is_unconditionally_true) {
+        return Bool(true);
+      }
+
+      auto as_int_imm = [&expr](int64_t val) { return IntImm(expr->dtype, val); };
+
+      PrimExpr output = Bool(false);
+      for (int64_t val : upper_bounds) {
+        output = output || (expr < as_int_imm(val));
+      }
+      for (int64_t val : inequality_bounds) {
+        output = output || (expr != as_int_imm(val));
+      }
+      for (int64_t val : equality_bounds) {
+        output = output || (expr == as_int_imm(val));
+      }
+      for (int64_t val : lower_bounds) {
+        output = output || (as_int_imm(val) < expr);
+      }
+      return output;
     }
   };
 
-  std::optional<int64_t> upper_bound = std::nullopt;
-  std::vector<int64_t> equality_bounds;
-  std::optional<int64_t> lower_bound = std::nullopt;
+  std::unordered_map<PrimExpr, ExprInfo, StructuralHash, StructuralEqual> expr_info;
+  std::vector<PrimExpr> other_components;
 
-  for (const auto& subexpr : {as_or->a, as_or->b}) {
-    if ((x < c1).Match(subexpr)) {
-      if (is_same_expr(x.Eval())) {
-        upper_bound = c1.Eval()->value - 1;
-      } else {
-        break;
-      }
-    } else if ((x <= c1).Match(subexpr)) {
-      if (is_same_expr(x.Eval())) {
-        upper_bound = c1.Eval()->value;
-      } else {
-        break;
-      }
-    } else if ((c1 < x).Match(subexpr)) {
-      if (is_same_expr(x.Eval())) {
-        lower_bound = c1.Eval()->value + 1;
-      } else {
-        break;
-      }
-    } else if ((c1 <= x).Match(subexpr)) {
-      if (is_same_expr(x.Eval())) {
-        lower_bound = c1.Eval()->value;
-      } else {
-        break;
-      }
-    } else if ((x == c1).Match(subexpr)) {
-      if (is_same_expr(x.Eval())) {
-        equality_bounds.push_back(c1.Eval()->value);
-      } else {
-        break;
-      }
+  std::vector<PrimExpr> to_unpack = {ret};
+
+  while (to_unpack.size()) {
+    PrimExpr unpacking = to_unpack.back();
+    to_unpack.pop_back();
+
+    PVar<PrimExpr> x, y;
+    PVar<IntImm> c1, c2;
+
+    if ((x || y).Match(unpacking)) {
+      to_unpack.push_back(y.Eval());
+      to_unpack.push_back(x.Eval());
+    } else if ((x < c1).Match(unpacking)) {
+      expr_info[x.Eval()].upper_bounds.push_back(c1.Eval()->value);
+    } else if ((x <= c1).Match(unpacking)) {
+      expr_info[x.Eval()].upper_bounds.push_back(c1.Eval()->value + 1);
+    } else if ((c1 < x).Match(unpacking)) {
+      expr_info[x.Eval()].lower_bounds.push_back(c1.Eval()->value);
+    } else if ((c1 <= x).Match(unpacking)) {
+      expr_info[x.Eval()].lower_bounds.push_back(c1.Eval()->value - 1);
+    } else if ((x == c1).Match(unpacking)) {
+      expr_info[x.Eval()].equality_bounds.push_back(c1.Eval()->value);
+    } else if ((x != c1).Match(unpacking)) {
+      expr_info[x.Eval()].inequality_bounds.push_back(c1.Eval()->value);
+    } else {
+      other_components.push_back(unpacking);
     }
   }
 
-  if (upper_bound && lower_bound && *upper_bound + 2 == *lower_bound) {
-    return expr.value() != IntImm(expr.value()->dtype, *upper_bound + 1);
-  } else if (*lower_bound && equality_bounds.size() && *lower_bound - 2 == equality_bounds[0]) {
-    auto bounds = analyzer_->const_int_bound(expr.value());
-    if (bounds->min_value == equality_bounds[0]) {
-      return expr.value() != IntImm(expr.value()->dtype, *lower_bound - 1);
-    }
-  } else if (*upper_bound && equality_bounds.size() && *upper_bound + 2 == equality_bounds[0]) {
-    auto bounds = analyzer_->const_int_bound(expr.value());
-    if (bounds->max_value == equality_bounds[0]) {
-      return expr.value() != IntImm(expr.value()->dtype, *upper_bound + 1);
-    }
-  } else if (equality_bounds.size() == 2) {
-    std::sort(equality_bounds.begin(), equality_bounds.end());
-    auto bounds = analyzer_->const_int_bound(expr.value());
-    if (bounds->min_value == equality_bounds[0] && bounds->max_value == equality_bounds[1]) {
-      return const_true();
-    }
+  if (expr_info.empty()) {
+    return NullOpt;
   }
 
-  return NullOpt;
+  bool made_simplification = false;
+  for (auto& [expr, info] : expr_info) {
+    if (info.Simplify(analyzer_->const_int_bound(expr))) {
+      made_simplification = true;
+    }
+  }
+  if (made_simplification) {
+    PrimExpr output = Bool(false);
+    for (const auto& [expr, info] : expr_info) {
+      output = output || info.AsPrimExpr(expr);
+    }
+    for (const auto& component : other_components) {
+      output = output || component;
+    }
+    return output;
+  } else {
+    return NullOpt;
+  }
 }
 
 PrimExpr RewriteSimplifier::Impl::VisitExpr_(const NotNode* op) {
