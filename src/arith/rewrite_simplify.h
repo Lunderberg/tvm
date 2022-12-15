@@ -119,6 +119,55 @@ class RewriteSimplifier::Impl : public IRMutatorWithAnalyzer {
    */
   bool recursively_visiting_boolean_{false};
 
+  class OverrideBoolContext {
+   public:
+    OverrideBoolContext(bool* value_ptr, bool override_value)
+        : value_(*value_ptr), cache_(*value_ptr) {
+      value_ = override_value;
+    }
+
+    ~OverrideBoolContext() { value_ = cache_; }
+
+    OverrideBoolContext(const OverrideBoolContext&) = delete;
+    OverrideBoolContext& operator=(const OverrideBoolContext&) = delete;
+
+   private:
+    bool& value_;
+    bool cache_;
+  };
+
+  class VisitBoolContext {
+   public:
+    VisitBoolContext(RewriteSimplifier::Impl* self)
+        : self_(self), cache_(self->recursively_visiting_boolean_) {
+      self_->recursively_visiting_boolean_ = true;
+    }
+    ~VisitBoolContext() { self_->recursively_visiting_boolean_ = cache_; }
+
+    VisitBoolContext(const VisitBoolContext&) = delete;
+    VisitBoolContext& operator=(const VisitBoolContext&) = delete;
+
+   private:
+    RewriteSimplifier::Impl* self_;
+    bool cache_;
+  };
+
+  class SuppressRewriteOfConstraints {
+   public:
+    SuppressRewriteOfConstraints(RewriteSimplifier::Impl* self)
+        : self_(self), cache_(self->rewrite_constraints_) {
+      self_->rewrite_constraints_ = true;
+    }
+    ~SuppressRewriteOfConstraints() { self_->rewrite_constraints_ = cache_; }
+
+    SuppressRewriteOfConstraints(const SuppressRewriteOfConstraints&) = delete;
+    SuppressRewriteOfConstraints& operator=(const SuppressRewriteOfConstraints&) = delete;
+
+   private:
+    RewriteSimplifier::Impl* self_;
+    bool cache_;
+  };
+
   // maximum number of recursion allowed during a single pass.
   static const constexpr int kMaxRecurDepth = 5;
 

@@ -318,6 +318,17 @@ class RewriteSimplifier {
      *   (n < 10) || (n < 5) => (n < 5)
      */
     kApplyConstraintsToBooleanBranches = (1 << 2),
+
+    /* Within an externally applied constraint, a variable may be
+     * known to be a specific value.  This may be useful for further
+     * simplifications, but may also result in increased branch
+     * divergence.
+     *
+     * Example:
+     *   With<ConstraintContext> context(&analyzer, i==0);
+     *   A[i] => A[0]
+     */
+    kInlineConstrainedIntegerVariables = (1 << 3),
   };
 
   /*! \brief Enable an optional extension or extensions

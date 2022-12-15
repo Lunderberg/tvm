@@ -938,6 +938,17 @@ PrimExpr CanonicalSimplifier::Impl::VisitExpr_(const FloorDivNode* op) {
         lhs.CopyOnWrite()->DivideBy(cval);
         return std::move(lhs);
       }
+
+      // Simplify the offset constant to be in the range [0,cval).
+      // This parallels the simplifications done for the FloorModNode,
+      // to avoid breaking rewrites that look for identical arguments
+      // in mod/div (e.g. B*floordiv(A,B)+floormod(A,B) => A).
+      //
+      // For example, floordiv(x - 5, 3) => floordiv(x + 1) - 2
+      int64_t new_base = floormod(extra->base, cval);
+      lhs.CopyOnWrite()->base += (extra->base - new_base);
+      extra.CopyOnWrite()->base = new_base;
+
       // continue simplification.
       lhs.CopyOnWrite()->DivideBy(cval);
       PrimExpr temp = Normalize(extra);

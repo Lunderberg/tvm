@@ -246,11 +246,18 @@ TVM_REGISTER_NODE_TYPE(AddNode);
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<AddNode>([](const ObjectRef& node, ReprPrinter* p) {
-      auto* op = static_cast<const AddNode*>(node.get());
+      std::function<void(const PrimExpr&)> print_inner = [&](const PrimExpr& lhs) {
+        if (const auto* as_add_node = lhs.as<AddNode>()) {
+          print_inner(as_add_node->a);
+          p->stream << " + ";
+          p->Print(as_add_node->b);
+        } else {
+          p->Print(lhs);
+        }
+      };
+
       p->stream << '(';
-      p->Print(op->a);
-      p->stream << " + ";
-      p->Print(op->b);
+      print_inner(Downcast<PrimExpr>(node));
       p->stream << ')';
     });
 
@@ -284,11 +291,18 @@ TVM_REGISTER_NODE_TYPE(MulNode);
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<MulNode>([](const ObjectRef& node, ReprPrinter* p) {
-      auto* op = static_cast<const MulNode*>(node.get());
+      std::function<void(const PrimExpr&)> print_inner = [&](const PrimExpr& lhs) {
+        if (const auto* as_mul_node = lhs.as<MulNode>()) {
+          print_inner(as_mul_node->a);
+          p->stream << "*";
+          p->Print(as_mul_node->b);
+        } else {
+          p->Print(lhs);
+        }
+      };
+
       p->stream << '(';
-      p->Print(op->a);
-      p->stream << "*";
-      p->Print(op->b);
+      print_inner(Downcast<PrimExpr>(node));
       p->stream << ')';
     });
 
@@ -536,11 +550,18 @@ TVM_REGISTER_NODE_TYPE(AndNode);
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<AndNode>([](const ObjectRef& node, ReprPrinter* p) {
-      auto* op = static_cast<const AndNode*>(node.get());
+      std::function<void(const PrimExpr&)> print_inner = [&](const PrimExpr& lhs) {
+        if (const auto* as_and_node = lhs.as<AndNode>()) {
+          print_inner(as_and_node->a);
+          p->stream << " && ";
+          p->Print(as_and_node->b);
+        } else {
+          p->Print(lhs);
+        }
+      };
+
       p->stream << '(';
-      p->Print(op->a);
-      p->stream << " && ";
-      p->Print(op->b);
+      print_inner(Downcast<PrimExpr>(node));
       p->stream << ')';
     });
 
@@ -568,11 +589,18 @@ TVM_REGISTER_NODE_TYPE(OrNode);
 
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<OrNode>([](const ObjectRef& node, ReprPrinter* p) {
-      auto* op = static_cast<const OrNode*>(node.get());
+      std::function<void(const PrimExpr&)> print_inner = [&](const PrimExpr& lhs) {
+        if (const auto* as_or_node = lhs.as<OrNode>()) {
+          print_inner(as_or_node->a);
+          p->stream << " || ";
+          p->Print(as_or_node->b);
+        } else {
+          p->Print(lhs);
+        }
+      };
+
       p->stream << '(';
-      p->Print(op->a);
-      p->stream << " || ";
-      p->Print(op->b);
+      print_inner(Downcast<PrimExpr>(node));
       p->stream << ')';
     });
 

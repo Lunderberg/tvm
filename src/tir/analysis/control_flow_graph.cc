@@ -47,6 +47,7 @@
 #include "../../arith/ir_visitor_with_analyzer.h"
 #include "../../arith/narrow_predicate_expression.h"
 #include "../../arith/pattern_match.h"
+#include "../../arith/rewrite_simplify.h"
 #include "../../arith/unwrap_vector_expr.h"
 #include "../../support/debug_timer.h"
 
@@ -122,7 +123,7 @@ PrimExpr BufferTouch::BeforeLoopIteration() const {
   for (auto it = loop_var_expressions.rbegin(); it != loop_var_expressions.rend(); it++) {
     const Var& loop_var = it->first;
     const PrimExpr& loop_expr = it->second;
-    loop_predicate = (loop_var <= loop_expr) || ((loop_var == loop_expr) && loop_predicate);
+    loop_predicate = (loop_var < loop_expr) || ((loop_var == loop_expr) && loop_predicate);
   }
   return loop_predicate;
 }
@@ -142,7 +143,7 @@ PrimExpr BufferTouch::AfterLoopIteration() const {
   for (auto it = loop_var_expressions.rbegin(); it != loop_var_expressions.rend(); it++) {
     const Var& loop_var = it->first;
     const PrimExpr& loop_expr = it->second;
-    loop_predicate = (loop_var >= loop_expr) || ((loop_var == loop_expr) && loop_predicate);
+    loop_predicate = (loop_var > loop_expr) || ((loop_var == loop_expr) && loop_predicate);
   }
   return loop_predicate;
 }
@@ -406,6 +407,8 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
 
       while (auto* loop_body = body.as<ForNode>()) {
         loopnest.push_back(loop_body);
+        out_->iterator_ranges_.Set(loop_body->loop_var,
+                                   Range::FromMinExtent(loop_body->min, loop_body->extent));
         body = loop_body->body;
       }
 
@@ -430,7 +433,7 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
     Map<Var, PrimExpr> last_iter_remap;
 
     for (const ForNode* loop : loopnest) {
-      PrimExpr max_iterator_value = analyzer_.Simplify(op->min + op->extent - 1);
+      PrimExpr max_iterator_value = analyzer_.Simplify(loop->min + loop->extent - 1);
       first_loopnest_iter = first_loopnest_iter && (loop->loop_var == loop->min);
       last_loopnest_iter = last_loopnest_iter && (loop->loop_var == max_iterator_value);
       first_iter_remap.Set(loop->loop_var, loop->min);
@@ -571,9 +574,12 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
   void VisitAccess(const BufferAccess& node, BufferTouch::AccessType touch_type,
                    PrimExpr known_value_expr) {
     auto& current_block = out_->control_flow_.back();
-    BufferTouch buffer_touch = current_block.MakeBufferTouch(out_, node->buffer, node->indices,
-                                                             touch_type, known_value_expr);
-    current_block.touch_points.push_back(buffer_touch);
+    std::vector<BufferTouch> buffer_touches = current_block.MakeBufferTouch(
+        out_, node->buffer, node->indices, touch_type, known_value_expr);
+
+    for (const auto& buffer_touch : buffer_touches) {
+      current_block.touch_points.push_back(buffer_touch);
+    }
   }
 
   /*! \brief Return a predicate for having reached the current
@@ -733,12 +739,115 @@ class ControlFlowGraphBuilder final : public IRVisitorWithAnalyzer {
   ControlFlowGraph* out_;
 };
 
-std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(
-    const tir::Buffer& buf, Array<Var> index_variables, Array<PrimExpr> indices,
-    BufferTouch::AccessType touch_type, PrimExpr known_value_expr) const {
+class IfThenElseCollector : public ExprMutator {
+ public:
+  /* \brief Hoist and collect tir::if_then_else conditionals
+   *
+   * \param expr The expression to be analyzed, which may contain
+   * tir::if_then_else.
+   *
+   * \param analyzer The analyzer to be used for simplification
+   *
+   * \returns A map from boolean expression to the value of the
+   * expression where that boolean expression is true.  The values of
+   * this Map may not contain tir::if_then_else.
+   */
+  static Map<PrimExpr, PrimExpr> Collect(PrimExpr expr, Analyzer* analyzer) {
+    IfThenElseCollector collector(analyzer);
+    expr = collector(expr);
+
+    if (collector.info_.has_value()) {
+      auto& info = *collector.info_;
+      Map<PrimExpr, PrimExpr> output;
+      for (const auto [cond, value] : info.replacements) {
+        output.Set(cond, analyzer->Simplify(Substitute(expr, {{info.dummy_var, value}})));
+      }
+      return output;
+    } else {
+      return {{Bool(true), expr}};
+    }
+  }
+
+ private:
+  IfThenElseCollector(Analyzer* analyzer) : analyzer_(analyzer) {}
+
+  PrimExpr VisitExpr_(const CallNode* op) {
+    if (op->op.same_as(tir::builtin::if_then_else())) {
+      PrimExpr cond = analyzer_->Simplify(op->args[0]);
+
+      const PrimExpr& then_expr = op->args[1];
+      const PrimExpr& else_expr = op->args[2];
+
+      if (is_one(cond)) {
+        return VisitExpr(then_expr);
+      } else if (is_zero(cond)) {
+        return VisitExpr(else_expr);
+      } else {
+        PrimExpr negation = analyzer_->Simplify(!cond);
+
+        Map<PrimExpr, PrimExpr> replacements;
+        for (auto [region_predicate, then_expr_region] : Collect(then_expr, analyzer_)) {
+          region_predicate = analyzer_->Simplify(cond && region_predicate);
+          if (!is_zero(region_predicate)) {
+            replacements.Set(region_predicate, then_expr_region);
+          }
+        }
+        for (auto [region_predicate, else_expr_region] : Collect(else_expr, analyzer_)) {
+          region_predicate = analyzer_->Simplify(cond && region_predicate);
+          if (!is_zero(region_predicate)) {
+            replacements.Set(region_predicate, else_expr_region);
+          }
+        }
+
+        Var dummy_var("dummy", op->dtype);
+
+        info_ = {dummy_var, replacements};
+        return std::move(dummy_var);
+      }
+    }
+
+    return ExprMutator::VisitExpr_(op);
+  }
+
+  struct IfThenElseInfo {
+    // The variable representing the tir::if_then_else CallNode to be replaced
+    Var dummy_var;
+
+    // A map defining the possible values of the tir::if_then_else
+    // CallNode.  Each key is a boolean expression, defining a region
+    // where that boolean is true.  Each value is the value taken by
+    // the expression when the boolean expression is true.
+    Map<PrimExpr, PrimExpr> replacements;
+  };
+
+  Analyzer* analyzer_;
+  std::optional<IfThenElseInfo> info_{std::nullopt};
+};
+
+std::pair<std::vector<BufferTouch>, Map<Var, Range>>
+ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(const tir::Buffer& buf,
+                                                    Array<Var> index_variables,
+                                                    Array<PrimExpr> indices,
+                                                    BufferTouch::AccessType touch_type,
+                                                    PrimExpr known_value_expr) const {
+  auto timer = DebugTimer("MakeBufferTouch")
+                   .always_print_short_timers()
+                   .on_start([&](auto& out) {
+                     out << "buf = " << buf->name << indices << " type = "
+                         << (touch_type == BufferTouch::AccessType::Read     ? "Read"
+                             : touch_type == BufferTouch::AccessType::Write  ? "Write"
+                             : touch_type == BufferTouch::AccessType::Assume ? "Assume"
+                                                                             : "???");
+                   })
+                   .start();
+
   const auto& current_block = *this;
 
   Analyzer local_analyzer;
+  local_analyzer.rewrite_simplify.SetEnabledExtensions(arith::RewriteSimplifier::Extension(
+      arith::RewriteSimplifier::kTransitivelyProveInequalities |
+      arith::RewriteSimplifier::kConvertBooleanToAndOfOrs |
+      arith::RewriteSimplifier::kApplyConstraintsToBooleanBranches));
 
   Optional<Var> lane_var = NullOpt;
   IntImm num_lanes;
@@ -793,7 +902,8 @@ std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::Make
       std::accumulate(transform->dst->relations.begin(), transform->dst->relations.end(),
                       PrimExpr(Bool(true)), [](PrimExpr a, PrimExpr b) { return a && b; });
 
-  transform_predicate = SimplifyAsAndOfOrs(transform_predicate, &local_analyzer);
+  // transform_predicate = SimplifyAsAndOfOrs(transform_predicate, &local_analyzer);
+  transform_predicate = local_analyzer.Simplify(transform_predicate);
 
   auto find_removable_params = [&]() -> Map<Var, PrimExpr> {
     Map<Var, PrimExpr> removable_params;
@@ -840,8 +950,14 @@ std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::Make
   };
   for (auto removable_params = find_removable_params(); removable_params.size() > 0;
        removable_params = find_removable_params()) {
-    auto update = [&](const PrimExpr& expr) {
-      return local_analyzer.Simplify(Substitute(expr, removable_params));
+    auto update = [&](PrimExpr expr) {
+      auto timer = DebugTimer("Removing extent=1 parameters")
+                       .on_finish([before = expr, &expr](auto& out) {
+                         out << "Changed from " << before << " to " << expr;
+                       })
+                       .start();
+      expr = local_analyzer.Simplify(Substitute(expr, removable_params));
+      return expr;
     };
 
     Map<Var, PrimExpr> new_map;
@@ -859,6 +975,25 @@ std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::Make
     }
   }
 
+  {
+    auto timer = DebugTimer("Binding free parameters")
+                     .on_start([&](auto& out) { out << free_params; })
+                     .always_print_short_timers()
+                     .start();
+    local_analyzer.Bind(free_params);
+  }
+
+  // Collect the current loop variables, along with an expression for
+  // the loop variables in terms of the buffer axis variables.  This
+  // is used during forward/backward propagation to generate predicate
+  // tracking whether a loop iteration has been reached.
+  std::vector<std::pair<Var, PrimExpr>> loop_var_expressions;
+  for (const auto& entry : current_block.active_loop_iterators) {
+    auto expr_it = loop_var_to_axis_var.find(entry.loop_var);
+    ICHECK(expr_it != loop_var_to_axis_var.end());
+    loop_var_expressions.push_back({entry.loop_var, (*expr_it).second});
+  }
+
   // Normalization function, applied to both the predicate and the
   // known value.  Converts from an expression in terms of loop
   // iterators to an expression in terms of buffer indices.
@@ -873,17 +1008,6 @@ std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::Make
     return expr;
   };
 
-  // Collect the current loop variables, along with an expression for
-  // the loop variables in terms of the buffer axis variables.  This
-  // is used during forward/backward propagation to generate predicate
-  // tracking whether a loop iteration has been reached.
-  std::vector<std::pair<Var, PrimExpr>> loop_var_expressions;
-  for (const auto& entry : current_block.active_loop_iterators) {
-    auto expr_it = loop_var_to_axis_var.find(entry.loop_var);
-    ICHECK(expr_it != loop_var_to_axis_var.end());
-    loop_var_expressions.push_back({entry.loop_var, (*expr_it).second});
-  }
-
   // The full predicate is composed of the values required to reach
   // the scope of the BufferStore or builtin::assume(), any bounds
   // implied by solving for the axis variables, and any additional
@@ -892,50 +1016,100 @@ std::pair<BufferTouch, Map<Var, Range>> ControlFlowGraph::ControlFlowBlock::Make
   PrimExpr scope_predicate = normalize_expr(current_block.scope_predicate);
   transform_predicate = normalize_expr(transform_predicate);
 
-  known_value_expr = local_analyzer.Simplify(normalize_expr(known_value_expr));
+  // Map<PrimExpr, PrimExpr> regions = IfThenElseCollector::Collect(known_value_expr,
+  // &local_analyzer);
+  Map<PrimExpr, PrimExpr> regions = [&]() {
+    Map<PrimExpr, PrimExpr> regions;
+    auto timer = DebugTimer("Collecting IfThenElse regions")
+                     .always_print_short_timers()
+                     .on_finish([&regions](auto& out) { out << "regions = " << regions; })
+                     .start();
+    regions = IfThenElseCollector::Collect(known_value_expr, &local_analyzer);
+    return regions;
+  }();
 
-  // Deliberately use an analyzer without scope-based information,
-  // to avoid simplifying `scope_predicate` to True.
-  PrimExpr predicate_expr = transform_predicate && scope_predicate;
-  predicate_expr = RemoveLTNodes::Apply(predicate_expr);
-  predicate_expr = local_analyzer.Simplify(predicate_expr);
+  std::vector<BufferTouch> buffer_touches;
+  for (auto [region_predicate, region_known_value] : regions) {
+    // std::cout << "\t"
+    //           << "In region " << region_predicate << ", known value: " << region_known_value
+    //           << std::endl;
 
-  BufferTouch buffer_touch = {buf, predicate_expr, known_value_expr, loop_var_expressions,
-                              touch_type};
+    ICHECK_EQ(IfThenElseCollector::Collect(region_known_value, &local_analyzer).size(), 1);
 
-  return {buffer_touch, free_params};
+    {
+      auto timer = DebugTimer("Simplifying region-specific known value expr")
+                       .always_print_short_timers()
+                       .on_finish([before = region_known_value, &region_known_value](auto& out) {
+                         out << "Changed from " << before << " to " << region_known_value;
+                       })
+                       .start();
+      region_known_value = local_analyzer.Simplify(normalize_expr(region_known_value));
+    }
+
+    // Deliberately use an analyzer without scope-based information,
+    // to avoid simplifying `scope_predicate` to True.
+    PrimExpr predicate_expr = transform_predicate && scope_predicate && region_predicate;
+    predicate_expr = RemoveLTNodes::Apply(predicate_expr);
+    {
+      auto timer = DebugTimer("Simplifying predicate expr")
+
+                       .always_print_short_timers()
+                       .on_finish([before = predicate_expr, &predicate_expr](auto& out) {
+                         out << "Changed from " << before << " to " << predicate_expr;
+                       })
+                       .start();
+      predicate_expr = local_analyzer.Simplify(predicate_expr);
+    }
+
+    if (!is_zero(predicate_expr)) {
+      BufferTouch buffer_touch = {buf, predicate_expr, region_known_value, loop_var_expressions,
+                                  touch_type};
+      buffer_touches.push_back(buffer_touch);
+    }
+  }
+
+  return {buffer_touches, free_params};
 }
 
-BufferTouch ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(ControlFlowGraph* graph,
-                                                                const tir::Buffer& buf,
-                                                                const Array<PrimExpr>& indices,
-                                                                BufferTouch::AccessType touch_type,
-                                                                PrimExpr known_value_expr) const {
+std::vector<BufferTouch> ControlFlowGraph::ControlFlowBlock::MakeBufferTouch(
+    ControlFlowGraph* graph, const tir::Buffer& buf, const Array<PrimExpr>& indices,
+    BufferTouch::AccessType touch_type, PrimExpr known_value_expr) const {
   ICHECK(graph);
-  auto [buffer_touch, free_params] = MakeBufferTouch(buf, graph->GetIndexVariables(buf, indices),
-                                                     indices, touch_type, known_value_expr);
+  auto [buffer_touches, free_params] = MakeBufferTouch(buf, graph->GetIndexVariables(buf, indices),
+                                                       indices, touch_type, known_value_expr);
   for (const auto& pair : free_params) {
     graph->free_predicate_parameters_.Set(pair.first, pair.second);
   }
-  return buffer_touch;
+  return buffer_touches;
 }
 
 ControlFlowGraph::ControlFlowGraph(const tir::Stmt& stmt, size_t max_revisits)
     : max_revisits_(max_revisits) {
   {
-    // DebugTimer timer("Collecting info");
+    auto timer = DebugTimer("Collecting info")
+                     .on_finish([this](auto& out) {
+                       out << "collected " << control_flow_.size() << " blocks";
+                     })
+                     .start();
     ControlFlowGraphBuilder::Build(this, stmt);
   }
-  // std::cout << "-------------- Blocks ------------------" << std::endl;
-  // std::cout << *this << std::endl;
-  // std::cout << "----------------------------------------" << std::endl;
+  std::cout << "-------------- Blocks ------------------" << std::endl;
+  std::cout << *this << std::endl;
+  std::cout << "----------------------------------------" << std::endl;
+
+  // std::terminate();
+
+  // {
+  //   auto timer = DebugTimer("Forward propagation").start();
+  //   ForwardPropagateKnownValues();
+  // }
   {
-    // DebugTimer timer("Forward propagation");
-    ForwardPropagateKnownValues();
+    auto timer = DebugTimer("Backward propagation").start();
+    BackwardPropagateUnusedValues();
   }
   {
-    // DebugTimer timer("Backward propagation");
-    BackwardPropagateUnusedValues();
+    auto timer = DebugTimer("Forward propagation").start();
+    ForwardPropagateKnownValues();
   }
 }
 
@@ -1095,7 +1269,13 @@ void BufferState::Substitute(const Map<Var, PrimExpr>& var_remap, Analyzer* anal
     for (auto& prior : constraints_) {
       PrimExpr updated = tvm::tir::Substitute(prior.predicate, var_remap);
       if (!updated.same_as(prior.predicate)) {
-        prior.predicate = SimplifyAsAndOfOrs(updated, analyzer);
+        // prior.predicate = SimplifyAsAndOfOrs(updated, analyzer);
+        auto timer = DebugTimer("Post-substitution simplification")
+                         .always_print_short_timers()
+                         .on_start([&](auto& out) { out << "before = " << updated; })
+                         .on_finish([&](auto& out) { out << "after = " << prior.predicate; })
+                         .start();
+        prior.predicate = analyzer->Simplify(updated);
       }
     }
   }
@@ -1104,7 +1284,8 @@ void BufferState::Substitute(const Map<Var, PrimExpr>& var_remap, Analyzer* anal
 
 void BufferState::Simplify(Analyzer* analyzer) {
   for (auto& constraint : constraints_) {
-    constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate, analyzer);
+    // constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate, analyzer);
+    constraint.predicate = analyzer->Simplify(constraint.predicate);
   }
   RemoveEmptyConstraints();
 }
@@ -1122,8 +1303,10 @@ void BufferState::Union(const BufferState& b, Analyzer* analyzer) {
     for (auto& a_constraint : constraints_) {
       if (a_constraint.buffer.same_as(b_constraint.buffer) &&
           analyzer->CanProveEqual(a_constraint.value, b_constraint.value)) {
+        // a_constraint.predicate =
+        //     SimplifyAsAndOfOrs(a_constraint.predicate || b_constraint.predicate, analyzer);
         a_constraint.predicate =
-            SimplifyAsAndOfOrs(a_constraint.predicate || b_constraint.predicate, analyzer);
+            analyzer->Simplify(a_constraint.predicate || b_constraint.predicate);
         used = true;
         break;
       }
@@ -1142,7 +1325,8 @@ void BufferState::Intersection(const BufferState& b, Analyzer* analyzer) {
   for (const auto& ai : constraints_) {
     for (const auto& bi : b.constraints_) {
       if (ai.buffer.same_as(bi.buffer)) {
-        PrimExpr predicate = SimplifyAsAndOfOrs(ai.predicate && bi.predicate, analyzer);
+        // PrimExpr predicate = SimplifyAsAndOfOrs(ai.predicate && bi.predicate, analyzer);
+        PrimExpr predicate = analyzer->Simplify(ai.predicate && bi.predicate);
         if (!is_zero(predicate)) {
           With<ConstraintContext> context(analyzer, predicate);
           PrimExpr known_value_a = ai.value;
@@ -1170,8 +1354,8 @@ class BufferRegionCollector : public ExprVisitor {
   static std::vector<Region> Collect(const Map<Buffer, Array<Var>>& axis_var_lookup,
                                      const std::vector<BufferTouch>& knowns,
                                      const std::vector<Optional<PrimExpr>>& exprs,
-                                     Analyzer* analyzer) {
-    BufferRegionCollector collector(axis_var_lookup, knowns, analyzer);
+                                     Analyzer* analyzer, bool verbose = false) {
+    BufferRegionCollector collector(axis_var_lookup, knowns, analyzer, verbose);
     for (const auto& expr : exprs) {
       if (expr) {
         collector(expr.value());
@@ -1185,14 +1369,19 @@ class BufferRegionCollector : public ExprVisitor {
   using Parent = ExprVisitor;
 
   BufferRegionCollector(const Map<Buffer, Array<Var>>& axis_var_lookup,
-                        const std::vector<BufferTouch>& knowns, Analyzer* analyzer)
-      : analyzer_(analyzer), axis_var_lookup_(axis_var_lookup), knowns_(knowns) {
+                        const std::vector<BufferTouch>& knowns, Analyzer* analyzer, bool verbose)
+      : analyzer_(analyzer), axis_var_lookup_(axis_var_lookup), knowns_(knowns), verbose_(verbose) {
     regions_.push_back(Region{Bool(true), {}});
   }
 
   using Parent::VisitExpr_;
 
   void VisitExpr_(const BufferLoadNode* op) override {
+    auto timer = DebugTimer("Extracting regions")
+                     .on_start([&](auto& out) { out << " for " << GetRef<PrimExpr>(op); })
+                     .always_print_short_timers(verbose_)
+                     .start();
+
     // Helper struct for the known values of this BufferLoad
     struct Known {
       PrimExpr predicate;
@@ -1209,10 +1398,22 @@ class BufferRegionCollector : public ExprVisitor {
         continue;
       }
 
+      auto timer = DebugTimer("Collecting regions for touch")
+                       .on_start([&](auto& out) { out << " at " << constraint.predicate; })
+                       .always_print_short_timers(verbose_)
+                       .start();
+
       auto axis_vars = axis_var_lookup_.at(op->buffer);
       PrimExpr touch_predicate =
           SubstituteParamValues(axis_vars, op->indices, constraint.predicate).value();
-      touch_predicate = SimplifyAsAndOfOrs(touch_predicate, analyzer_);
+      {
+        auto timer = DebugTimer("Simplifying touch predicate")
+                         .on_start([&](auto& out) { out << touch_predicate; })
+                         .always_print_short_timers(verbose_)
+                         .start();
+        // touch_predicate = SimplifyAsAndOfOrs(touch_predicate, analyzer_);
+        touch_predicate = analyzer_->Simplify(touch_predicate);
+      }
 
       if (!is_zero(touch_predicate)) {
         Optional<PrimExpr> known_value =
@@ -1220,12 +1421,21 @@ class BufferRegionCollector : public ExprVisitor {
         new_regions.push_back(Known{touch_predicate, known_value});
 
         unknown_region = unknown_region && !touch_predicate;
-        unknown_region = SimplifyAsAndOfOrs(unknown_region, analyzer_);
+        {
+          auto timer = DebugTimer("Simplifying unknown region")
+                           .on_start([&](auto& out) { out << unknown_region; })
+                           .always_print_short_timers(verbose_)
+                           .start();
+          // unknown_region = SimplifyAsAndOfOrs(unknown_region, analyzer_);
+          unknown_region = analyzer_->Simplify(unknown_region);
+        }
       }
     }
 
     if (new_regions.size()) {
       Analyzer local_analyzer;
+
+      auto timer = DebugTimer("Updaing new regions").always_print_short_timers(verbose_).start();
 
       if (!is_zero(unknown_region)) {
         new_regions.insert(new_regions.begin(), Known{unknown_region, NullOpt});
@@ -1234,8 +1444,11 @@ class BufferRegionCollector : public ExprVisitor {
       std::vector<Region> updated_regions;
       for (const auto& prev_region : regions_) {
         for (const auto& new_region : new_regions) {
+          // PrimExpr intersection =
+          //     SimplifyAsAndOfOrs(prev_region.region_predicate && new_region.predicate,
+          //     analyzer_);
           PrimExpr intersection =
-              SimplifyAsAndOfOrs(prev_region.region_predicate && new_region.predicate, analyzer_);
+              analyzer_->Simplify(prev_region.region_predicate && new_region.predicate);
 
           if (!is_zero(intersection)) {
             Region merged{intersection, prev_region.known_values};
@@ -1252,6 +1465,7 @@ class BufferRegionCollector : public ExprVisitor {
   std::vector<Region> regions_;
   const Map<Buffer, Array<Var>>& axis_var_lookup_;
   const std::vector<BufferTouch>& knowns_;
+  bool verbose_{false};
 };
 
 class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
@@ -1260,11 +1474,22 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
       const std::unordered_map<const BufferLoadNode*, Optional<PrimExpr>>& known_values,
       PrimExpr expr, Analyzer* analyzer) {
     BufferRegionValueReplacer mutator(known_values, analyzer);
-    PrimExpr result = mutator(expr);
+
+    PrimExpr result = [&]() {
+      auto timer = DebugTimer("BufferRegionValueReplacer::Apply, running mutator").start();
+      return mutator(expr);
+    }();
     // Simplification must occur after the substitution, as known
     // values may provide enable simplifications.  Also, cannot track
     // whether a BufferLoad was
-    result = analyzer->Simplify(result);
+    // {
+    // auto timer = DebugTimer("BufferRegionValueReplacer::Apply, simplifying after replacement")
+    //                  .on_finish([&result, orig = result](auto& out) {
+    //                    out << "Simplified from " << orig << " to " << result;
+    //                  })
+    //                  .start();
+    //   result = analyzer->Simplify(result);
+    // };
     return result;
   }
 
@@ -1291,12 +1516,13 @@ class BufferRegionValueReplacer : public IRMutatorWithAnalyzer {
 };
 
 void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
-                               const std::vector<BufferTouch>& touch_points, Analyzer* analyzer) {
+                               const std::vector<BufferTouch>& touch_points, Analyzer* analyzer,
+                               bool verbose) {
   std::vector<BufferTouch> new_knowns;
   Map<Buffer, PrimExpr> keep_prior_known_at;
 
-  std::optional<DebugTimer> timer;
-  timer.emplace("Looping over touch points");
+  std::optional<DebugTimer::Impl> timer;
+  DebugTimer("Looping over touch points").always_print_short_timers(verbose).start(timer);
 
   for (auto& touch : touch_points) {
     if (touch.touch_type == BufferTouch::AccessType::Read) {
@@ -1306,18 +1532,77 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
     PrimExpr known_value = touch.value;
 
     PrimExpr predicate = touch.predicate && touch.AfterLoopIteration();
-    auto regions = BufferRegionCollector::Collect(axis_var_lookup, constraints_,
-                                                  {predicate, touch.value}, analyzer);
+
+    {
+      auto timer = DebugTimer("Simplifying touch/loop predicate")
+                       .always_print_short_timers(verbose)
+                       .on_finish([before = predicate, &predicate](auto& out) {
+                         out << "simplified from " << before << " to " << predicate;
+                       })
+                       .start();
+      predicate = analyzer->Simplify(predicate);
+    }
+
+    auto regions = [&]() {
+      auto timer = DebugTimer("Collecting regions").always_print_short_timers(verbose).start();
+      return BufferRegionCollector::Collect(axis_var_lookup, constraints_, {predicate, touch.value},
+                                            analyzer, verbose);
+    }();
 
     for (const auto& region : regions) {
-      PrimExpr updated_predicate = BufferRegionValueReplacer::Apply(
-          region.known_values, region.region_predicate && predicate, analyzer);
+      auto timer =
+          DebugTimer("Examining region")
+              .on_start([&](auto& out) { out << "region predicate = " << region.region_predicate; })
+              .always_print_short_timers(verbose)
+              .start();
 
-      updated_predicate = SimplifyAsAndOfOrs(updated_predicate, analyzer);
-      PrimExpr updated_value =
-          BufferRegionValueReplacer::Apply(region.known_values, known_value, analyzer);
+      PrimExpr updated_predicate = region.region_predicate && predicate;
+
+      {
+        auto timer = DebugTimer("Updating region-specific predicate")
+                         .always_print_short_timers(verbose)
+                         .on_start([&updated_predicate, &region](auto& out) {
+                           out << "in region = " << region.region_predicate
+                               << ", before = " << updated_predicate;
+                         })
+                         .on_finish([&updated_predicate, &region](auto& out) {
+                           out << "in region = " << region.region_predicate
+                               << ", after = " << updated_predicate;
+                         })
+                         .start();
+        updated_predicate =
+            BufferRegionValueReplacer::Apply(region.known_values, updated_predicate, analyzer);
+      };
+
+      {
+        auto timer = DebugTimer("Simplifying region-specific predicate")
+                         .always_print_short_timers(verbose)
+                         .on_start([&updated_predicate](auto& out) {
+                           out << "before = " << updated_predicate;
+                         })
+                         .on_finish([&updated_predicate](auto& out) {
+                           out << "after = " << updated_predicate;
+                         })
+                         .start();
+        // updated_predicate = SimplifyAsAndOfOrs(updated_predicate, analyzer);
+        updated_predicate = analyzer->Simplify(updated_predicate);
+      };
+
+      PrimExpr updated_value = known_value;
+      {
+        auto timer =
+            DebugTimer("Updating value")
+                .always_print_short_timers(verbose)
+                .on_start([&updated_value](auto& out) { out << "before = " << updated_value; })
+                .on_finish([&updated_value](auto& out) { out << "after = " << updated_value; })
+                .start();
+        updated_value =
+            BufferRegionValueReplacer::Apply(region.known_values, updated_value, analyzer);
+      };
 
       if (!is_zero(updated_predicate)) {
+        auto timer =
+            DebugTimer("Finalizing changes from region").always_print_short_timers(verbose).start();
         if (auto it = keep_prior_known_at.find(touch.buffer); it != keep_prior_known_at.end()) {
           keep_prior_known_at.Set(touch.buffer, (*it).second && !updated_predicate);
         } else {
@@ -1332,17 +1617,19 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
     }
   }
 
-  timer.emplace("Reducing extent of prior knowns");
+  DebugTimer("Reducing extent of prior knowns").always_print_short_timers(verbose).start(timer);
 
   if (keep_prior_known_at.size()) {
     for (auto& constraint : constraints_) {
       if (auto it = keep_prior_known_at.find(constraint.buffer); it != keep_prior_known_at.end()) {
-        constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate && (*it).second, analyzer);
+        // constraint.predicate = SimplifyAsAndOfOrs(constraint.predicate && (*it).second,
+        // analyzer);
+        constraint.predicate = analyzer->Simplify(constraint.predicate && (*it).second);
       }
     }
   }
 
-  timer.emplace("Extending extent of new knowns");
+  DebugTimer("Extending extent of new knowns").always_print_short_timers(verbose).start(timer);
 
   if (new_knowns.size()) {
     std::vector<bool> used(new_knowns.size(), false);
@@ -1356,16 +1643,18 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
         if (new_knowns[i].buffer.same_as(constraint.buffer)) {
           Optional<PrimExpr> overwritten_with = new_knowns[i].value;
           if (overwritten_with && analyzer->CanProveEqual(prev_value, overwritten_with.value())) {
-            expand_known_at =
-                SimplifyAsAndOfOrs(expand_known_at || new_knowns[i].predicate, analyzer);
+            // expand_known_at =
+            //     SimplifyAsAndOfOrs(expand_known_at || new_knowns[i].predicate, analyzer);
+            expand_known_at = analyzer->Simplify(expand_known_at || new_knowns[i].predicate);
             used[i] = true;
           }
         }
       }
 
       if (!is_zero(expand_known_at)) {
-        constraint.predicate =
-            SimplifyAsAndOfOrs(constraint.predicate || expand_known_at, analyzer);
+        // constraint.predicate =
+        //     SimplifyAsAndOfOrs(constraint.predicate || expand_known_at, analyzer);
+        constraint.predicate = analyzer->Simplify(constraint.predicate || expand_known_at);
       }
     }
 
@@ -1376,7 +1665,7 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
     }
   }
 
-  timer.emplace("Removing empty constraints");
+  DebugTimer("Removing empty constraints").always_print_short_timers(verbose).start(timer);
 
   constraints_.erase(
       std::remove_if(constraints_.begin(), constraints_.end(),
@@ -1387,6 +1676,9 @@ void BufferState::ApplyTouches(const Map<Buffer, Array<Var>>& axis_var_lookup,
 void BufferState::BackpropUnusedIndices(const Map<Buffer, Array<Var>>& axis_var_lookup,
                                         const std::vector<BufferTouch>& touch_points,
                                         Analyzer* analyzer) {
+  std::optional<DebugTimer::Impl> timer;
+  DebugTimer("Looping over touch points").start(timer);
+
   std::vector<BufferTouch> new_knowns;
   Map<Buffer, PrimExpr> keep_prior_known_at;
 
@@ -1413,21 +1705,36 @@ void BufferState::BackpropUnusedIndices(const Map<Buffer, Array<Var>>& axis_var_
   auto update_map = [&](auto& map) {
     Map<Buffer, PrimExpr> new_map;
     for (auto [buffer, predicate] : map) {
-      new_map.Set(buffer, SimplifyAsAndOfOrs(predicate, analyzer));
+      // new_map.Set(buffer, SimplifyAsAndOfOrs(predicate, analyzer));
+      auto timer = DebugTimer("Simplifying backprop region predicate")
+                       .on_start([predicate = PrimExpr(predicate)](auto& out) { out << predicate; })
+                       .on_finish([&predicate](std::ostream& out) { out << predicate; })
+                       .start();
+      predicate = analyzer->Simplify(predicate);
+      PrimExpr as_or_of_ands = NormalizeBooleanOperators(!analyzer->Simplify(!predicate));
+      new_map.Set(buffer, predicate);
     }
     map = std::move(new_map);
   };
+  DebugTimer("Update regions_written map").start(timer);
   update_map(regions_written);
+
+  DebugTimer("Update regions_read map").start(timer);
   update_map(regions_read);
+
+  DebugTimer("Widening predicate for buffers that already have unused indices").start(timer);
 
   // If buffer is already in used, widen the predicate
   for (auto& prev_unused : constraints_) {
     if (auto opt_predicate = regions_written.Get(prev_unused.buffer)) {
       PrimExpr new_predicate = prev_unused.predicate || opt_predicate.value();
-      prev_unused.predicate = SimplifyAsAndOfOrs(new_predicate, analyzer);
+      // prev_unused.predicate = SimplifyAsAndOfOrs(new_predicate, analyzer);
+      prev_unused.predicate = analyzer->Simplify(new_predicate);
       regions_written.erase(prev_unused.buffer);
     }
   }
+
+  DebugTimer("Inserting predicate for buffers that already have unused indices").start(timer);
 
   // Otherwise, add new "touch" to represent the unused values
   for (auto [buffer, predicate] : regions_written) {
@@ -1435,13 +1742,18 @@ void BufferState::BackpropUnusedIndices(const Map<Buffer, Array<Var>>& axis_var_
         BufferTouch{buffer, predicate, tir::Call(buffer->dtype, builtin::undef(), {})});
   }
 
+  DebugTimer("Inserting predicate for buffers that already have unused indices").start(timer);
+
   // If buffer is read out, narrow the predicate
   for (auto& prev_unused : constraints_) {
     if (auto opt_pred = regions_read.Get(prev_unused.buffer)) {
       PrimExpr predicate = opt_pred.value();
-      prev_unused.predicate = SimplifyAsAndOfOrs(prev_unused.predicate && !predicate, analyzer);
+      // prev_unused.predicate = SimplifyAsAndOfOrs(prev_unused.predicate && !predicate, analyzer);
+      prev_unused.predicate = analyzer->Simplify(prev_unused.predicate && !predicate);
     }
   }
+
+  DebugTimer("Clean-up empty constraints").start(timer);
 
   // Clean-up and remove any empty constraints
   constraints_.erase(
@@ -1454,7 +1766,8 @@ void BufferState::RemoveFreeParameters(const Map<Var, Range>& free_predicate_par
                                        Analyzer* analyzer) {
   for (auto& known : constraints_) {
     known.predicate = NarrowPredicateExpression(known.predicate, free_predicate_parameters);
-    known.predicate = SimplifyAsAndOfOrs(known.predicate, analyzer);
+    // known.predicate = SimplifyAsAndOfOrs(known.predicate, analyzer);
+    known.predicate = analyzer->Simplify(known.predicate);
   }
 }
 
@@ -1529,6 +1842,10 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       arith::RewriteSimplifier::kTransitivelyProveInequalities |
       arith::RewriteSimplifier::kConvertBooleanToAndOfOrs |
       arith::RewriteSimplifier::kApplyConstraintsToBooleanBranches));
+  // analyzer.rewrite_simplify.SetEnabledExtensions(
+  //     arith::RewriteSimplifier::Extension(arith::RewriteSimplifier::kTransitivelyProveInequalities
+  //     |
+  //                                         arith::RewriteSimplifier::kConvertBooleanToAndOfOrs));
 
   analyzer.Bind(iterator_ranges_);
   analyzer.Bind(free_predicate_parameters_);
@@ -1537,7 +1854,7 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
     size_t visiting = *to_visit.begin();
     to_visit.erase(visiting);
 
-    DebugTimer timer([&]() {
+    auto timer = DebugTimer([&]() {
       std::stringstream ss;
       ss << "Visiting " << visiting;
       return ss.str();
@@ -1557,11 +1874,9 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
       if (num_previous_visits >= max_revisits_) {
         return BufferState();
       }
-      DebugTimer timer([&]() {
-        std::stringstream ss;
-        ss << "Collecting priors knowns for " << visiting;
-        return ss.str();
-      }());
+      auto timer = DebugTimer("Collecting priors knowns")
+                       .subcategory([&](auto& out) { out << " for " << visiting; })
+                       .start();
 
       // Validate internal constraint.  This should be true by
       // construction, as ControlFlowGraphBuilder only builds graphs
@@ -1636,7 +1951,12 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
         // std::cout << "First pred with conditions: " << priors_a << std::endl;
         priors_b.AddCondition(pred_b.post_condition.value());
         // std::cout << "Second pred with conditions: " << priors_b << std::endl;
-        priors_a.Union(priors_b, &analyzer);
+        {
+          auto timer = DebugTimer("Taking/simplifying union of priors")
+                           .subcategory([&](auto& out) { out << "from  " << visiting; })
+                           .start();
+          priors_a.Union(priors_b, &analyzer);
+        }
 
         // std::cout << "From merging 2 predecessors, known at block start: "
         //           << "\n"
@@ -1649,7 +1969,8 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
         // appear in both predecessors.
         priors_a.Intersection(priors_b, &analyzer);
         // std::cout
-        //     << "From merging 2 predecessors with a data-dependent branch, known at block start: "
+        //     << "From merging 2 predecessors with a data-dependent branch, known at block
+        //     start: "
         //     << "\n"
         //     << priors_a << std::endl;
         return priors_a;
@@ -1664,21 +1985,17 @@ void ControlFlowGraph::ForwardPropagateKnownValues(std::optional<size_t> flow_fr
 
       auto post_state = block.known_at_block_start;
       {
-        DebugTimer timer([&]() {
-          std::stringstream ss;
-          ss << "Applying touches for block " << visiting;
-          return ss.str();
-        }());
-        post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer);
+        auto timer = DebugTimer("Applying touches")
+                         .subcategory([&](auto& out) { out << "for block " << visiting; })
+                         .start();
+        post_state.ApplyTouches(axis_var_lookup_, block.touch_points, &analyzer, visiting == 4);
       }
       // std::cout << "Afer applying " << block.touch_points.size() << " touches: " << post_state
       //           << std::endl;
       {
-        DebugTimer timer([&]() {
-          std::stringstream ss;
-          ss << "Removing free parameters for block " << visiting;
-          return ss.str();
-        }());
+        auto timer = DebugTimer("Removing free parameters")
+                         .subcategory([&](auto& out) { out << "for block " << visiting; })
+                         .start();
         post_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
       }
       // std::cout << "Afer removing free parameters: " << post_state << std::endl;
@@ -1746,6 +2063,10 @@ void ControlFlowGraph::BackwardPropagateUnusedValues(std::optional<size_t> flow_
     size_t visiting = *to_visit.rbegin();
     to_visit.erase(visiting);
 
+    auto timer = DebugTimer("Visiting block")
+                     .subcategory([&](auto& out) { out << "block " << visiting; })
+                     .start();
+
     size_t num_previous_visits = visit_count_lookup[visiting]++;
 
     ControlFlowBlock& block = control_flow_[visiting];
@@ -1755,6 +2076,11 @@ void ControlFlowGraph::BackwardPropagateUnusedValues(std::optional<size_t> flow_
       if (num_previous_visits >= max_revisits_) {
         return BufferState();
       }
+
+      auto timer = DebugTimer("Collecting post unused")
+                       .subcategory([&](auto& out) { out << "for block " << visiting; })
+                       .start();
+
       ICHECK_LE(block.successors.size(), 2)
           << "Each block should have at most two successors, but block " << visiting
           << " breaks this requirement";
@@ -1763,6 +2089,11 @@ void ControlFlowGraph::BackwardPropagateUnusedValues(std::optional<size_t> flow_
       for (const auto& successor : block.successors) {
         const auto& successor_block = control_flow_[successor.index];
         BufferState state = successor_block.unused_at_block_start;
+        auto timer = DebugTimer("Substituting from successor")
+                         .subcategory([&](auto& out) {
+                           out << "for block " << visiting << " from successor " << successor.index;
+                         })
+                         .start();
         state.Substitute(successor.var_remap, &analyzer);
         states.push_back(state);
       }
@@ -1802,9 +2133,29 @@ void ControlFlowGraph::BackwardPropagateUnusedValues(std::optional<size_t> flow_
         // loop iterations).  Therefore, we can use all buffer
         // constraints, conditional on having come from the
         // successor that provides it.
-        post_a.AddCondition(successor_a.post_condition.value());
-        post_b.AddCondition(successor_b.post_condition.value());
-        post_a.Union(post_b, &analyzer);
+        {
+          auto timer = DebugTimer("Adding condition to post_a")
+                           .subcategory([&](auto& out) { out << "for block " << visiting; })
+                           .always_print_short_timers()
+                           .start();
+          post_a.AddCondition(successor_a.post_condition.value());
+          post_a.Simplify(&analyzer);
+        }
+        {
+          auto timer = DebugTimer("Adding condition to post_b")
+                           .subcategory([&](auto& out) { out << "for block " << visiting; })
+                           .always_print_short_timers()
+                           .start();
+          post_b.AddCondition(successor_b.post_condition.value());
+          post_b.Simplify(&analyzer);
+        }
+        {
+          auto timer = DebugTimer("Taking union and simplifying of post unused from post_a/post_b")
+                           .subcategory([&](auto& out) { out << "for block " << visiting; })
+                           .always_print_short_timers()
+                           .start();
+          post_a.Union(post_b, &analyzer);
+        }
         return post_a;
       } else {
         // We don't know which successor applies.  Therefore, the
@@ -1821,8 +2172,18 @@ void ControlFlowGraph::BackwardPropagateUnusedValues(std::optional<size_t> flow_
         return BufferState();
       }
       auto prior_state = block.unused_at_block_end;
-      prior_state.BackpropUnusedIndices(axis_var_lookup_, block.touch_points, &analyzer);
-      prior_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+      {
+        auto timer = DebugTimer("Backprop touches")
+                         .subcategory([&](auto& out) { out << "for block " << visiting; })
+                         .start();
+        prior_state.BackpropUnusedIndices(axis_var_lookup_, block.touch_points, &analyzer);
+      }
+      {
+        auto timer = DebugTimer("Remove free parameters")
+                         .subcategory([&](auto& out) { out << "for block " << visiting; })
+                         .start();
+        prior_state.RemoveFreeParameters(free_predicate_parameters_, &analyzer);
+      }
       return prior_state;
     }();
 
@@ -1851,9 +2212,14 @@ bool ControlFlowGraph::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
       << "Context " << PrettyPrint(context) << " did not occur within analyzed statement";
   const auto& context_block = control_flow_[it->second];
 
-  auto [store_touch, free_params] = context_block.MakeBufferTouch(
+  auto [store_touches, free_params] = context_block.MakeBufferTouch(
       store->buffer, index_variables.value(), store->indices, BufferTouch::AccessType::Write,
       BufferLoad(store->buffer, store->indices));
+
+  ICHECK_EQ(store_touches.size(), 1) << "Internal Error, MakeBufferTouch should return "
+                                     << "a single touch-point for known_value=BufferLoad(...), "
+                                     << "because it does not include tir::if_then_else";
+  auto store_touch = store_touches[0];
 
   Analyzer local_analyzer;
   local_analyzer.Bind(free_predicate_parameters_);
@@ -1866,11 +2232,14 @@ bool ControlFlowGraph::IsOverwrittenWithoutEffect(const tir::BufferStore& store,
 
   PrimExpr predicate = store_touch.predicate && store_touch.AtLoopIteration();
 
-  predicate = SimplifyAsAndOfOrs(predicate, &local_analyzer);
+  // predicate = SimplifyAsAndOfOrs(predicate, &local_analyzer);
+  predicate = local_analyzer.Simplify(predicate);
 
   for (const auto& unused : context_block.unused_at_block_end.constraints_) {
     if (store_touch.buffer.same_as(unused.buffer)) {
-      PrimExpr difference = SimplifyAsAndOfOrs(predicate && !unused.predicate, &local_analyzer);
+      // PrimExpr difference = SimplifyAsAndOfOrs(predicate && !unused.predicate,
+      // &local_analyzer);
+      PrimExpr difference = local_analyzer.Simplify(predicate && !unused.predicate);
       if (is_zero(difference)) {
         return true;
       }

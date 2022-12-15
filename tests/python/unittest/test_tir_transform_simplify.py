@@ -142,6 +142,7 @@ class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
     apply_constraints_to_boolean_branches = False
     propagate_knowns_to_prove_conditional = False
     propagate_knowns_to_simplify_expressions = False
+    inline_constrained_integer_variables = False
 
     def transform(self):
         def inner(mod):
@@ -152,6 +153,7 @@ class BaseBeforeAfter(tvm.testing.CompareBeforeAfter):
                     "apply_constraints_to_boolean_branches": self.apply_constraints_to_boolean_branches,
                     "propagate_knowns_to_prove_conditional": self.propagate_knowns_to_prove_conditional,
                     "propagate_knowns_to_simplify_expressions": self.propagate_knowns_to_simplify_expressions,
+                    "inline_constrained_integer_variables": self.inline_constrained_integer_variables,
                 }
             }
             with tvm.transform.PassContext(config=config):
@@ -798,7 +800,7 @@ class TestRewriteAsAndOfOrUsingSimplificationAcrossAnd(BaseBeforeAfter):
         A[0] = (k == 20) and ((i == 0 or j == 10) and (k != 30))
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, k: T.int32):
-        A[0] = (i == 0 or j == 10) and (k == 20)
+        A[0] = (k == 20) and (i == 0 or j == 10)
 
 
 class TestRewriteAsAndOfOrUsingSimplificationWithinOr(BaseBeforeAfter):
@@ -820,6 +822,38 @@ class TestRewriteAsAndOfOrUsingSimplificationWithinOr(BaseBeforeAfter):
 
     def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, k: T.int32):
         A[0] = (j == 0) or (i != 30)
+
+
+class TestRewriteAsAndOfOrRemovingDuplicateGroup(BaseBeforeAfter):
+    """Test"""
+
+    convert_boolean_to_and_of_ors = True
+
+    def before(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, k: T.int32, A_axis_0: T.int32):
+        A[0] = ((j < 14) or (k != 15) or (i <= A_axis_0)) and ((15 < k) or (i <= A_axis_0))
+
+    def expected(A: T.Buffer[1, "bool"], i: T.int32, j: T.int32, k: T.int32, A_axis_0: T.int32):
+        A[0] = (15 < k) or (i <= A_axis_0)
+
+
+class TestRewriteAsAndOfOrExpandRecursively(BaseBeforeAfter):
+    """Test"""
+
+    convert_boolean_to_and_of_ors = True
+
+    def before(
+        A: T.Buffer[(13, 15, 17), "bool"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = (
+                (i <= 4 or j < 14 or k != 15) and (i <= 4 or j == 14) and (i <= 4 or 14 < k)
+            )
+
+    def expected(
+        A: T.Buffer[(13, 15, 17), "bool"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = (i <= 4 or j == 14) and (i <= 4 or k == 16)
 
 
 class TestConditionalFloorMod(BaseBeforeAfter):
@@ -1999,7 +2033,7 @@ class TestRangeToAnd_Case3_2Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8), "bool"]):
         for bho, bhi in T.grid(16, 8):
-            A[bho, bhi] = (0 < bho) or 6 <= bhi
+            A[bho, bhi] = (0 < bho) or 5 < bhi
 
 
 class TestRangeToAnd_Case4_2Variables(BaseBeforeAfter):
@@ -2011,7 +2045,7 @@ class TestRangeToAnd_Case4_2Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8), "bool"]):
         for bho, bhi in T.grid(16, 8):
-            A[bho, bhi] = (0 < bho) or 6 < bhi
+            A[bho, bhi] = (0 < bho) or bhi == 7
 
 
 class TestRangeToAnd_Case5_2Variables(BaseBeforeAfter):
@@ -2023,7 +2057,7 @@ class TestRangeToAnd_Case5_2Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8), "bool"]):
         for bho, bhi in T.grid(16, 8):
-            A[bho, bhi] = (bho < 15) or bhi <= 4
+            A[bho, bhi] = (bho < 15) or bhi < 5
 
 
 class TestRangeToAnd_Case6_2Variables(BaseBeforeAfter):
@@ -2047,7 +2081,7 @@ class TestRangeToAnd_Case7_2Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8), "bool"]):
         for bho, bhi in T.grid(16, 8):
-            A[bho, bhi] = (bho == 15) and 4 <= bhi
+            A[bho, bhi] = (bho == 15) and 3 < bhi
 
 
 class TestRangeToAnd_Case8_2Variables(BaseBeforeAfter):
@@ -2071,7 +2105,7 @@ class TestRangeToAnd_Case1_3Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8, 3), "bool"]):
         for bho, bhi, fh in T.grid(16, 8, 3):
-            A[bho, bhi, fh] = (bho == 0) and bhi + fh <= 6
+            A[bho, bhi, fh] = (bho == 0) and bhi + fh < 7
 
 
 class TestRangeToAnd_Case2_3Variables(BaseBeforeAfter):
@@ -2095,7 +2129,7 @@ class TestRangeToAnd_Case3_3Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8, 3), "bool"]):
         for bho, bhi, fh in T.grid(16, 8, 3):
-            A[bho, bhi, fh] = (0 < bho) or 6 <= bhi + fh
+            A[bho, bhi, fh] = (0 < bho) or 5 < bhi + fh
 
 
 class TestRangeToAnd_Case4_3Variables(BaseBeforeAfter):
@@ -2119,7 +2153,7 @@ class TestRangeToAnd_Case5_3Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8, 3), "bool"]):
         for bho, bhi, fh in T.grid(16, 8, 3):
-            A[bho, bhi, fh] = (bho < 15) or bhi + fh <= 4
+            A[bho, bhi, fh] = (bho < 15) or bhi + fh < 5
 
 
 class TestRangeToAnd_Case6_3Variables(BaseBeforeAfter):
@@ -2143,7 +2177,7 @@ class TestRangeToAnd_Case7_3Variables(BaseBeforeAfter):
 
     def expected(A: T.Buffer[(16, 8, 3), "bool"]):
         for bho, bhi, fh in T.grid(16, 8, 3):
-            A[bho, bhi, fh] = (bho == 15) and 4 <= bhi + fh
+            A[bho, bhi, fh] = (bho == 15) and 3 < bhi + fh
 
 
 class TestRangeToAnd_Case8_3Variables(BaseBeforeAfter):
@@ -2451,6 +2485,440 @@ class TestUnwrapFloorModLessThanIntoEquals(BaseBeforeAfter):
     def expected(A: T.Buffer[16, "bool"]):
         for i in T.serial(16):
             A[i] = i == 5
+
+
+class TestUnwrapFloorModOverflowIntoEquals(BaseBeforeAfter):
+    def before(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (i + ((j + 1) // 8)) % 16 == k
+
+    def expected(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (j == 7 and i == k - 1) or (j < 7 and i == k)
+
+
+class TestUnwrapFloorModOverflowIntoLessThan(BaseBeforeAfter):
+    apply_constraints_to_boolean_branches = True
+    transitively_prove_inequalities = True
+
+    def before(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (i + ((j + 1) // 8)) % 16 < k
+
+    def expected(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (
+                (j == 7 and i < k - 1) or (j < 7 and i < k) or (i == 15 and j == 7 and 0 < k)
+            )
+
+
+class TestUnwrapFloorModOverflowIntoGreaterThan(BaseBeforeAfter):
+    def before(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = k < (i + ((j + 1) // 8)) % 16
+
+    def expected(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (i < 15 or j < 7) and ((j == 7 and k <= i) or (j < 7 and k < i))
+
+
+class TestUnwrapFloorModUnderflowIntoLessThan(BaseBeforeAfter):
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (i + ((j - 1) // 8)) % 16 < k
+
+    def expected(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (0 < i or 0 < j) and ((0 < j and i < k) or (j == 0 and i <= k))
+
+
+class TestUnwrapFloorModUnderflowIntoGreaterThan(BaseBeforeAfter):
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = k < (i + ((j - 1) // 8)) % 16
+
+    def expected(A: T.Buffer[(16, 8, 4), "bool"]):
+        for i, j, k in T.grid(16, 8, 4):
+            A[i, j, k] = (i == 0 and j == 0) or (0 < j and k < i) or (j == 0 and k + 1 < i)
+
+
+class TestTemp(BaseBeforeAfter):
+    def before():
+        Conv2d_0 = T.decl_buffer([16, 3, 9, 9, 8, 8, 32], dtype="float32")
+        for n, bco, bho, bwo, bhi, bwi, bci in T.grid(16, 3, 9, 9, 8, 8, 32):
+            Conv2d_0[n, bco, bho, bwo, bhi, bwi, bci] = T.if_then_else(
+                (bho == 0 and bhi < 4)
+                or (bho == 8 and 6 <= bhi)
+                or (bwo == 0 and bwi < 4)
+                or (bwo == 8 and 6 <= bwi),
+                T.float32(0),
+                T.float32(1),
+            )
+
+    def expected():
+        Conv2d_0 = T.decl_buffer([16, 3, 9, 9, 8, 8, 32], dtype="float32")
+        for n, bco, bho, bwo, bhi, bwi, bci in T.grid(16, 3, 9, 9, 8, 8, 32):
+            Conv2d_0[n, bco, bho, bwo, bhi, bwi, bci] = T.if_then_else(
+                (0 < bho or 4 <= bhi)
+                and (bho < 8 or bhi < 6)
+                and (0 < bwo or 4 <= bwi)
+                and (bwo < 8 or bwi < 6),
+                T.float32(1),
+                T.float32(0),
+            )
+
+
+class TestTemp2(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+    convert_boolean_to_and_of_ors = True
+    apply_constraints_to_boolean_branches = True
+    propagate_knowns_to_prove_conditional = True
+    # propagate_knowns_to_simplify_expressions = True
+
+    def before(
+        Input: T.Buffer[(16, 4, 8, 8, 8, 8, 32), "float32"],
+        Filter_0: T.Buffer[(3, 4, 3, 3, 8, 32, 4), "float32"],
+        Filter_1: T.Buffer[(1, 3, 3, 3, 8, 32, 4), "float32"],
+        Conv2d_1: T.Buffer[(16, 1, 9, 9, 8, 8, 32), "float32"],
+    ):
+        Conv2d_0 = T.decl_buffer([16, 3, 9, 9, 8, 8, 32], dtype="float32")
+        for n, bco, bho, bwo in T.grid(16, 3, 9, 9):
+            for aco, bhi, bwi, bci, fh, fw, aci in T.grid(4, 8, 8, 32, 3, 3, 32):
+                if (
+                    (
+                        (
+                            (
+                                (
+                                    ((((bhi * 73728) + (bwi * 9216)) + (bci * 288)) + (fh * 96))
+                                    + (fw * 32)
+                                )
+                                + aci
+                            )
+                            + -1
+                        )
+                        // 589824
+                    )
+                    + aco
+                ) < 1:
+                    Conv2d_0[n, bco, bho, bwo, bhi, bwi, bci] = T.float32(0)
+
+    def expected(
+        Input: T.Buffer[(16, 4, 8, 8, 8, 8, 32), "float32"],
+        Filter_0: T.Buffer[(3, 4, 3, 3, 8, 32, 4), "float32"],
+        Filter_1: T.Buffer[(1, 3, 3, 3, 8, 32, 4), "float32"],
+        Conv2d_1: T.Buffer[(16, 1, 9, 9, 8, 8, 32), "float32"],
+    ):
+        Conv2d_0 = T.decl_buffer([16, 3, 9, 9, 8, 8, 32], dtype="float32")
+        for n, bco, bho, bwo in T.grid(16, 3, 9, 9):
+            for aco, bhi, bwi, bci, fh, fw, aci in T.grid(4, 8, 8, 32, 3, 3, 32):
+                if 0 < aco or 0 < bhi or 0 < bwi or 0 < bci or 0 < fh or 0 < fw or 0 < aci:
+                    Conv2d_0[n, bco, bho, bwo, bhi, bwi, bci] = T.float32(0)
+
+
+class TestTemp3(BaseBeforeAfter):
+    transitively_prove_inequalities = True
+    convert_boolean_to_and_of_ors = True
+    apply_constraints_to_boolean_branches = True
+    propagate_knowns_to_prove_conditional = True
+    # propagate_knowns_to_simplify_expressions = True
+
+    def before(
+        A: T.Buffer[(13, 15, 17), "float32"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = 0.0
+
+    expected = before
+
+
+class TestSymmetricDivModArgumentsSumOfTwo(BaseBeforeAfter):
+    def before(
+        A: T.Buffer[(13, 15, 17), "float32"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = (i - 1) % 4 == 0
+            A[i, j, k] = (i - 1) // 4 == 0
+
+    def expected(
+        A: T.Buffer[(13, 15, 17), "float32"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = (i + 3) % 4 == 0
+            A[i, j, k] = (i + 3) // 4 == 1
+
+
+class TestSymmetricDivModArgumentsSumOfThree(BaseBeforeAfter):
+    def before(
+        A: T.Buffer[(13, 15, 17), "float32"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = (i + j - 1) % 4 == 0
+            A[i, j, k] = (i + j - 1) // 4 == 0
+
+    def expected(
+        A: T.Buffer[(13, 15, 17), "float32"],
+    ):
+        for i, j, k in T.grid(13, 15, 17):
+            A[i, j, k] = (i + j + 3) % 4 == 0
+            A[i, j, k] = (i + j + 3) // 4 == 1
+
+
+class TestConvertFloorModToSubtraction(BaseBeforeAfter):
+    """Remove unnecessary FloorMod"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i + 1) % 16 < j
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i + 1 < j
+
+
+class TestConvertFloorModToSubtractionUsingConstrainedBranch(BaseBeforeAfter):
+    """Remove unnecessary FloorMod
+
+    Like TestConvertFloorModToSubtraction, but using a constraint
+    provided by another boolean branch.  Here, the LHS of `(i < 7)`
+    means that the RHS can be simplified under the assumption that
+    `(7 <= i)`.  Since the iterator bounds of `i` provide `(i <= y)`,
+    this means that `(i == 7)` in the RHS.
+    """
+
+    apply_constraints_to_boolean_branches = True
+    inline_constrained_integer_variables = True
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i < 7) or ((i + 1) % 8 < j)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i < 7) or (0 < j)
+
+
+class TestMergeEqualitiesToTrue(BaseBeforeAfter):
+    """Recognize exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(2, 16), "bool"]):
+        for i, j in T.grid(2, 16):
+            A[i, j] = (i == 0) or (i == 1)
+
+    def expected(A: T.Buffer[(2, 16), "bool"]):
+        for i, j in T.grid(2, 16):
+            A[i, j] = True
+
+
+class TestMergeEqualitiesWithLowerBoundIntoTrue(BaseBeforeAfter):
+    """Recognize exhaustive coverage of iterator values
+
+    Like TestMergeEqualitiesToTrue, but some allowed values are
+    covered by an inequality.
+    """
+
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i == 0) or (i == 1) or (1 < i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = True
+
+
+class TestMergeEqualitiesWithUpperBoundIntoTrue(BaseBeforeAfter):
+    """Recognize exhaustive coverage of iterator values
+
+    Like TestMergeEqualitiesWithLowerBoundIntoTrue, but the
+    inequality covers lower values rather than higher values.
+    """
+
+    apply_constraints_to_boolean_branches = True
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i == 7) or (i == 6) or (i <= 5)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = True
+
+
+class TestMergeLTwithLTintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values
+
+    If two inequalities cover all but one allowed value, it would be
+    more cleanly expressed as `x != value`.
+    """
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i < 5) or (5 < i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 5
+
+
+class TestMergeLEwithLTintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i <= 4) or (5 < i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 5
+
+
+class TestMergeLTwithLEintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i < 5) or (6 <= i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 5
+
+
+class TestMergeLTwithLTintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i <= 4) or (6 <= i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 5
+
+
+class TestMergeLTwithEQintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i == 0) or (1 < i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 1
+
+
+class TestMergeEQwithLTintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i == 7) or (i < 6)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 6
+
+
+class TestMergeLEwithEQintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i == 0) or (2 <= i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 1
+
+
+class TestMergeEQwithLEintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i == 7) or (i <= 5)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 6
+
+
+class TestMergeEQwithNEintoNE(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i != 4) or (i == 2)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 4
+
+
+class TestMergeEQwithNEintoNEwithinChain(BaseBeforeAfter):
+    """Recognize almost-exhaustive coverage of iterator values"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = j == 0 or (i != 4) or (i == 2)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = j == 0 or i != 4
+
+
+class TestMergeUpperBoundwithNEintoTrue(BaseBeforeAfter):
+    """Remove redundant inequalities"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i != 2) or (i < 4)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = True
+
+
+class TestMergeUpperBoundwithNEintoNE(BaseBeforeAfter):
+    """Remove redundant inequalities"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i != 2) or (i < 1)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 2
+
+
+class TestMergeLowerBoundwithNEintoNE(BaseBeforeAfter):
+    """Remove redundant inequalities"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i != 2) or (4 < i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = i != 2
+
+
+class TestMergeLowerBoundwithNEintoTrue(BaseBeforeAfter):
+    """Remove redundant inequalities"""
+
+    def before(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = (i != 2) or (1 < i)
+
+    def expected(A: T.Buffer[(8, 16), "bool"]):
+        for i, j in T.grid(8, 16):
+            A[i, j] = True
 
 
 if __name__ == "__main__":

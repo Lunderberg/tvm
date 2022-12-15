@@ -350,8 +350,12 @@ class TransformLayoutPlanner : private StmtExprVisitor {
       BufferStore store = GetRef<BufferStore>(op);
       if (can_replace) {
         PrimExpr pad_value_at_index = pad_value.value()->MapIndices(new_indices)[0];
+        // store =
+        //     BufferStore(new_buffer, if_then_else(padding_predicate, pad_value_at_index,
+        //     op->value),
+        //                 new_indices);
         store =
-            BufferStore(new_buffer, if_then_else(padding_predicate, pad_value_at_index, op->value),
+            BufferStore(new_buffer, if_then_else(!padding_predicate, op->value, pad_value_at_index),
                         new_indices);
       } else {
         all_stores_replaced = false;

@@ -25,6 +25,10 @@
 #include <tvm/tir/expr.h>
 #include <tvm/tir/op.h>
 
+#include "../support/debug_timer.h"
+
+using tvm::support::DebugTimer;
+
 namespace tvm {
 namespace arith {
 
@@ -134,8 +138,18 @@ PrimExpr Analyzer::Simplify(const PrimExpr& expr, int steps) {
       return res;
     }
     if (i % 2 == 0) {
+      auto timer = DebugTimer("RewriteSimplifier")
+                       .on_start([before = res](auto& out) { out << "before = " << before; })
+                       .on_finish([&res](auto& out) { out << "after = " << res; })
+                       .start();
+
       res = this->rewrite_simplify(res);
     } else {
+      auto timer = DebugTimer("CanonicalSimplifier")
+                       .on_start([before = res](auto& out) { out << "before = " << before; })
+                       .on_finish([&res](auto& out) { out << "after = " << res; })
+                       .start();
+
       res = this->canonical_simplify(res);
     }
   }

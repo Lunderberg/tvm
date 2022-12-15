@@ -47,6 +47,7 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
   bool propagate_knowns_to_simplify_expressions;
   bool convert_boolean_to_and_of_ors;
   bool apply_constraints_to_boolean_branches;
+  bool inline_constrained_integer_variables;
 
   TVM_DECLARE_ATTRS(SimplifyConfigNode, "tir.transform.SimplifyConfig") {
     TVM_ATTR_FIELD(transitively_prove_inequalities)
@@ -74,6 +75,12 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
             "If true, simplify each branch of AND/OR "
             "under a constraints provided by the other branch")
         .set_default(false);
+
+    TVM_ATTR_FIELD(inline_constrained_integer_variables)
+        .describe(
+            "If true, substitute known integer value for tir::Var "
+            "whenever fully-constrained by ConstraintContext.")
+        .set_default(false);
   }
 
   RewriteSimplifier::Extension GetEnabledExtensions() const {
@@ -88,6 +95,10 @@ struct SimplifyConfigNode : public tvm::AttrsNode<SimplifyConfigNode> {
     if (apply_constraints_to_boolean_branches) {
       flags = RewriteSimplifier::Extension(flags |
                                            RewriteSimplifier::kApplyConstraintsToBooleanBranches);
+    }
+    if (inline_constrained_integer_variables) {
+      flags = RewriteSimplifier::Extension(flags |
+                                           RewriteSimplifier::kInlineConstrainedIntegerVariables);
     }
     return flags;
   }

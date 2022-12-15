@@ -41,7 +41,7 @@ class Analyzer;
  *
  * \return The simplified expression
  */
-PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer);
+PrimExpr SimplifyAsAndOfOrs(const PrimExpr& expr, Analyzer* analyzer, bool recursive = false);
 
 }  // namespace arith
 }  // namespace tvm
