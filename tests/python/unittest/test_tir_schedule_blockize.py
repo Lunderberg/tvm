@@ -306,6 +306,10 @@ def test_blockize_outer_int64_shape(preserve_unit_iters):
 
 
 class TestBlockizeWithReduction(tvm.testing.CompareBeforeAfter):
+    # preserve_unit_iters has an effect when falling through from
+    # TrivialSubspaceDivision to arith::SubspaceDivision.  This test
+    # has only trivial subspaces, so this parameter shouldn't have an
+    # effect.
     preserve_unit_iters = tvm.testing.parameter(
         by_dict={
             "keep_unit_iters": True,
@@ -333,40 +337,16 @@ class TestBlockizeWithReduction(tvm.testing.CompareBeforeAfter):
 
                 B[v0, v1] = B[v0, v1] + A[v0, v1, v2, v3]
 
-    @pytest.fixture
-    def expected(self, preserve_unit_iters):
-        if preserve_unit_iters:
-
-            @T.prim_func
-            def func(A: T.Buffer[(1, 8, 1, 8), "float32"], B: T.Buffer[(1, 8), "float32"]):
-                for i0, i1 in T.grid(1, 8):
-                    with T.block("B_o"):
-                        v0, v1 = T.axis.remap("SS", [i0, i1])
+    def expected(A: T.Buffer[(1, 8, 1, 8), "float32"], B: T.Buffer[(1, 8), "float32"]):
+        for i0, i1 in T.grid(1, 8):
+            with T.block("B_o"):
+                v0, v1 = T.axis.remap("SS", [i0, i1])
+                for i2, i3 in T.grid(1, 8):
+                    with T.block("B"):
                         with T.init():
-                            with T.block("B_init"):
-                                B[v0, v1] = 0.0
-                        for i2, i3 in T.grid(1, 8):
-                            with T.block("B"):
-                                v2, v3 = T.axis.remap("RR", [i2, i3])
-                                B[v0, v1] = B[v0, v1] + A[v0, v1, v2, v3]
-
-        else:
-
-            @T.prim_func
-            def func(
-                A: T.Buffer[(T.int64(16), T.int64(128)), "float32"],
-                B: T.Buffer[T.int64(16), "float32"],
-            ):
-                for i0, j0 in T.grid(T.int64(1), T.int64(8)):
-                    with T.block("B_o"):
-                        vi_o = T.axis.spatial(T.int64(1), i0)
-                        vj_o = T.axis.R(T.int64(8), j0)
-                        for i1, j1 in T.grid(T.int64(16), T.int64(16)):
-                            with T.block("B"):
-                                vi_i, vj_i = T.axis.remap("SR", [i1, j1])
-                                B[vi_i] = B[vi_i] + A[vi_i, vj_o * T.int64(16) + vj_i]
-
-        return func
+                            B[v0, v1] = 0.0
+                        v2, v3 = T.axis.remap("RR", [i2, i3])
+                        B[v0, v1] = B[v0, v1] + A[v0, v1, v2, v3]
 
 
 if __name__ == "__main__":

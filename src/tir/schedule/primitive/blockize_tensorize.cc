@@ -211,7 +211,7 @@ Map<Var, PrimExpr> DeriveBlockBinding(const Array<IterVar>& iter_vars,          
                                       Array<IterVar>* outer_iter_vars,                          //
                                       Array<PrimExpr>* outer_bindings,                          //
                                       Array<IterVar>* inner_iter_vars,                          //
-                                      Array<PrimExpr>* inner_bindings, bool preserve_unit_iters) {
+                                      Array<PrimExpr>* inner_bindings) {
   using arith::IterMapExpr;
   using arith::IterMapExprNode;
   using arith::NormalizeIterMapToExpr;
@@ -276,8 +276,9 @@ BlockRealize GenerateInner(bool is_write_reduction,
                            Block block) {
   BlockNode* n = block.CopyOnWrite();
   n->iter_vars = iter_vars;
-  n->init = NullOpt;
+
   if (is_write_reduction) {
+    n->init = NullOpt;
     Array<BufferRegion> reads;
     reads.reserve(block->writes.size() + block->reads.size());
     reads.insert(reads.end(), block->writes.begin(), block->writes.end());
@@ -476,8 +477,7 @@ BlockRealize BlockizeImpl(const ScheduleState& self, const StmtSRef& loop_sref,
   Map<Var, PrimExpr> block_var_subst =                       //
       DeriveBlockBinding(block->iter_vars, division,         //
                          &outer_iter_vars, &outer_bindings,  //
-                         &inner_iter_vars, &inner_bindings,  //
-                         preserve_unit_iters);
+                         &inner_iter_vars, &inner_bindings);
   // Step 4: Do var substitution to adjust to the new block bindings
   Map<Var, arith::IntSet> inner_iter_dom;
   for (const IterVar& iter : inner_iter_vars) {
@@ -504,6 +504,13 @@ BlockRealize BlockizeImpl(const ScheduleState& self, const StmtSRef& loop_sref,
                                              /*predicate=*/inner_predicate,
                                              /*block=*/block_subst);
   block_sref_reuse->Set(block, inner_realize->block);
+
+  Optional<Stmt> outer_init = NullOpt;
+  if (block_subst->init.defined() && has_outer_reduction) {
+    outer_init = GenerateOuterInit(block_subst->init.value(), inner_realize, loops,
+                                   block_subst->name_hint + "_init");
+  }
+
   // Step 6: Generate the outer block.
   return BlockRealize(
       /*iter_values=*/std::move(outer_bindings),
@@ -514,11 +521,7 @@ BlockRealize BlockizeImpl(const ScheduleState& self, const StmtSRef& loop_sref,
             /*writes=*/EvalSetRegions(block_subst->writes, inner_iter_dom),
             /*name_hint=*/block_subst->name_hint + "_o",
             /*body=*/MakeLoopNest(inner_realize, loops),
-            /*init=*/
-            block_subst->init.defined()  //
-                ? GenerateOuterInit(block_subst->init.value(), inner_realize, loops,
-                                    block_subst->name_hint + "_init")
-                : Optional<Stmt>(NullOpt)));
+            /*init=*/outer_init));
 }
 
 StmtSRef Blockize(ScheduleState self, const StmtSRef& loop_sref, bool preserve_unit_iters) {
