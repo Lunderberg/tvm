@@ -173,25 +173,26 @@ Array<Array<Optional<arith::IterMark>>> SubspaceDivide(const BlockRealize& reali
       inner = false;
     }
   }
+
+  auto trivial_division = TrivialSubspaceDivision(realize->block->iter_vars, realize->iter_values,
+                                                  realize->predicate, outer_vars, inner_vars);
+  if (trivial_division.size()) {
+    return trivial_division;
+  }
+
   Array<Array<arith::IterMark>> result =
       arith::SubspaceDivide(realize->iter_values, loop_var_domain, inner_vars, realize->predicate,
                             arith::IterMapLevel::Surjective, analyzer,
                             /*simplify_trivial_iterators=*/!preserve_unit_iters);
-  if (!result.empty()) {
-    Array<Array<Optional<arith::IterMark>>> output;
-    for (const auto& arr : result) {
-      Array<Optional<arith::IterMark>> out_arr;
-      for (const auto& val : arr) {
-        out_arr.push_back(val);
-      }
-      output.push_back(out_arr);
+  Array<Array<Optional<arith::IterMark>>> output;
+  for (const auto& arr : result) {
+    Array<Optional<arith::IterMark>> out_arr;
+    for (const auto& val : arr) {
+      out_arr.push_back(val);
     }
-    return output;
+    output.push_back(out_arr);
   }
-  return TrivialSubspaceDivision(realize->block->iter_vars,
-                                 realize->iter_values,  //
-                                 realize->predicate,    //
-                                 outer_vars, inner_vars);
+  return output;
 }
 
 /*!

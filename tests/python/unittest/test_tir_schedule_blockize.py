@@ -317,16 +317,13 @@ class TestBlockizeWithReduction(tvm.testing.CompareBeforeAfter):
     def transform(self, preserve_unit_iters):
         def transform_pass(mod):
             sch = tir.Schedule(mod, debug_mask="all")
-            _, _, i1, _ = sch.get_loops(sch.get_block("B"))
-            sch.blockize(i1, preserve_unit_iters=preserve_unit_iters)
+            i0, i1, i2, i3 = sch.get_loops(sch.get_block("B"))
+            sch.blockize(i2, preserve_unit_iters=preserve_unit_iters)
             return sch.mod
 
         return transform_pass
 
-    def before(
-        A: T.Buffer[(1, 8, 1, 8), "float32"],
-        B: T.Buffer[(1, 8), "float32"],
-    ) -> None:
+    def before(A: T.Buffer[(1, 8, 1, 8), "float32"], B: T.Buffer[(1, 8), "float32"]):
         for i0, i1, i2, i3 in T.grid(1, 8, 1, 8):
             with T.block("B"):
                 v0, v1, v2, v3 = T.axis.remap("SSRR", [i0, i1, i2, i3])
@@ -341,18 +338,17 @@ class TestBlockizeWithReduction(tvm.testing.CompareBeforeAfter):
         if preserve_unit_iters:
 
             @T.prim_func
-            def func(
-                A: T.Buffer[(T.int64(16), T.int64(128)), "float32"],
-                B: T.Buffer[T.int64(16), "float32"],
-            ):
-                for i0, j0 in T.grid(T.int64(1), T.int64(8)):
+            def func(A: T.Buffer[(1, 8, 1, 8), "float32"], B: T.Buffer[(1, 8), "float32"]):
+                for i0, i1 in T.grid(1, 8):
                     with T.block("B_o"):
-                        vi_o = T.axis.spatial(T.int64(1), T.int64(0))
-                        vj_o = T.axis.R(T.int64(8), j0)
-                        for i1, j1 in T.grid(T.int64(16), T.int64(16)):
+                        v0, v1 = T.axis.remap("SS", [i0, i1])
+                        with T.init():
+                            with T.block("B_init"):
+                                B[v0, v1] = 0.0
+                        for i2, i3 in T.grid(1, 8):
                             with T.block("B"):
-                                vi_i, vj_i = T.axis.remap("SR", [i1, j1])
-                                B[vi_i] = B[vi_i] + A[vi_i, vj_o * T.int64(16) + vj_i]
+                                v2, v3 = T.axis.remap("RR", [i2, i3])
+                                B[v0, v1] = B[v0, v1] + A[v0, v1, v2, v3]
 
         else:
 
