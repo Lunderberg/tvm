@@ -85,13 +85,13 @@ class SubspaceNotDivisibleError : public ScheduleError {
  * \param inner_iters The iters of the inner space
  * \return The result of the subspace division.
  */
-Array<Array<arith::IterMark>> TrivialSubspaceDivision(const Array<IterVar>& iter_vars,
-                                                      const Array<PrimExpr>& bindings,
-                                                      const PrimExpr& predicate,
-                                                      const Array<Var>& outer_iters,
-                                                      const Array<Var>& inner_iters) {
+Array<Array<Optional<arith::IterMark>>> TrivialSubspaceDivision(const Array<IterVar>& iter_vars,
+                                                                const Array<PrimExpr>& bindings,
+                                                                const PrimExpr& predicate,
+                                                                const Array<Var>& outer_iters,
+                                                                const Array<Var>& inner_iters) {
   if (!is_one(predicate)) return {};
-  Array<Array<arith::IterMark>> res;
+  Array<Array<Optional<arith::IterMark>>> res;
   std::unordered_set<const VarNode*> outer_loop_vars;
   std::unordered_set<const VarNode*> inner_loop_vars;
 
@@ -123,11 +123,11 @@ Array<Array<arith::IterMark>> TrivialSubspaceDivision(const Array<IterVar>& iter
       iter_mark = arith::IterMark(arith::IterSumExpr({}, bindings[i]), iter_vars[i]->dom->extent);
     }
     if (outer && !inner) {
-      res.push_back({/*outer_iter=*/iter_mark, /*inner_iter=*/unit_iter_mark});
+      res.push_back({/*outer_iter=*/iter_mark, /*inner_iter=*/NullOpt});
     } else if (inner && !outer) {
-      res.push_back({/*outer_iter=*/unit_iter_mark, /*inner_iter=*/iter_mark});
+      res.push_back({/*outer_iter=*/NullOpt, /*inner_iter=*/iter_mark});
     } else if (!outer && !inner) {
-      res.push_back({/*outer_iter=*/unit_iter_mark, /*inner_iter=*/unit_iter_mark});
+      res.push_back({/*outer_iter=*/NullOpt, /*inner_iter=*/NullOpt});
     } else {
       return {};
     }
@@ -148,11 +148,12 @@ Array<Array<arith::IterMark>> TrivialSubspaceDivision(const Array<IterVar>& iter
  * \param analyzer The arithmetic analyzer to use.
  * \param preserve_unit_iters Whether or not to preserve unit iterators in block bindings
  */
-Array<Array<arith::IterMark>> SubspaceDivide(const BlockRealize& realize,
-                                             const StmtSRef& block_sref,  //
-                                             const StmtSRef& loop_sref,   //
-                                             std::vector<const ForNode*>* loops,
-                                             arith::Analyzer* analyzer, bool preserve_unit_iters) {
+Array<Array<Optional<arith::IterMark>>> SubspaceDivide(const BlockRealize& realize,
+                                                       const StmtSRef& block_sref,  //
+                                                       const StmtSRef& loop_sref,   //
+                                                       std::vector<const ForNode*>* loops,
+                                                       arith::Analyzer* analyzer,
+                                                       bool preserve_unit_iters) {
   Array<Var> inner_vars;
   Array<Var> outer_vars;
   Map<Var, Range> loop_var_domain;
@@ -177,7 +178,15 @@ Array<Array<arith::IterMark>> SubspaceDivide(const BlockRealize& realize,
                             arith::IterMapLevel::Surjective, analyzer,
                             /*simplify_trivial_iterators=*/!preserve_unit_iters);
   if (!result.empty()) {
-    return result;
+    Array<Array<Optional<arith::IterMark>>> output;
+    for (const auto& arr : result) {
+      Array<Optional<arith::IterMark>> out_arr;
+      for (const auto& val : arr) {
+        out_arr.push_back(val);
+      }
+      output.push_back(out_arr);
+    }
+    return output;
   }
   return TrivialSubspaceDivision(realize->block->iter_vars,
                                  realize->iter_values,  //
@@ -196,11 +205,11 @@ Array<Array<arith::IterMark>> SubspaceDivide(const BlockRealize& realize,
  * \param preserve_unit_iters Whether or not to preserve unit iterators in block bindings
  * \return A substitution plan to the iterators in the original inner block.
  */
-Map<Var, PrimExpr> DeriveBlockBinding(const Array<IterVar>& iter_vars,                //
-                                      const Array<Array<arith::IterMark>>& division,  //
-                                      Array<IterVar>* outer_iter_vars,                //
-                                      Array<PrimExpr>* outer_bindings,                //
-                                      Array<IterVar>* inner_iter_vars,                //
+Map<Var, PrimExpr> DeriveBlockBinding(const Array<IterVar>& iter_vars,                          //
+                                      const Array<Array<Optional<arith::IterMark>>>& division,  //
+                                      Array<IterVar>* outer_iter_vars,                          //
+                                      Array<PrimExpr>* outer_bindings,                          //
+                                      Array<IterVar>* inner_iter_vars,                          //
                                       Array<PrimExpr>* inner_bindings, bool preserve_unit_iters) {
   using arith::IterMapExpr;
   using arith::IterMapExprNode;
@@ -209,42 +218,42 @@ Map<Var, PrimExpr> DeriveBlockBinding(const Array<IterVar>& iter_vars,          
   ICHECK_EQ(iter_vars.size() + 1, division.size());
   for (int i = 0, n = iter_vars.size(); i < n; ++i) {
     const IterVar& iter_var = iter_vars[i];
-    arith::IterMark outer_mark = division[i][0];
-    arith::IterMark inner_mark = division[i][1];
-    IterMapExpr outer_binding = Downcast<IterMapExpr>(outer_mark->source);
-    IterMapExpr inner_binding = Downcast<IterMapExpr>(inner_mark->source);
-    // After computing the subspace division, bindings[i] can be written as
-    // outer_binding * inner_binding->extent + inner_binding
-    // The outer block will have binding: iter_outer -> outer_binding
-    // The inner block will have binding: iter_inner -> inner_binding
-    // The iter in the original block will be substituted with base + iter_inner where
-    // base == iter_outer * iter_inner_extent
-    if (is_one(inner_mark->extent)) {  // IsOuter
-      // extract this iter var to outer block directly
+    Optional<arith::IterMark> outer_mark = division[i][0];
+    Optional<arith::IterMark> inner_mark = division[i][1];
+    if (outer_mark && !inner_mark) {
+      IterMapExpr outer_binding = Downcast<IterMapExpr>(outer_mark.value()->source);
       outer_bindings->push_back(NormalizeIterMapToExpr(outer_binding));
       outer_iter_vars->push_back(iter_var);
-      continue;
-    }
-    // create iter var for the outer block
-    IterVar outer_iter(/*dom=*/RangeFromExtent(outer_mark->extent),
-                       /*var=*/iter_var->var.copy_with_suffix("_o"),
-                       /*iter_type=*/iter_var->iter_type);
-    outer_bindings->push_back(NormalizeIterMapToExpr(outer_binding));
-    outer_iter_vars->push_back(outer_iter);
-    // create iter var for the inner block
-    IterVar inner_iter(/*dom=*/RangeFromExtent(inner_mark->extent),
-                       /*var=*/iter_var->var.copy_with_suffix("_i"),
-                       /*iter_type=*/iter_var->iter_type);
-    inner_bindings->push_back(NormalizeIterMapToExpr(inner_binding));
-    inner_iter_vars->push_back(inner_iter);
-    // substitution
-    PrimExpr sub{nullptr};
-    if (is_one(outer_mark->extent)) {
-      sub = inner_iter->var;
+    } else if (inner_mark && !outer_mark) {
+      IterMapExpr inner_binding = Downcast<IterMapExpr>(inner_mark.value()->source);
+      inner_bindings->push_back(NormalizeIterMapToExpr(inner_binding));
+      inner_iter_vars->push_back(iter_var);
     } else {
-      sub = outer_iter * inner_mark->extent + inner_iter->var;
+      IterMapExpr outer_binding = Downcast<IterMapExpr>(outer_mark.value()->source);
+      IterMapExpr inner_binding = Downcast<IterMapExpr>(inner_mark.value()->source);
+
+      // create iter var for the outer block
+      IterVar outer_iter(/*dom=*/RangeFromExtent(outer_mark.value()->extent),
+                         /*var=*/iter_var->var.copy_with_suffix("_o"),
+                         /*iter_type=*/iter_var->iter_type);
+      outer_bindings->push_back(NormalizeIterMapToExpr(outer_binding));
+      outer_iter_vars->push_back(outer_iter);
+      // create iter var for the inner block
+      IterVar inner_iter(/*dom=*/RangeFromExtent(inner_mark.value()->extent),
+                         /*var=*/iter_var->var.copy_with_suffix("_i"),
+                         /*iter_type=*/iter_var->iter_type);
+      inner_bindings->push_back(NormalizeIterMapToExpr(inner_binding));
+      inner_iter_vars->push_back(inner_iter);
+
+      // substitution
+      PrimExpr sub{nullptr};
+      if (is_one(outer_mark.value()->extent)) {
+        sub = inner_iter->var;
+      } else {
+        sub = outer_iter * inner_mark.value()->extent + inner_iter->var;
+      }
+      block_var_subst.Set(iter_var->var, sub);
     }
-    block_var_subst.Set(iter_var->var, sub);
   }
   return block_var_subst;
 }
@@ -439,13 +448,25 @@ BlockRealize BlockizeImpl(const ScheduleState& self, const StmtSRef& loop_sref,
   StmtSRef block_sref = self->stmt2ref.at(block.get());
   // Step 2: Derive subspace division
   std::vector<const ForNode*> loops;
-  Array<Array<arith::IterMark>> division =
+  Array<Array<Optional<arith::IterMark>>> division =
       SubspaceDivide(block_realize, block_sref, loop_sref, &loops, analyzer, preserve_unit_iters);
   if (division.empty()) {
     throw SubspaceNotDivisibleError(self->mod, GetRef<For>(loops.back()), block);
   }
-  PrimExpr outer_predicate = division.back()[0]->extent;
-  PrimExpr inner_predicate = division.back()[1]->extent;
+  PrimExpr outer_predicate = [&]() -> PrimExpr {
+    if (auto opt = division.back()[0]) {
+      return opt.value()->extent;
+    } else {
+      return 1;
+    }
+  }();
+  PrimExpr inner_predicate = [&]() -> PrimExpr {
+    if (auto opt = division.back()[1]) {
+      return opt.value()->extent;
+    } else {
+      return 1;
+    }
+  }();
   // Step 3. Derive block bindings for both outer and inner block.
   Array<IterVar> outer_iter_vars;
   Array<IterVar> inner_iter_vars;
