@@ -147,8 +147,11 @@ class DebugTimer {
           parent_timer->print_start_message();
         }
         auto duration_ms = duration / std::chrono::milliseconds(1);
-        std::cout << std::string(4 * nested_depth, ' ') << "Finished " << name_ << " after "
-                  << duration_ms << " ms";
+        std::cout << std::string(4 * nested_depth, ' ') << "Finished " << name_;
+        if (subcategory_.has_value()) {
+          std::cout << " " << *subcategory_;
+        }
+        std::cout << " after " << duration_ms << " ms";
 
         if (details_on_finish_) {
           std::cout << ", ";

@@ -29,6 +29,7 @@
 #include <tvm/tir/op.h>
 #include <tvm/tir/stmt_functor.h>
 
+#include <optional>
 #include <sstream>
 #include <unordered_set>
 

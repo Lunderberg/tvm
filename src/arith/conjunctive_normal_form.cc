@@ -596,6 +596,7 @@ void AndOfOrs::Simplify(Analyzer* analyzer, bool recursive) {
     int steps_completed = 0;
     auto timer =
         DebugTimer("AndOfOrs::Simplify, round")
+            .subcategory([&](auto& out) { out << i; })
             .always_print_short_timers()
             .on_finish([&](auto& out) { out << "Restart after " << steps_completed << " steps"; })
             .start();
@@ -757,15 +758,11 @@ bool AndOfOrs::SimplifyWithinChunks(Analyzer* analyzer) {
 bool AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
   bool made_change = false;
 
+  Map<PrimExpr, PrimExpr> replacements;
   auto timer = DebugTimer("Simplifying across chunks")
-                   .on_start([&](auto& out) { out << "before = " << AsPrimExpr(); })
-                   .on_finish([&](auto& out) {
-                     if (made_change) {
-                       out << "no change";
-                     } else {
-                       out << "after = " << AsPrimExpr();
-                     }
-                   })
+                   .always_print_short_timers()
+                   //.on_start([&](auto& out) { out << "before = " << AsPrimExpr(); })
+                   .on_finish([&](auto& out) { out << "Replacements: " << replacements; })
                    .start();
 
   for (size_t i_and = 0; i_and < chunks_.size(); i_and++) {
@@ -776,8 +773,13 @@ bool AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
       if (i_chunk.size() == 1 && j_chunk.size() == 1) {
         auto& key_i = i_chunk[0];
         auto& key_j = j_chunk[0];
+        PrimExpr before = GetExpr(key_i) || GetExpr(key_j);
         bool change = TrySimplifyAnd(&key_i, &key_j, analyzer);
         made_change = made_change || change;
+        if (change) {
+          PrimExpr after = GetExpr(key_i) || GetExpr(key_j);
+          replacements.Set(before, after);
+        }
         continue;
       }
       std::unordered_set<Key> j_set(j_chunk.begin(), j_chunk.end());
@@ -873,8 +875,14 @@ bool AndOfOrs::SimplifyAcrossChunks(Analyzer* analyzer) {
           // std::cout << "\t"
           //           << "Known2: " << known_from_other_chunks << std::endl;
 
+          PrimExpr before = GetExpr(key_i) || GetExpr(key_j);
           bool change = TrySimplifyAnd(&key_i, &key_j, analyzer);
           made_change = made_change || change;
+
+          if (change) {
+            PrimExpr after = GetExpr(key_i) || GetExpr(key_j);
+            replacements.Set(before, after);
+          }
 
           // std::cout << "\t"
           //           << "Result: " << (GetExpr(key_i) && GetExpr(key_j)) << std::endl;
