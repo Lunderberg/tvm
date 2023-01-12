@@ -39,16 +39,16 @@ def single_elementwise(A: T.Buffer[(128, 128), "float32"], B: T.Buffer[(128, 128
 def test_blockize_outer():
     @T.prim_func
     def after_blockize_outer(
-        A: T.Buffer[(128, 128), "float32"],
-        B: T.Buffer[(128, 128), "float32"],
-    ) -> None:
-        with T.block("blockized_B"):
-            vio = T.axis.spatial(1, 0)
-            vjo = T.axis.spatial(1, 0)
-            for i, j in T.grid(128, 128):
-                with T.block("B"):
-                    vi, vj = T.axis.remap("SS", [i, j])
-                    B[vi, vj] = A[vi, vj] * 2.0
+        A: T.Buffer[(128, 128), "float32"], B: T.Buffer[(128, 128), "float32"]
+    ):
+        with T.block("root"):
+            T.reads()
+            T.writes()
+            with T.block("blockized_B"):
+                for i, j in T.grid(128, 128):
+                    with T.block("B"):
+                        vi, vj = T.axis.remap("SS", [i, j])
+                        B[vi, vj] = A[vi, vj] * 2.0
 
     func = single_elementwise
     s = tir.Schedule(func, debug_mask="all")
@@ -67,7 +67,6 @@ def test_blockize_inner():
         for i in T.serial(128):
             with T.block("blockized_B"):
                 vi = T.axis.spatial(128, i)
-                vjo = T.axis.spatial(1, 0)
                 for j in T.serial(128):
                     with T.block("B"):
                         vj = T.axis.remap("S", [j])
@@ -213,9 +212,10 @@ def test_two_elementwise_blockize_compute_at():
     verify_trace_roundtrip(sch=s, mod=func)
 
 
-def test_blockize_init_loops():
+@pytest.mark.parametrize("blockize_loop", [0, 1])
+def test_blockize_init_loops(blockize_loop):
     @T.prim_func
-    def rowsum(A: T.Buffer[(128, 128), "float32"], B: T.Buffer[(128,), "float32"]) -> None:
+    def rowsum(A: T.Buffer[(128, 128), "float32"], B: T.Buffer[(128,), "float32"]):
         for k, i in T.grid(128, 128):
             with T.block("B"):
                 vk, vi = T.axis.remap("RS", [k, i])
@@ -223,26 +223,46 @@ def test_blockize_init_loops():
                     B[vi] = 0.0
                 B[vi] = B[vi] + A[vi, vk]
 
-    @T.prim_func
-    def after_rowsum_blockize(
-        A: T.Buffer[(128, 128), "float32"],
-        B: T.Buffer[(128,), "float32"],
-    ) -> None:
-        with T.block("blockized_B"):
-            vko = T.axis.R(1, 0)
-            vio = T.axis.S(1, 0)
-            with T.init():
-                for i1 in T.serial(0, 128):
-                    with T.block("B_init"):
-                        vi_init = T.axis.S(128, i1)
-                        B[vi_init] = T.float32(0)
-            for i0, i1_1 in T.grid(128, 128):
-                with T.block("B"):
-                    vk, vi = T.axis.remap("RS", [i0, i1_1])
-                    B[vi] = B[vi] + A[vi, vk]
+    if blockize_loop == 0:
+        # If the reduction axes remain with the inner block, the init
+        # block remains where it is.
+        @T.prim_func
+        def after_rowsum_blockize(
+            A: T.Buffer[(128, 128), "float32"], B: T.Buffer[(128,), "float32"]
+        ):
+            with T.block("root"):
+                T.reads()
+                T.writes()
+                with T.block("blockized_B"):
+                    for i0, i1_1 in T.grid(128, 128):
+                        with T.block("B"):
+                            vk, vi = T.axis.remap("RS", [i0, i1_1])
+                            with T.init():
+                                B[vi] = 0.0
+                            B[vi] = B[vi] + A[vi, vk]
+
+    elif blockize_loop == 1:
+        # If one or more of the reduction axes belong to the outer
+        # block, then the init must be hoisted to the outer block.
+        @T.prim_func
+        def after_rowsum_blockize(
+            A: T.Buffer[(128, 128), "float32"], B: T.Buffer[(128,), "float32"]
+        ):
+            for i0 in T.grid(128):
+                with T.block("blockized_B"):
+                    vk = T.axis.remap("R", [i0])
+                    with T.init():
+                        for i1 in T.serial(0, 128):
+                            with T.block("B_init"):
+                                vi_init = T.axis.S(128, i1)
+                                B[vi_init] = T.float32(0)
+                    for i1_1 in T.grid(128):
+                        with T.block("B"):
+                            vi = T.axis.remap("S", [i1_1])
+                            B[vi] = B[vi] + A[vi, vk]
 
     s = tir.Schedule(rowsum, debug_mask="all")
-    k, _ = s.get_loops(s.get_block("B"))
+    k = s.get_loops(s.get_block("B"))[blockize_loop]
     s.blockize(k)
     tvm.ir.assert_structural_equal(s.mod["main"], after_rowsum_blockize)
     verify_trace_roundtrip(sch=s, mod=rowsum)
