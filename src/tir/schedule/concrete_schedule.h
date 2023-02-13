@@ -26,11 +26,17 @@
 #include "./utils.h"
 
 namespace tvm {
+
+namespace relax {
+class ConcreteScheduleNode;
+}
+
 namespace tir {
 
 class ConcreteScheduleNode : public ScheduleNode {
   friend class Schedule;
   friend class ScheduleCopier;
+  friend class relax::ConcreteScheduleNode;
 
  public:
   using TSymbolTable = Map<ObjectRef, ObjectRef>;
@@ -59,6 +65,22 @@ class ConcreteScheduleNode : public ScheduleNode {
     // `rand_state_` is not visited
   }
 
+  ConcreteScheduleNode() = default;
+  ConcreteScheduleNode(IRModule mod, support::LinearCongruentialEngine::TRandState seed,
+                       int debug_mask, ScheduleErrorRenderLevel error_render_level) {
+    state_ = ScheduleState(mod, debug_mask);
+    error_render_level_ = error_render_level;
+    symbol_table_ = {};
+    analyzer_ = std::make_unique<arith::Analyzer>();
+    Seed(seed);
+    GlobalVar gv = NullValue<GlobalVar>();
+    if (FindEntryFunc(mod, &gv) != nullptr) {
+      func_working_on_ = gv;
+    } else {
+      func_working_on_ = NullOpt;
+    }
+  }
+  ConcreteScheduleNode(ConcreteScheduleNode&&) = default;
   virtual ~ConcreteScheduleNode() = default;
 
  public:

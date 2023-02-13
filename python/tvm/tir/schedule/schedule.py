@@ -2563,9 +2563,11 @@ class Schedule(Object):
 
     ########## Schedule: Layout transformation ##########
 
-    def _normalize_block_arg(self, block: Union[BlockRV, str]) -> BlockRV:
+    def _normalize_block_arg(
+        self, block: Union[BlockRV, str], func_name: Optional[str] = None
+    ) -> BlockRV:
         if isinstance(block, str):
-            return self.get_block(block)
+            return self.get_block(block, func_name)
 
         return block
 

@@ -25,6 +25,7 @@ from . import op
 from . import analysis
 from . import transform
 from . import expr_functor
+from . import schedule
 from . import struct_info
 from . import utils
 
@@ -88,3 +89,6 @@ from .struct_info import (
 
 # pipeline
 from .pipeline import get_pipeline
+
+# schedule
+from .schedule import Schedule

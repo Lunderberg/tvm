@@ -106,7 +106,14 @@ class ScheduleNode : public runtime::Object {
   virtual ~ScheduleNode() = default;
 
   static constexpr const char* _type_key = "tir.Schedule";
-  TVM_DECLARE_FINAL_OBJECT_INFO(ScheduleNode, runtime::Object);
+
+  // _type_child_slots only counts types that are exposed through the
+  // Object/ObjectRef API.  Therefore, this only includes the
+  // relax::ScheduleNode, and does not include the
+  // ConcreteScheduleNode/TracedScheduleNode.
+  static constexpr const uint32_t _type_child_slots = 1;
+
+  TVM_DECLARE_BASE_OBJECT_INFO(ScheduleNode, runtime::Object);
 
  public:
   /*! \brief Get the IRModule associated with this schedule. */

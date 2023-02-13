@@ -25,18 +25,8 @@ namespace tir {
 
 Schedule Schedule::Concrete(IRModule mod, support::LinearCongruentialEngine::TRandState seed,
                             int debug_mask, ScheduleErrorRenderLevel error_render_level) {
-  ObjectPtr<ConcreteScheduleNode> n = make_object<ConcreteScheduleNode>();
-  n->state_ = ScheduleState(mod, debug_mask);
-  n->error_render_level_ = error_render_level;
-  n->symbol_table_ = {};
-  n->analyzer_ = std::make_unique<arith::Analyzer>();
-  n->Seed(seed);
-  GlobalVar gv = NullValue<GlobalVar>();
-  if (FindEntryFunc(mod, &gv) != nullptr) {
-    n->func_working_on_ = gv;
-  } else {
-    n->func_working_on_ = NullOpt;
-  }
+  ObjectPtr<ConcreteScheduleNode> n =
+      make_object<ConcreteScheduleNode>(mod, seed, debug_mask, error_render_level);
   return Schedule(std::move(n));
 }
 
