@@ -89,6 +89,10 @@ class NormalizeMutator : public ExprMutatorBase {
     builder_->BeginBindingBlock();
     Expr body = this->VisitExpr(op->body);
     BindingBlock prologue = builder_->EndBlock();
+
+    LOG(DEBUG) << "In normalization of SeqExpr, blocks = " << blocks << ", prologue = " << prologue
+               << ", body = " << body;
+
     if (!prologue->bindings.empty()) {
       blocks.push_back(prologue);
       all_blocks_unchanged = false;

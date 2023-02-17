@@ -303,6 +303,18 @@ TVM_DLL relay::OpPatternKind AnalyzeOpPatternKind(const tir::PrimFunc& func);
 TVM_DLL bool HasReshapePattern(const tir::PrimFunc& func);
 
 /*!
+ * \brief Derive the relax::StructInfo for a given PrimFunc
+ *
+ * This is intended for use with call_tir, to provide appropriate
+ * annotations for a newly generated PrimFunc.
+ *
+ * \param func The function to be examined
+ *
+ * \return The annotation for the given PrimFunc
+ */
+TVM_DLL FuncStructInfo PrimFuncSignature(const tir::PrimFunc& func);
+
+/*!
  * \brief Gather all shape variables from expression expr.
  *
  * This analysis is intended to be called on shape expressions (those set as the shape_ of another

@@ -236,6 +236,27 @@ def has_reshape_pattern(func: tir.PrimFunc) -> bool:
     return _ffi_api.has_reshape_pattern(func)  # type: ignore
 
 
+def prim_func_signature(func: tir.PrimFunc) -> FuncStructInfo:
+    """Derive the relax::StructInfo for a given PrimFunc
+
+    This is intended for use with call_tir, to provide appropriate
+    annotations for a newly generated PrimFunc.
+
+    Parameters
+    ----------
+    func: tir.PrimFunc
+
+        The function to be examined
+
+    Returns
+    -------
+    FuncStructInfo
+
+        The annotation for the given PrimFunc
+    """
+    return _ffi_api.prim_func_signature(func)  # type: ignore
+
+
 def get_var2val(func: Function) -> Dict[Var, Expr]:
     """
     Get a mapping from Var to Expr for each variable in the function.
