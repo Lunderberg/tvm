@@ -436,6 +436,33 @@ class WellFormedChecker : public relax::ExprVisitor,
     }
   }
 
+  void VisitStructInfo_(const FuncStructInfoNode* op) {
+    auto cache = symbolic_var_set_;
+
+    // Symbolic shapes in the parameters of a function annotation may
+    // be used in the in the return type.  This follows the TIR
+    // convention used in PrimFunc::buffer_map, where a tir::Var used
+    // as a shape parameter acts as a definition for that tir::Var
+    // based on the shape of the argument being passed.
+    if (op->params) {
+      for (const auto& param : op->params.value()) {
+        if (auto* tensor = param.as<TensorStructInfoNode>()) {
+          if (auto* shape = tensor->shape.as<ShapeExprNode>()) {
+            for (const auto& dim : shape->values) {
+              if (auto* ptr = dim.as<tir::VarNode>()) {
+                auto var = GetRef<tir::Var>(ptr);
+                symbolic_var_set_.insert(var);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    relax::StructInfoVisitor::VisitStructInfo_(op);
+    std::swap(symbolic_var_set_, cache);
+  }
+
   // Run callback with mode.
   template <typename FType>
   void WithMode(VisitMode mode, FType callback) {
