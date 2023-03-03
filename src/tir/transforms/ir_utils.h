@@ -321,6 +321,16 @@ std::pair<PrimExpr, PrimExpr> GetAsyncWaitAttributes(const AttrStmtNode* op);
  */
 PrimFunc BindParams(PrimFunc f, const Array<runtime::NDArray>& constants);
 
+/*! \brief Replace internal Var/Buffer definitions
+ *
+ * If a PrimFunc has been extracted from some other context,
+ * propagated variables may have been hoisted into parameters.  If
+ * these appear in the same IRModule, it may be recognized as
+ * duplicate definitions.  This utility replaces all buffer and
+ * variable parameters, to avoid this duplication.
+ */
+PrimFunc ReplaceAllVariables(PrimFunc func);
+
 }  // namespace tir
 }  // namespace tvm
 #endif  // TVM_TIR_TRANSFORMS_IR_UTILS_H_
