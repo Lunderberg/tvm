@@ -816,8 +816,44 @@ class Normalizer : public BlockBuilderImpl, private ExprFunctor<Expr(const Expr&
             ret.push_back(block);
           }
 
+          // When possible, avoid introducing a new variable to
+          // represent the nested SeqExpr.  This requires the
+          // following conditions to be met.
+          //
+          // 1. The SeqExpr is being bound in a VarBinding
+          // 2. The output of the SeqExpr is a relax::Var
+          // 3. The last binding of the last BindingBlock of the SeqExpr
+          //    generates that relax::Var
+          //
+          // The easiest way to meet these conditions is for a
+          // subclass override ExprMutator::Visit*, which results in a
+          // new binding that is unwrapped by the block builder.
           if (const auto* var_binding = binding.as<VarBindingNode>()) {
-            current.push_back(VarBinding(var_binding->var, seq->body));
+            bool used = false;
+            if (ret.size() && ret.back()->bindings.size()) {
+              if (auto* ptr = ret.back()->bindings.back().as<VarBindingNode>()) {
+                if (ptr->var.same_as(seq->body)) {
+                  VarBinding new_binding(var_binding->var, ptr->value);
+                  bool block_is_dataflow = ret.back()->IsInstance<DataflowBlockNode>();
+                  auto bindings = ret.back()->bindings;
+                  ret.pop_back();
+                  bindings.pop_back();
+                  bindings.push_back(new_binding);
+
+                  if (block_is_dataflow) {
+                    ret.push_back(DataflowBlock(bindings));
+                  } else {
+                    ret.push_back(BindingBlock(bindings));
+                  }
+                  used = true;
+                }
+              }
+            }
+            if (!used) {
+              LOG(DEBUG) << "In FlattenBinding, " << var_binding->var
+                         << " is being mapped to SeqExpr result " << seq->body;
+              current.push_back(VarBinding(var_binding->var, seq->body));
+            }
           } else if (const auto* match_cast = binding.as<MatchCastNode>()) {
             current.push_back(MatchCast(match_cast->var, seq->body, match_cast->struct_info));
           } else {
