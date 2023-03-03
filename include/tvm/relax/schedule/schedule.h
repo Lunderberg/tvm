@@ -31,9 +31,31 @@ using tir::ScheduleErrorRenderLevel;
 
 class ScheduleNode : public tir::ScheduleNode {
  public:
-  virtual void SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
-                        Optional<String> extracted_primfunc_name,
-                        Optional<String> remainder_primfunc_name) = 0;
+  /* \brief Split a TIR stage out into an independent PrimFunc and call_tir
+   *
+   * \param block_rv The block to extract out into a new PrimFunc
+   *
+   * \param tir_primfunc The name of the PrimFunc from which the block
+   *     should be extracted.  If not specified, will use the PrimFunc
+   *     previously specified by `ScheduleNode::WorkOn`.
+   *
+   * \param new_primfunc_names Optional parameter to specify the names
+   *     of the PrimFuncs resulting from the split.
+   *
+   *     The names in the array are applied first to the extracted
+   *     PrimFunc, then to any stages before the extracted stage (if
+   *     they exist), then to any stages after the extracted stage (if
+   *     they exist).  Stages without a provided name will be
+   *     automatically named.
+   *
+   *     These names may be modified in order to produce names that
+   *     are unique across the scheduled module.
+   *
+   * \returns The GlobalVar representing each PrimFunc generated from
+   *     the original split
+   */
+  virtual Array<GlobalVar> SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
+                                    Array<String> new_primfunc_names = {}) = 0;
 
   static constexpr const char* _type_key = "relax.Schedule";
   TVM_DECLARE_FINAL_OBJECT_INFO(ScheduleNode, tir::ScheduleNode);
@@ -65,7 +87,6 @@ class ScheduleDelegatingTIRPrimitivesToTIRSchedule : public ScheduleNode {
   virtual tir::ScheduleNode* GetInnerSchedule() = 0;
   virtual const tir::ScheduleNode* GetInnerSchedule() const = 0;
 
- private:
   tir::ScheduleState state() const override { return GetInnerSchedule()->state(); }
   Optional<tir::Trace> trace() const override { return GetInnerSchedule()->trace(); }
   void WorkOn(const String& func_name) override { return GetInnerSchedule()->WorkOn(func_name); }

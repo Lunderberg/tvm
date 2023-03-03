@@ -37,9 +37,7 @@ def fused_module(dtype):
         @R.function
         def main(A: R.Tensor(("m", "n"), dtype)) -> R.Tensor:
             m, n = T.var("int64"), T.var("int64")
-            with R.dataflow():
-                C = R.call_tir(two_stage, (A,), R.Tensor((m, n), dtype=dtype))
-                R.output(C)
+            C = R.call_tir(two_stage, (A,), R.Tensor((m, n), dtype=dtype))
             return C
 
         @T.prim_func
@@ -70,10 +68,8 @@ def split_module(dtype):
         @R.function
         def main(A: R.Tensor(("m", "n"), dtype)) -> R.Tensor:
             m, n = T.var("int64"), T.var("int64")
-            with R.dataflow():
-                B = R.call_tir(step1_multiply, (A,), R.Tensor((m, n), dtype=dtype))
-                C = R.call_tir(step2_add, (B,), R.Tensor((m, n), dtype=dtype))
-                R.output(C)
+            B = R.call_tir(step1_multiply, (A,), R.Tensor((m, n), dtype=dtype))
+            C = R.call_tir(step2_add, (B,), R.Tensor((m, n), dtype=dtype))
             return C
 
         @T.prim_func
@@ -101,6 +97,33 @@ def split_module(dtype):
                     C[vi, vj] = B[vi, vj] + 42.0
 
     return split_module
+
+
+@tvm.testing.fixture
+def single_stage_module(dtype):
+    @I.ir_module
+    class fused_module:
+        @R.function
+        def main(A: R.Tensor(("m", "n"), dtype)) -> R.Tensor:
+            m, n = T.var("int64"), T.var("int64")
+            with R.dataflow():
+                C = R.call_tir(single_stage, (A,), R.Tensor((m, n), dtype=dtype))
+                R.output(C)
+            return C
+
+        @T.prim_func
+        def single_stage(a: T.handle, c: T.handle):
+            m = T.var("int64")
+            n = T.var("int64")
+            A = T.match_buffer(a, (m, n), dtype=dtype)
+            C = T.match_buffer(c, (m, n), dtype=dtype)
+
+            for i, j in T.grid(m, n):
+                with T.block("step1_multiply_step2_add"):
+                    vi, vj = T.axis.remap("SS", [i, j])
+                    C[vi, vj] = A[vi, vj] * 2.0 + 42.0
+
+    return fused_module
 
 
 def verify_module(
@@ -133,32 +156,40 @@ def np_input_output(dtype):
 
 
 @tvm.testing.parametrize_targets("llvm")
-@pytest.mark.parametrize("which_module", ["split", "fused"])
-def test_execute_split_module(
+@pytest.mark.parametrize("which_module", ["split", "fused", "single_stage"])
+def test_execute_module(
     target,
     dev,
     exec_mode,
     which_module,
-    split_module,
-    fused_module,
     dtype,
     np_input_output,
+    request,
 ):
-    module = (
-        split_module
-        if which_module == "split"
-        else fused_module
-        if which_module == "fused"
-        else None
-    )
+    if which_module == "split":
+        module = request.getfixturevalue("split_module")
+    elif which_module == "fused":
+        module = request.getfixturevalue("fused_module")
+    elif which_module == "single_stage":
+        module = request.getfixturevalue("single_stage_module")
+    else:
+        raise ValueError(f"Unknown module: {which_module}")
     assert module is not None
     verify_module(module, target, dev, exec_mode, np_input_output)
 
 
 def test_split_module(fused_module, split_module):
+    assert relax.analysis.well_formed(fused_module)
     sch = relax.Schedule(fused_module)
     sch.split_tir(block="step1_multiply", tir_primfunc="two_stage")
+    assert relax.analysis.well_formed(sch.mod)
     tvm.ir.assert_structural_equal(sch.mod, split_module)
+
+
+def test_split_of_single_stage_is_no_op(single_stage_module):
+    sch = relax.Schedule(single_stage_module)
+    sch.split_tir(block="step1_multiply_step2_add", tir_primfunc="single_stage")
+    tvm.ir.assert_structural_equal(sch.mod, single_stage_module)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@
 # under the License.
 """The TensorIR schedule class"""
 
-from typing import Union, Optional
+from typing import Union, Optional, Sequence
 
 import tvm
 from tvm import tir, IRModule
@@ -93,8 +93,7 @@ class Schedule(tir.Schedule):
         self,
         block: Union[BlockRV, str],
         tir_primfunc: Optional[str],
-        extracted_primfunc_name: Optional[str] = None,
-        remainder_primfunc_name: Optional[str] = None,
+        new_primfunc_names: Union[str, Sequence[str]] = [],
     ):
         """Split a stage from a TIR function into a sibling function
 
@@ -126,6 +125,9 @@ class Schedule(tir.Schedule):
 
         block = self._normalize_block_arg(block, tir_primfunc)
 
+        if isinstance(new_primfunc_names, str):
+            new_primfunc_names = [new_primfunc_names]
+
         _ffi_api.ScheduleSplitTIR(  # type: ignore # pylint: disable=no-member
-            self, block, tir_primfunc, extracted_primfunc_name, remainder_primfunc_name
+            self, block, tir_primfunc, new_primfunc_names
         )

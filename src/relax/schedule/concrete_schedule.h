@@ -35,9 +35,8 @@ class ConcreteScheduleNode : public ScheduleDelegatingTIRPrimitivesToTIRSchedule
                        int debug_mask, ScheduleErrorRenderLevel error_render_level)
       : inner(mod, seed, debug_mask, error_render_level) {}
 
-  void SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
-                Optional<String> extracted_primfunc_name,
-                Optional<String> remainder_primfunc_name) override;
+  Array<GlobalVar> SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
+                            Array<String> new_primfunc_names) override;
 
  protected:
   tir::ScheduleNode* GetInnerSchedule() override { return &inner; }

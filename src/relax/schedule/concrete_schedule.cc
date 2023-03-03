@@ -19,6 +19,8 @@
 
 #include "./concrete_schedule.h"
 
+#include "./primitive.h"
+
 namespace tvm {
 namespace relax {
 
@@ -28,12 +30,12 @@ Schedule Schedule::Concrete(IRModule mod, support::LinearCongruentialEngine::TRa
   return Schedule(node);
 }
 
-void ConcreteScheduleNode::SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
-                                    Optional<String> extracted_primfunc_name,
-                                    Optional<String> remainder_primfunc_name) {
+Array<GlobalVar> ConcreteScheduleNode::SplitTIR(const BlockRV& block_rv,
+                                                Optional<String> tir_primfunc,
+                                                Array<String> new_primfunc_names) {
   GlobalVar primfunc = [&]() {
     if (tir_primfunc) {
-      return inner.state_->mod->GetGlobalVar(tir_primfunc.value());
+      return inner.mod()->GetGlobalVar(tir_primfunc.value());
     } else if (inner.func_working_on_) {
       return inner.func_working_on_.value();
     } else {
@@ -41,6 +43,8 @@ void ConcreteScheduleNode::SplitTIR(const BlockRV& block_rv, Optional<String> ti
           << "Must specify tir_primfunc either in function parameter or with Schedule::WorkOn";
     }
   }();
+
+  return relax::SplitTIR(inner.state_, this->GetSRef(block_rv), primfunc, new_primfunc_names);
 }
 
 }  // namespace relax
