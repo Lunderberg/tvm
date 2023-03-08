@@ -299,6 +299,22 @@ inline Optional<ShapeExpr> CheckNdimPerLayoutAndGetShape(const Call& call, const
   return NullOpt;
 }
 
+/*!
+ * \brief Make a Call node using the relax.call_tir op
+ *
+ * The
+ *
+ * \param func The TIR function (usually a GlobalVar) to call
+ * \param args The input arguments to the PrimFunc
+ * \param out_sinfo_list The shapes of output arguments to the PrimFunc
+ * \param tir_args ShapeExpr representing a tuple of ints to unpack
+ *     during runtime. Omitted from args if unused
+ *
+ * \return A relax::Expr containing the call_tir op
+ */
+Expr MakeCallTIR(Expr func, Tuple args, Array<TensorStructInfo> out_sinfo_list,
+                 Optional<Expr> tir_args = NullOpt);
+
 }  // namespace relax
 }  // namespace tvm
 
