@@ -57,6 +57,24 @@ class ScheduleNode : public tir::ScheduleNode {
   virtual Array<GlobalVar> SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
                                     Array<String> new_primfunc_names = {}) = 0;
 
+  /*! \brief Fuse multiple TIR functions into a single PrimFunc
+   *
+   * \param to_fuse The PrimFuncs that should be fused together.  If
+   * these PrimFuncs occur in order within a SeqExpr, a fused PrimFunc
+   * will be generated and the sequence of call_tir operations will be
+   * replaced by a single call to the fused PrimFunc.
+   *
+   * \param new_primfunc_name The name of the resulting fused PrimFunc
+   *
+   * \returns The GlobalVar representing each fused PrimFunc
+   * generated.  There may be more than one PrimFunc generated, based
+   * on the sequence of arguments passed to each PrimFunc.
+   * (e.g. `matmul(matmul(A,B), C)` and `matmul(C, matmul(A,B))` both
+   * consist of sequence `matmul`, but have different fused PrimFuncs)
+   */
+  virtual Array<GlobalVar> FuseTIR(Array<String> to_fuse,
+                                   Optional<String> new_primfunc_name = NullOpt) = 0;
+
   static constexpr const char* _type_key = "relax.Schedule";
   TVM_DECLARE_FINAL_OBJECT_INFO(ScheduleNode, tir::ScheduleNode);
 };

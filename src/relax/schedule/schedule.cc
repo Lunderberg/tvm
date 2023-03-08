@@ -41,5 +41,8 @@ TVM_REGISTER_GLOBAL("relax.schedule.TracedSchedule")
 TVM_REGISTER_GLOBAL("relax.schedule.ScheduleSplitTIR")
     .set_body_method<Schedule>(&ScheduleNode::SplitTIR);
 
+TVM_REGISTER_GLOBAL("relax.schedule.ScheduleFuseTIR")
+    .set_body_method<Schedule>(&ScheduleNode::FuseTIR);
+
 }  // namespace relax
 }  // namespace tvm

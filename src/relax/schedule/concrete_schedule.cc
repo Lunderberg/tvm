@@ -47,5 +47,26 @@ Array<GlobalVar> ConcreteScheduleNode::SplitTIR(const BlockRV& block_rv,
   return relax::SplitTIR(inner.state_, this->GetSRef(block_rv), primfunc, new_primfunc_names);
 }
 
+Array<GlobalVar> ConcreteScheduleNode::FuseTIR(Array<String> to_fuse,
+                                               Optional<String> new_primfunc_name) {
+  CHECK_GE(to_fuse.size(), 2) << "FuseTIR must be provided with at least two functions to fuse, "
+                              << "but was only provided " << to_fuse;
+  auto gv_to_fuse = to_fuse.Map([&](const auto& name) { return inner.mod()->GetGlobalVar(name); });
+
+  auto fused_name = [&]() -> String {
+    if (new_primfunc_name) {
+      return new_primfunc_name.value();
+    }
+    std::stringstream ss;
+    ss << "fused";
+    for (const auto& gv : gv_to_fuse) {
+      ss << gv->name_hint;
+    }
+    return ss.str();
+  }();
+
+  return relax::FuseTIR(inner.state_, gv_to_fuse, fused_name);
+}
+
 }  // namespace relax
 }  // namespace tvm

@@ -38,6 +38,9 @@ class ConcreteScheduleNode : public ScheduleDelegatingTIRPrimitivesToTIRSchedule
   Array<GlobalVar> SplitTIR(const BlockRV& block_rv, Optional<String> tir_primfunc,
                             Array<String> new_primfunc_names) override;
 
+  Array<GlobalVar> FuseTIR(Array<String> to_fuse,
+                           Optional<String> new_primfunc_name = NullOpt) override;
+
  protected:
   tir::ScheduleNode* GetInnerSchedule() override { return &inner; }
   const tir::ScheduleNode* GetInnerSchedule() const override { return &inner; }

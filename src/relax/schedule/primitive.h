@@ -28,6 +28,9 @@ namespace relax {
 Array<GlobalVar> SplitTIR(tir::ScheduleState self, const tir::StmtSRef& block_sref,
                           GlobalVar tir_primfunc, Array<String> new_primfunc_names);
 
+Array<GlobalVar> FuseTIR(tir::ScheduleState self, Array<GlobalVar> to_fuse,
+                         String fused_primfunc_name);
+
 }  // namespace relax
 }  // namespace tvm
 

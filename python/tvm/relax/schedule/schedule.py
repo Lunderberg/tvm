@@ -131,3 +131,31 @@ class Schedule(tir.Schedule):
         _ffi_api.ScheduleSplitTIR(  # type: ignore # pylint: disable=no-member
             self, block, tir_primfunc, new_primfunc_names
         )
+
+    def fuse_tir(
+        self, to_fuse: Sequence[str], new_primfunc_name: Optional[str] = None
+    ) -> Optional[str]:
+        """Fuse two or more TIR functions together
+
+        Parameters
+        ----------
+        to_fuse: Sequence[str]
+
+            An ordered list of the functions which should be fused
+            together.  Any occurrence of these functions as part of a
+            SeqExpr will be replaced with a single call to the fused
+            PrimFunc
+
+        new_primfunc_name: Optional[str]
+
+            The name of the new primfunc to be generated.  If None,
+            the name will be automatically generated.
+
+        Returns
+        -------
+        Optional[str]
+
+            The name of the resulting PrimFunc, if any.
+
+        """
+        _ffi_api.ScheduleFuseTIR(self, to_fuse, new_primfunc_name)  # type: ignore # pylint: disable=no-member

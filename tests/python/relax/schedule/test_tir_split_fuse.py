@@ -178,12 +178,20 @@ def test_execute_module(
     verify_module(module, target, dev, exec_mode, np_input_output)
 
 
-def test_split_module(fused_module, split_module):
+def test_split_tir(fused_module, split_module):
     assert relax.analysis.well_formed(fused_module)
     sch = relax.Schedule(fused_module)
     sch.split_tir(block="step1_multiply", tir_primfunc="two_stage")
     assert relax.analysis.well_formed(sch.mod)
     tvm.ir.assert_structural_equal(sch.mod, split_module)
+
+
+def test_fuse_tir(split_module, fused_module):
+    assert relax.analysis.well_formed(split_module)
+    sch = relax.Schedule(split_module)
+    sch.fuse_tir(to_fuse=["step1_multiply", "step2_add"], new_primfunc_name="two_stage")
+    assert relax.analysis.well_formed(sch.mod)
+    tvm.ir.assert_structural_equal(sch.mod, fused_module)
 
 
 def test_split_of_single_stage_is_no_op(single_stage_module):
