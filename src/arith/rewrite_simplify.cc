@@ -55,29 +55,40 @@ using namespace tir;
 //     TVM_TRY_REWRITE(matches_one_of(floormod(x*c1,c2), floormod(x*c1 + c3, c2)),
 //                     floormod(x*floormod(c1,c2) + floormod(c3,c2), c2))
 
-// macro for doing simple rewrite
-#define TVM_TRY_REWRITE(SrcExpr, ResExpr) \
-  if ((SrcExpr).Match(ret)) {             \
-    return (ResExpr).Eval();              \
-  }
-
-// macro for rewrite + recursively rewrite ResExpr
-#define TVM_TRY_RECURSIVE_REWRITE(SrcExpr, ResExpr) \
-  if ((SrcExpr).Match(ret)) {                       \
-    return RecursiveRewrite((ResExpr).Eval());      \
+/* \brief Implementation for other rewrite macros.
+ *
+ * \param SrcExpr A Pattern expression that should match for the rule
+ *   to apply
+ *
+ * \param ResExpr The replacement pattern
+ *
+ * \param CondExpr A boolean expression, which may use results defined
+ *   from SrcExpr.  If the expression evaluates to false, the rule is
+ *   not applied.
+ *
+ * \param PostProc The post-processing to apply after the rule, or
+ *   empty string for no post processing.
+ */
+#define TVM_TRY_REWRITE_IMPL(SrcExpr, ResExpr, CondExpr, PostProc) \
+  if ((SrcExpr).Match(ret, [&]() { return (CondExpr); })) {        \
+    PrimExpr out = (ResExpr).Eval();                               \
+    return PostProc(out);                                          \
   }
 
 // macro rewrite only if CondExor is true after match.
-#define TVM_TRY_REWRITE_IF(SrcExpr, ResExpr, CondExpr)      \
-  if ((SrcExpr).Match(ret, [&]() { return (CondExpr); })) { \
-    return (ResExpr).Eval();                                \
-  }
+#define TVM_TRY_REWRITE_IF(SrcExpr, ResExpr, CondExpr) \
+  TVM_TRY_REWRITE_IMPL(SrcExpr, ResExpr, CondExpr, )
 
 // macro rewrite + recursive_rewrite only if CondExor is true after match.
 #define TVM_TRY_RECURSIVE_REWRITE_IF(SrcExpr, ResExpr, CondExpr) \
-  if ((SrcExpr).Match(ret, [&]() { return (CondExpr); })) {      \
-    return RecursiveRewrite((ResExpr).Eval());                   \
-  }
+  TVM_TRY_REWRITE_IMPL(SrcExpr, ResExpr, CondExpr, RecursiveRewrite)
+
+// macro for doing simple rewrite
+#define TVM_TRY_REWRITE(SrcExpr, ResExpr) TVM_TRY_REWRITE_IMPL(SrcExpr, ResExpr, true, )
+
+// macro for rewrite + recursively rewrite ResExpr
+#define TVM_TRY_RECURSIVE_REWRITE(SrcExpr, ResExpr) \
+  TVM_TRY_REWRITE_IMPL(SrcExpr, ResExpr, true, RecursiveRewrite)
 
 // NOTE for developers:
 //
