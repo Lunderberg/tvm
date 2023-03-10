@@ -244,53 +244,45 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
 
     // cancelation rules
 
-    std::function<Optional<PrimExpr>(const PrimExpr&, const PrimExpr&)> try_cancel_rhs =
-        [&](const PrimExpr& lhs, const PrimExpr& rhs) -> Optional<PrimExpr> {
-      if (auto* as_add = lhs.as<AddNode>()) {
-        if (auto opt = try_cancel_rhs(as_add->a, rhs)) {
-          return opt.value() + as_add->b;
+    auto try_cancel_rhs = [&](const PrimExpr& lhs, const PrimExpr& rhs) -> Optional<PrimExpr> {
+      std::function<Optional<PrimExpr>(const PrimExpr&, const PrimExpr&, bool)> recurse =
+          [&recurse](const PrimExpr& lhs, const PrimExpr& rhs,
+                     bool inside_minmax) -> Optional<PrimExpr> {
+        if (auto* as_add = lhs.as<AddNode>()) {
+          if (auto opt = recurse(as_add->a, rhs, inside_minmax)) {
+            return opt.value() + as_add->b;
+          }
+        } else if (auto* as_sub = lhs.as<SubNode>()) {
+          if (tir::ExprDeepEqual()(as_sub->b, rhs)) {
+            return as_sub->a;
+          } else if (auto opt = recurse(as_sub->a, rhs, inside_minmax)) {
+            return opt.value() - as_sub->b;
+          }
         }
-      } else if (auto* as_sub = lhs.as<SubNode>()) {
-        if (tir::ExprDeepEqual()(as_sub->b, rhs)) {
-          return as_sub->a;
-        } else if (auto opt = try_cancel_rhs(as_sub->a, rhs)) {
-          return opt.value() - as_sub->b;
-        }
-      }
 
-      return NullOpt;
+        if (!inside_minmax) {
+          if (auto* as_min = lhs.as<MinNode>()) {
+            if (auto opt = recurse(as_min->a, rhs, true)) {
+              return min(opt.value(), as_min->b + rhs);
+            } else if (auto opt = recurse(as_min->b, rhs, true)) {
+              return min(as_min->a + rhs, opt.value());
+            }
+          } else if (auto* as_max = lhs.as<MaxNode>()) {
+            if (auto opt = recurse(as_max->a, rhs, true)) {
+              return max(opt.value(), as_max->b + rhs);
+            } else if (auto opt = recurse(as_max->b, rhs, true)) {
+              return max(as_max->a + rhs, opt.value());
+            }
+          }
+        }
+
+        return NullOpt;
+      };
+      return recurse(lhs, rhs, false);
     };
     if (auto opt = try_cancel_rhs(op->a, op->b)) {
       return opt.value();
     }
-
-    TVM_TRY_REWRITE((x - y) + y, x);
-    TVM_TRY_REWRITE(x + (y - x), y);
-
-    TVM_TRY_REWRITE((x - y) + (y - z), x - z);
-    TVM_TRY_REWRITE((x - y) + (z - x), z - y);
-
-    TVM_TRY_REWRITE(min(x, y - z) + z, min(x + z, y));
-    TVM_TRY_REWRITE(min(x - z, y) + z, min(x, y + z));
-    TVM_TRY_REWRITE(max(x, y - z) + z, max(x + z, y));
-    TVM_TRY_REWRITE(max(x - z, y) + z, max(x, y + z));
-
-    TVM_TRY_REWRITE_IF(min(x, y + z * c1) + z * c2, min(x + z * c2, y),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(x, y + z * c1) + z * c2, max(x + z * c2, y),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(min(y + z * c1, x) + z * c2, min(y, x + z * c2),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(y + z * c1, x) + z * c2, max(y, x + z * c2),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(min(x, z * c1 + y) + z * c2, min(x + z * c2, y),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(x, z * c1 + y) + z * c2, max(x + z * c2, y),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(min(z * c1 + y, x) + z * c2, min(y, x + z * c2),
-                       c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(z * c1 + y, x) + z * c2, max(y, x + z * c2),
-                       c1.Eval()->value == -c2.Eval()->value);
 
     TVM_TRY_REWRITE((PMatchesOneOf{
                         max(x, y) + min(x, y),
@@ -299,11 +291,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
                         min(x, y) + max(y, x),
                     }),
                     x + y);
-
-    TVM_TRY_REWRITE_IF(min(x, y + c1) + c2, min(x + c2, y), c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(min(x + c1, y) + c2, min(x, y + c2), c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(x, y + c1) + c2, max(x + c2, y), c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(x + c1, y) + c2, max(x, y + c2), c1.Eval()->value == -c2.Eval()->value);
 
     // mul co-efficient folding
     TVM_TRY_REWRITE(x + x, x * 2);
@@ -416,45 +403,63 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
 
     // cancelation rules
 
-    std::function<Optional<PrimExpr>(const PrimExpr&, const PrimExpr&)> try_cancel_rhs =
-        [&](const PrimExpr& lhs, const PrimExpr& rhs) -> Optional<PrimExpr> {
-      if (auto* as_sub = lhs.as<SubNode>()) {
-        if (auto opt = try_cancel_rhs(as_sub->a, rhs)) {
-          return opt.value() - as_sub->b;
+    auto try_cancel_rhs = [](const PrimExpr& lhs, const PrimExpr& rhs) -> Optional<PrimExpr> {
+      std::function<Optional<PrimExpr>(const PrimExpr&, const PrimExpr&, bool)> recurse =
+          [&recurse](const PrimExpr& lhs, const PrimExpr& rhs,
+                     bool inside_minmax) -> Optional<PrimExpr> {
+        if (auto* as_sub = lhs.as<SubNode>()) {
+          if (auto opt = recurse(as_sub->a, rhs, inside_minmax)) {
+            return opt.value() - as_sub->b;
+          }
+        } else if (auto* as_add = lhs.as<AddNode>()) {
+          if (tir::ExprDeepEqual()(as_add->b, rhs)) {
+            return as_add->a;
+          } else if (auto opt = recurse(as_add->a, rhs, inside_minmax)) {
+            return opt.value() + as_add->b;
+          }
         }
-      } else if (auto* as_add = lhs.as<AddNode>()) {
-        if (tir::ExprDeepEqual()(as_add->b, rhs)) {
-          return as_add->a;
-        } else if (auto opt = try_cancel_rhs(as_add->a, rhs)) {
-          return opt.value() + as_add->b;
-        }
-      } else if (tir::ExprDeepEqual()(lhs, rhs)) {
-        return tir::make_const(lhs->dtype, 0);
-      }
 
-      return NullOpt;
+        if (!inside_minmax) {
+          if (auto* as_min = lhs.as<MinNode>()) {
+            if (auto opt = recurse(as_min->a, rhs, true)) {
+              return min(opt.value(), as_min->b - rhs);
+            } else if (auto opt = recurse(as_min->b, rhs, true)) {
+              return min(as_min->a - rhs, opt.value());
+            }
+          } else if (auto* as_max = lhs.as<MaxNode>()) {
+            if (auto opt = recurse(as_max->a, rhs, true)) {
+              return max(opt.value(), as_max->b - rhs);
+            } else if (auto opt = recurse(as_max->b, rhs, true)) {
+              return max(as_max->a - rhs, opt.value());
+            }
+          }
+
+          if (auto* as_min = rhs.as<MinNode>()) {
+            if (auto opt = recurse(lhs, as_min->a, true)) {
+              return opt.value() + max(as_min->a - as_min->b, 0);
+            } else if (auto opt = recurse(lhs, as_min->b, true)) {
+              return opt.value() + max(as_min->b - as_min->a, 0);
+            }
+          } else if (auto* as_max = rhs.as<MaxNode>()) {
+            if (auto opt = recurse(lhs, as_max->a, true)) {
+              return opt.value() + min(as_max->a - as_max->b, 0);
+            } else if (auto opt = recurse(lhs, as_max->b, true)) {
+              return opt.value() + min(as_max->b - as_max->a, 0);
+            }
+          }
+        }
+
+        if (tir::ExprDeepEqual()(lhs, rhs)) {
+          return tir::make_const(lhs->dtype, 0);
+        }
+        return NullOpt;
+      };
+
+      return recurse(lhs, rhs, false);
     };
     if (auto opt = try_cancel_rhs(op->a, op->b)) {
       return opt.value();
     }
-
-    TVM_TRY_REWRITE(matches_one_of((x + y) - y, (y + x) - y), x);
-    TVM_TRY_RECURSIVE_REWRITE(matches_one_of(x - (y + x), x - (x + y)), 0 - y);
-
-    TVM_TRY_REWRITE((PMatchesOneOf{
-                        x - max(y, x),
-                        x - max(x, y),
-                        min(x, y) - y,
-                        min(y, x) - y,
-                    }),
-                    min(x - y, 0));
-    TVM_TRY_REWRITE((PMatchesOneOf{
-                        x - min(y, x),
-                        x - min(x, y),
-                        max(x, y) - y,
-                        max(y, x) - y,
-                    }),
-                    max(x - y, 0));
 
     // canonicalization rule
     // will try rewrite again after canonicalization.
