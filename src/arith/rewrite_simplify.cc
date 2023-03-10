@@ -222,7 +222,48 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
     // Index rules
     TVM_TRY_RECURSIVE_REWRITE(c1 + x, x + c1);
 
+    TVM_TRY_RECURSIVE_REWRITE_IF(x + c1, x - (0 - c1), c1.Eval()->value < 0);
+    TVM_TRY_RECURSIVE_REWRITE_IF((PMatchesOneOf{
+                                     x + y * c1,
+                                     y * c1 + x,
+                                 }),
+                                 x - y * (0 - c1), c1.Eval()->value < 0);
+
+    TVM_TRY_RECURSIVE_REWRITE(x + (y + z), (x + y) + z);
+    TVM_TRY_RECURSIVE_REWRITE(x + (y - z), (x + y) - z);
+
+    // constant folding
+    // NOTE: canonicalization might better at this.
+    TVM_TRY_RECURSIVE_REWRITE((x + c1) + c2, x + (c1 + c2));
+    TVM_TRY_RECURSIVE_REWRITE((x - c1) + c2, x + (c2 - c1));
+    TVM_TRY_RECURSIVE_REWRITE((c1 - x) + c2, (c1 + c2) - x);
+
+    TVM_TRY_RECURSIVE_REWRITE((x + c1) + y, (x + y) + c1);
+    TVM_TRY_RECURSIVE_REWRITE((x - c1) + y, (x + y) - c1);
+    TVM_TRY_RECURSIVE_REWRITE((c1 - x) + y, (y - x) + c1);
+
     // cancelation rules
+
+    std::function<Optional<PrimExpr>(const PrimExpr&, const PrimExpr&)> try_cancel_rhs =
+        [&](const PrimExpr& lhs, const PrimExpr& rhs) -> Optional<PrimExpr> {
+      if (auto* as_add = lhs.as<AddNode>()) {
+        if (auto opt = try_cancel_rhs(as_add->a, rhs)) {
+          return opt.value() + as_add->b;
+        }
+      } else if (auto* as_sub = lhs.as<SubNode>()) {
+        if (tir::ExprDeepEqual()(as_sub->b, rhs)) {
+          return as_sub->a;
+        } else if (auto opt = try_cancel_rhs(as_sub->a, rhs)) {
+          return opt.value() - as_sub->b;
+        }
+      }
+
+      return NullOpt;
+    };
+    if (auto opt = try_cancel_rhs(op->a, op->b)) {
+      return opt.value();
+    }
+
     TVM_TRY_REWRITE((x - y) + y, x);
     TVM_TRY_REWRITE(x + (y - x), y);
 
@@ -263,11 +304,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
     TVM_TRY_REWRITE_IF(min(x + c1, y) + c2, min(x, y + c2), c1.Eval()->value == -c2.Eval()->value);
     TVM_TRY_REWRITE_IF(max(x, y + c1) + c2, max(x + c2, y), c1.Eval()->value == -c2.Eval()->value);
     TVM_TRY_REWRITE_IF(max(x + c1, y) + c2, max(x, y + c2), c1.Eval()->value == -c2.Eval()->value);
-
-    // constant folding
-    // NOTE: canonicalization might better at this.
-    TVM_TRY_REWRITE((x + c1) + c2, x + (c1 + c2));
-    TVM_TRY_RECURSIVE_REWRITE((x + c1) + (y + c2), (x + y) + (c1 + c2));
 
     // mul co-efficient folding
     TVM_TRY_REWRITE(x + x, x * 2);
@@ -365,9 +401,45 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
 
   if (IsIndexType(op->dtype)) {
     // Index rules
+
+    // constant folding
+    TVM_TRY_RECURSIVE_REWRITE(x - (y + z), x - y - z);
+    TVM_TRY_RECURSIVE_REWRITE(x - (y - z), x - y + z);
+    TVM_TRY_RECURSIVE_REWRITE((x - c1) - c2, x - (c1 + c2));
+    TVM_TRY_RECURSIVE_REWRITE((x - c1) - y, x - y - c1);
+    TVM_TRY_RECURSIVE_REWRITE((c1 - x) - c2, (c1 - c2) - x);
+
+    TVM_TRY_REWRITE(0 - x * c1, x * (0 - c1));
+    TVM_TRY_REWRITE_IF(x - c1, x + (0 - c1), c1.Eval()->value < 0);
+    TVM_TRY_RECURSIVE_REWRITE((x + c1) - y, (x - y) + c1);
+    TVM_TRY_RECURSIVE_REWRITE_IF(x - y * c1, x + y * (0 - c1), c1.Eval()->value < 0);
+
     // cancelation rules
+
+    std::function<Optional<PrimExpr>(const PrimExpr&, const PrimExpr&)> try_cancel_rhs =
+        [&](const PrimExpr& lhs, const PrimExpr& rhs) -> Optional<PrimExpr> {
+      if (auto* as_sub = lhs.as<SubNode>()) {
+        if (auto opt = try_cancel_rhs(as_sub->a, rhs)) {
+          return opt.value() - as_sub->b;
+        }
+      } else if (auto* as_add = lhs.as<AddNode>()) {
+        if (tir::ExprDeepEqual()(as_add->b, rhs)) {
+          return as_add->a;
+        } else if (auto opt = try_cancel_rhs(as_add->a, rhs)) {
+          return opt.value() + as_add->b;
+        }
+      } else if (tir::ExprDeepEqual()(lhs, rhs)) {
+        return tir::make_const(lhs->dtype, 0);
+      }
+
+      return NullOpt;
+    };
+    if (auto opt = try_cancel_rhs(op->a, op->b)) {
+      return opt.value();
+    }
+
     TVM_TRY_REWRITE(matches_one_of((x + y) - y, (y + x) - y), x);
-    TVM_TRY_REWRITE(matches_one_of(x - (y + x), x - (x + y)), 0 - y);
+    TVM_TRY_RECURSIVE_REWRITE(matches_one_of(x - (y + x), x - (x + y)), 0 - y);
 
     TVM_TRY_REWRITE((PMatchesOneOf{
                         x - max(y, x),
@@ -384,16 +456,16 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
                     }),
                     max(x - y, 0));
 
+    // canonicalization rule
+    // will try rewrite again after canonicalization.
+    TVM_TRY_RECURSIVE_REWRITE(x - (y - z), (x + z) - y);
+
     // mul co-efficient folding
     TVM_TRY_REWRITE(x - x, ZeroWithTypeLike(x));
     TVM_TRY_REWRITE(matches_one_of(x * y - x, y * x - x), x * (y - 1));
     TVM_TRY_REWRITE(matches_one_of(x - y * x, x - x * y), x * (1 - y));
     TVM_TRY_REWRITE(matches_one_of(x * y - x * z, y * x - x * z, x * y - z * x, y * x - z * x),
                     x * (y - z));
-
-    // constant cancelation
-    TVM_TRY_REWRITE((x + c1) - c2, x + (c1 - c2));
-    TVM_TRY_REWRITE((c1 - x) - (c2 - y), (y - x) + (c1 - c2));
 
     // cancelization rule involving 4 operands
     TVM_TRY_REWRITE(
@@ -500,12 +572,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
     TVM_TRY_REWRITE_IF(floordiv(x + c1, c3) - floordiv(x, c3), floordiv(floormod(x, c3) + c1, c3),
                        c3.Eval()->value > 0);
 
-    // canonicalization rule
-    // will try rewrite again after canonicalization.
-    TVM_TRY_REWRITE(x - c1, x + (0 - c1));
-    TVM_TRY_RECURSIVE_REWRITE((x + c1) - y, (x - y) + c1);
-    TVM_TRY_RECURSIVE_REWRITE(x - (y - z), (x + z) - y);
-    TVM_TRY_RECURSIVE_REWRITE(x - y * c1, x + y * (0 - c1));
   } else if (op->dtype.is_float()) {
     // Cancellation rules.  Deliberately off of the integer path, to
     // avoid introducing checks on the side effects for the fast path.
@@ -621,6 +687,15 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const DivNode* op) {
       int64_t c2val = c2.Eval()->value;
       return make_const(op->dtype, truncdiv(c1val, c2val));
     }
+
+    // Normalize to positive numerators.  The identity `a/b == (-a)/(-b) == -(a/(-b))`
+    // only works for truncdiv.
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncdiv(x, c1), 0 - truncdiv(x, 0 - c1), c1.Eval()->value < 0);
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncdiv(c1, x), 0 - truncdiv(0 - c1, x), c1.Eval()->value < 0);
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncdiv(x * c1, y), 0 - truncdiv(x * (0 - c1), y),
+                                 c1.Eval()->value < 0);
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncdiv(x, y * c1), 0 - truncdiv(x, y * (0 - c1)),
+                                 c1.Eval()->value < 0);
 
     // while it is always true for trunc div
     // restrict to common case(positive div)
@@ -769,23 +844,38 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const ModNode* op) {
     // Be-aware of the division rules:
     // We adopt the default C division uses truncation instead of floordiv.
     // This means most rules need to check non-negativeness of the operands.
-    TVM_TRY_REWRITE_IF(truncmod(x * c1, c2), ZeroWithTypeLike(x),
-                       c2.Eval()->value != 0 && c1.Eval()->value % c2.Eval()->value == 0);
 
-    TVM_TRY_REWRITE_IF(truncmod(x * c1 + y, c2), truncmod(y, c2),
-                       c2.Eval()->value > 0 && c1.Eval()->value % c2.Eval()->value == 0 &&
-                           CanProveGreaterEqual((x * c1).Eval(), 0) &&
-                           CanProveGreaterEqual(y.Eval(), 0));
+    auto truncmod_alters_numerator = [](const auto& c1, const auto& c2) -> bool {
+      auto c1val = Downcast<IntImm>(c1.Eval())->value;
+      auto c2val = Downcast<IntImm>(c2.Eval())->value;
+      return c2val != 0 && truncmod(c1val, c2val) != c1val;
+    };
 
-    TVM_TRY_REWRITE_IF(truncmod(x + c1, c2), truncmod(x, c2),
-                       c2.Eval()->value > 0 && c1.Eval()->value >= 0 &&
-                           c1.Eval()->value % c2.Eval()->value == 0 &&
-                           CanProveGreaterEqual(x.Eval(), 0));
+    TVM_TRY_REWRITE_IF(truncmod(x * c1, c2), truncmod(x * truncmod(c1, c2), c2),
+                       truncmod_alters_numerator(c1, c2));
 
-    TVM_TRY_REWRITE_IF(truncmod(x + y * c1, c2), truncmod(x, c2),
-                       c2.Eval()->value > 0 && c1.Eval()->value % c2.Eval()->value == 0 &&
-                           CanProveGreaterEqual(x.Eval(), 0) &&
-                           CanProveGreaterEqual((y * c1).Eval(), 0));
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncmod(x * c1 + y, c2), truncmod(x * truncmod(c1, c2) + y, c2),
+                                 c2.Eval()->value > 0 && truncmod_alters_numerator(c1, c2) &&
+                                     CanProveGreaterEqual((x * c1).Eval(), 0) &&
+                                     CanProveGreaterEqual(y.Eval(), 0));
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncmod(x * c1 - y, c2), truncmod(x * truncmod(c1, c2) - y, c2),
+                                 c2.Eval()->value > 0 && truncmod_alters_numerator(c1, c2) &&
+                                     CanProveGreaterEqual((x * c1).Eval(), 0) &&
+                                     CanProveGreaterEqual((0 - y).Eval(), 0));
+
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncmod(x + c1, c2), truncmod(x + truncmod(c1, c2), c2),
+                                 c2.Eval()->value > 0 && c1.Eval()->value >= 0 &&
+                                     truncmod_alters_numerator(c1, c2) &&
+                                     CanProveGreaterEqual(x.Eval(), 0));
+
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncmod(x + y * c1, c2), truncmod(x + y * truncmod(c1, c2), c2),
+                                 c2.Eval()->value > 0 && truncmod_alters_numerator(c1, c2) &&
+                                     CanProveGreaterEqual(x.Eval(), 0) &&
+                                     CanProveGreaterEqual((y * c1).Eval(), 0));
+    TVM_TRY_RECURSIVE_REWRITE_IF(truncmod(x - y * c1, c2), truncmod(x - y * truncmod(c1, c2), c2),
+                                 c2.Eval()->value > 0 && truncmod_alters_numerator(c1, c2) &&
+                                     CanProveGreaterEqual(x.Eval(), 0) &&
+                                     CanProveGreaterEqual((y * (0 - c1)).Eval(), 0));
 
     // canonicalization: x % c == x % (-c) for truncated division
     // NOTE: trunc div required
@@ -853,20 +943,19 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const FloorDivNode* op) {
     TVM_TRY_REWRITE_IF(floordiv(floordiv(x, c1) + c2, c3), floordiv(x + c1 * c2, c1 * c3),
                        c1.Eval()->value > 0 && c3.Eval()->value > 0);
 
-    if (floordiv(x * c1 + y, c2).Match(ret) || floordiv(x * c1, c2).Match(ret) ||
-        floordiv(y + x * c1, c2).Match(ret)) {
-      int64_t c1val = c1.Eval()->value;
-      int64_t c2val = c2.Eval()->value;
-      PrimExpr yval = y.EvalOr(Integer(0));
+    auto check_linear = [&ret, this](int64_t c1val, PrimExpr xval, PrimExpr yval,
+                                     int64_t c2val) -> Optional<PrimExpr> {
       if (c2val == 0) return ret;
 
       // try eliminate residue part
-      PrimExpr residue =
-          floordiv(x.Eval() * floormod(c1.Eval(), c2val) + floormod(yval, c2val), c2val);
+      PrimExpr residue = floordiv(
+          xval * tir::make_const(xval->dtype, floormod(c1val, c2val)) + floormod(yval, c2val),
+          c2val);
       PrimExpr y_div = CanProveEqual(floordiv(yval, c2val), 0) ? 0 : floordiv(yval, c2val);
       auto bound = analyzer_->const_int_bound(residue);
       if (bound.defined() && bound->max_value == bound->min_value) {
-        return x.Eval() * floordiv(c1val, c2.Eval()) + (y_div + Integer(bound->max_value));
+        return xval * tir::make_const(xval->dtype, floordiv(c1val, c2val)) +
+               (y_div + Integer(bound->max_value));
       }
 
       // try simplify divisor
@@ -878,7 +967,31 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const FloorDivNode* op) {
         // ==> x' + d + (b * c1 + e) // c2
         // ==> x' + d since 0 <= b * c1 <= (a-1) * c1, 0 <= e < c1
         // ==> x // (c2 // c1) + (y // c2)
-        return floordiv(x.Eval(), floordiv(c2val, c1val)) + y_div;
+        return floordiv(xval, floordiv(c2val, c1val)) + y_div;
+      }
+      return NullOpt;
+    };
+
+    if (floordiv(x * c1 + y, c2).Match(ret) || floordiv(x * c1, c2).Match(ret)) {
+      if (auto opt =
+              check_linear(c1.Eval()->value, x.Eval(), y.EvalOr(Integer(0)), c2.Eval()->value)) {
+        return opt.value();
+      }
+    }
+    if (floordiv(y + x * c1, c2).Match(ret)) {
+      if (auto opt = check_linear(c1.Eval()->value, x.Eval(), y.Eval(), c2.Eval()->value)) {
+        return opt.value();
+      }
+    }
+    if (floordiv(x * c1 - y, c2).Match(ret)) {
+      if (auto opt =
+              check_linear(c1.Eval()->value, x.Eval(), -y.EvalOr(Integer(0)), c2.Eval()->value)) {
+        return opt.value();
+      }
+    }
+    if (floordiv(y - x * c1, c2).Match(ret)) {
+      if (auto opt = check_linear(-c1.Eval()->value, x.Eval(), y.Eval(), c2.Eval()->value)) {
+        return opt.value();
       }
     }
 
@@ -984,23 +1097,34 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const FloorModNode* op) {
   }
 
   if (IsIndexType(op->dtype)) {
+    auto floormod_alters_numerator = [](const auto& c1, const auto& c2) -> bool {
+      auto c1val = Downcast<IntImm>(c1.Eval())->value;
+      auto c2val = Downcast<IntImm>(c2.Eval())->value;
+      return c2val != 0 && floormod(c1val, c2val) != c1val;
+    };
+
     // Be-aware of the division rules: we use floordiv/floormod here
     TVM_TRY_REWRITE_IF(floormod(x * c1, c2), floormod(x * floormod(c1, c2), c2),
-                       c2.Eval()->value != 0);
+                       floormod_alters_numerator(c1, c2));
 
     TVM_TRY_REWRITE_IF(floormod(x * c1 + y, c2), floormod(x, floordiv(c2, c1)) * c1 + y,
                        c1.Eval()->value > 0 && c2.Eval()->value > 0 &&
                            c2.Eval()->value % c1.Eval()->value == 0 &&
                            CanProveEqual(floordiv(y.Eval(), c1.Eval()), 0));
 
-    TVM_TRY_REWRITE_IF(floormod(x * c1 + y, c2), floormod(x * floormod(c1, c2) + y, c2),
-                       c2.Eval()->value > 0);
-
-    TVM_TRY_REWRITE_IF(floormod(x + c1, c2), floormod(x, c2),
-                       c2.Eval()->value > 0 && c1.Eval()->value % c2.Eval()->value == 0);
-
-    TVM_TRY_REWRITE_IF(floormod(x + y * c1, c2), floormod(x + y * floormod(c1, c2), c2),
-                       c2.Eval()->value > 0);
+    TVM_TRY_RECURSIVE_REWRITE_IF(floormod(x * c1 + y, c2), floormod(x * floormod(c1, c2) + y, c2),
+                                 floormod_alters_numerator(c1, c2));
+    TVM_TRY_RECURSIVE_REWRITE_IF(floormod(x + y * c1, c2), floormod(x + y * floormod(c1, c2), c2),
+                                 floormod_alters_numerator(c1, c2));
+    TVM_TRY_RECURSIVE_REWRITE_IF(floormod(x + c1, c2), floormod(x + floormod(c1, c2), c2),
+                                 floormod_alters_numerator(c1, c2));
+    TVM_TRY_RECURSIVE_REWRITE_IF(floormod(x - c1, c2), floormod(x + floormod(0 - c1, c2), c2),
+                                 floormod_alters_numerator(0 - c1, c2));
+    TVM_TRY_RECURSIVE_REWRITE_IF(floormod(x * c1 - y, c2), floormod(x * floormod(c1, c2) - y, c2),
+                                 floormod_alters_numerator(c1, c2));
+    TVM_TRY_RECURSIVE_REWRITE_IF(floormod(x - y * c1, c2),
+                                 floormod(x + y * floormod(0 - c1, c2), c2),
+                                 floormod_alters_numerator(0 - c1, c2));
 
     TVM_TRY_REWRITE_IF(floormod(x * c1, x * c2), x * floormod(c1, c2), c2.Eval()->value != 0);
 
@@ -1340,8 +1464,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MaxNode* op) {
                     max(y, z) + x);
 
     // sub distribution
-    TVM_TRY_REWRITE(max(y - x, z - x), max(y, z) - x);
-    TVM_TRY_REWRITE(max(x - y, x - z), x - min(y, z));
+    TVM_TRY_RECURSIVE_REWRITE(max(y - x, z - x), max(y, z) - x);
+    TVM_TRY_RECURSIVE_REWRITE(max(x - y, x - z), x - min(y, z));
 
     // scaling rule
     if (max(truncdiv(x, c1), truncdiv(y, c1)).Match(ret)) {
