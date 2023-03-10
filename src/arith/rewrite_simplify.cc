@@ -220,6 +220,8 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
 
   if (IsIndexType(op->dtype)) {
     // Index rules
+    TVM_TRY_RECURSIVE_REWRITE(c1 + x, x + c1);
+
     // cancelation rules
     TVM_TRY_REWRITE((x - y) + y, x);
     TVM_TRY_REWRITE(x + (y - x), y);
@@ -236,9 +238,17 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
                        c1.Eval()->value == -c2.Eval()->value);
     TVM_TRY_REWRITE_IF(max(x, y + z * c1) + z * c2, max(x + z * c2, y),
                        c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(min(y + z * c1, x) + z * c2, min(x + z * c2, y),
+    TVM_TRY_REWRITE_IF(min(y + z * c1, x) + z * c2, min(y, x + z * c2),
                        c1.Eval()->value == -c2.Eval()->value);
-    TVM_TRY_REWRITE_IF(max(y + z * c1, x) + z * c2, max(x + z * c2, y),
+    TVM_TRY_REWRITE_IF(max(y + z * c1, x) + z * c2, max(y, x + z * c2),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(min(x, z * c1 + y) + z * c2, min(x + z * c2, y),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(max(x, z * c1 + y) + z * c2, max(x + z * c2, y),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(min(z * c1 + y, x) + z * c2, min(y, x + z * c2),
+                       c1.Eval()->value == -c2.Eval()->value);
+    TVM_TRY_REWRITE_IF(max(z * c1 + y, x) + z * c2, max(y, x + z * c2),
                        c1.Eval()->value == -c2.Eval()->value);
 
     TVM_TRY_REWRITE((PMatchesOneOf{
@@ -257,6 +267,7 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const AddNode* op) {
     // constant folding
     // NOTE: canonicalization might better at this.
     TVM_TRY_REWRITE((x + c1) + c2, x + (c1 + c2));
+    TVM_TRY_RECURSIVE_REWRITE((x + c1) + (y + c2), (x + y) + (c1 + c2));
 
     // mul co-efficient folding
     TVM_TRY_REWRITE(x + x, x * 2);
@@ -358,10 +369,20 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const SubNode* op) {
     TVM_TRY_REWRITE(matches_one_of((x + y) - y, (y + x) - y), x);
     TVM_TRY_REWRITE(matches_one_of(x - (y + x), x - (x + y)), 0 - y);
 
-    TVM_TRY_REWRITE(matches_one_of(min(x, y) - y, x - max(y, x)), min(x - y, 0));
-    TVM_TRY_REWRITE(matches_one_of(x - max(x, y), min(y, x) - y), min(0, x - y));
-    TVM_TRY_REWRITE(matches_one_of(max(x, y) - y, x - min(y, x)), max(x - y, 0));
-    TVM_TRY_REWRITE(matches_one_of(x - min(x, y), max(y, x) - y), max(0, x - y));
+    TVM_TRY_REWRITE((PMatchesOneOf{
+                        x - max(y, x),
+                        x - max(x, y),
+                        min(x, y) - y,
+                        min(y, x) - y,
+                    }),
+                    min(x - y, 0));
+    TVM_TRY_REWRITE((PMatchesOneOf{
+                        x - min(y, x),
+                        x - min(x, y),
+                        max(x, y) - y,
+                        max(y, x) - y,
+                    }),
+                    max(x - y, 0));
 
     // mul co-efficient folding
     TVM_TRY_REWRITE(x - x, ZeroWithTypeLike(x));
@@ -528,16 +549,18 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MulNode* op) {
     // constant simplification rule
     TVM_TRY_REWRITE((x + c1) * c2, x * c2 + c1 * c2);
     TVM_TRY_REWRITE((x * c1) * c2, x * (c1 * c2));
+    TVM_TRY_RECURSIVE_REWRITE((x * c1) * (y * c2), (x * y) * (c1 * c2));
+
+    // canonicalization
+    TVM_TRY_RECURSIVE_REWRITE(x * (y * c1), (x * y) * c1);
+    TVM_TRY_RECURSIVE_REWRITE(c1 * x, x * c1);
+    TVM_TRY_RECURSIVE_REWRITE_IF((x - y) * c1, (y - x) * (0 - c1), c1.Eval()->value < 0);
+
     TVM_TRY_REWRITE(matches_one_of(min(x, y) * max(x, y), max(x, y) * min(x, y)), x * y);
 
     // Two representations of const*ceildiv(x, c1)
     TVM_TRY_REWRITE_IF(floordiv(x - floormod(x, c2), c1) * c1, x - floormod(x, c2),
                        c1.Eval()->value == -c2.Eval()->value);
-
-    // canonicalization
-    TVM_TRY_RECURSIVE_REWRITE(x * (c1 * y), (x * y) * c1);
-    TVM_TRY_RECURSIVE_REWRITE(c1 * x, x * c1);
-    TVM_TRY_RECURSIVE_REWRITE_IF((x - y) * c1, (y - x) * (0 - c1), c1.Eval()->value < 0);
   }
   return ret;
 }
@@ -1015,6 +1038,19 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MinNode* op) {
   if (IsIndexType(op->dtype)) {
     TVM_TRY_REWRITE(min(x, x), x);
 
+    // constant folding rule.
+    TVM_TRY_RECURSIVE_REWRITE(min(min(x, c1), c2), min(x, min(c1, c2)));
+    TVM_TRY_RECURSIVE_REWRITE(min(min(x, c1), min(y, c2)), min(min(x, y), min(c1, c2)));
+
+    // canonicalization
+    TVM_TRY_RECURSIVE_REWRITE(min(c1, x), min(x, c1));
+    TVM_TRY_RECURSIVE_REWRITE((PMatchesOneOf{
+                                  min(min(x, c1), y),
+                                  min(x, min(y, c1)),
+                              }),
+                              min(min(x, y), c1));
+    TVM_TRY_RECURSIVE_REWRITE_IF(min(c1 - x, c2), c1 - max(x, c1 - c2), c2.Eval()->value != 0);
+
     // constant int bound
     ConstIntBound a_bound = analyzer_->const_int_bound(op->a);
     ConstIntBound b_bound = analyzer_->const_int_bound(op->b);
@@ -1119,9 +1155,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MinNode* op) {
     TVM_TRY_REWRITE(min(y - x, z - x), min(y, z) - x);
     TVM_TRY_REWRITE(min(x - y, x - z), x - max(y, z));
 
-    // constant folding rule.
-    TVM_TRY_REWRITE(min(min(x, c1), c2), min(x, min(c1, c2)));
-
     // scaling rule
     if (min(truncdiv(x, c1), truncdiv(y, c1)).Match(ret)) {
       if (c1.Eval()->value > 0) {
@@ -1158,10 +1191,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MinNode* op) {
         }
       }
     }
-
-    // canonicalization
-    TVM_TRY_RECURSIVE_REWRITE(min(min(x, c1), y), min(min(x, y), c1));
-    TVM_TRY_RECURSIVE_REWRITE_IF(min(c1 - x, c2), c1 - max(x, c1 - c2), c2.Eval()->value != 0);
   }
 
   // condition rules.
@@ -1188,6 +1217,18 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MaxNode* op) {
   }
   if (IsIndexType(op->dtype)) {
     TVM_TRY_REWRITE(max(x, x), x);
+
+    // constant folding rule.
+    TVM_TRY_RECURSIVE_REWRITE(max(max(x, c1), c2), max(x, max(c1, c2)));
+    TVM_TRY_RECURSIVE_REWRITE(max(max(x, c1), max(y, c2)), max(max(x, y), max(c1, c2)));
+    // canonicalization
+    TVM_TRY_RECURSIVE_REWRITE(max(c1, x), max(x, c1));
+    TVM_TRY_RECURSIVE_REWRITE((PMatchesOneOf{
+                                  max(max(x, c1), y),
+                                  max(x, max(y, c1)),
+                              }),
+                              max(max(x, y), c1));
+    TVM_TRY_RECURSIVE_REWRITE_IF(max(c1 - x, c2), c1 - min(x, c1 - c2), c2.Eval()->value != 0);
 
     // constant int bound
     ConstIntBound a_bound = analyzer_->const_int_bound(op->a);
@@ -1302,9 +1343,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MaxNode* op) {
     TVM_TRY_REWRITE(max(y - x, z - x), max(y, z) - x);
     TVM_TRY_REWRITE(max(x - y, x - z), x - min(y, z));
 
-    // constant folding rule.
-    TVM_TRY_REWRITE(max(max(x, c1), c2), max(x, max(c1, c2)));
-
     // scaling rule
     if (max(truncdiv(x, c1), truncdiv(y, c1)).Match(ret)) {
       if (c1.Eval()->value > 0) {
@@ -1341,10 +1379,6 @@ PrimExpr RewriteSimplifier::Impl::VisitExpr_(const MaxNode* op) {
         }
       }
     }
-
-    // canonicalization
-    TVM_TRY_RECURSIVE_REWRITE(max(max(x, c1), y), max(max(x, y), c1));
-    TVM_TRY_RECURSIVE_REWRITE_IF(max(c1 - x, c2), c1 - min(x, c1 - c2), c2.Eval()->value != 0);
   }
 
   // condition rules.

@@ -253,11 +253,11 @@ class TestSelect(BaseCompare):
         TestCase(tvm.tir.Select(x < 0, y, z) - z, tvm.tir.Select(x < 0, y - z, 0)),
         TestCase(
             tvm.te.min(tvm.tir.Select(x < 0, y, 0), tvm.tir.Select(x < 0, 1, z)),
-            tvm.tir.Select(x < 0, tvm.te.min(y, 1), tvm.te.min(0, z)),
+            tvm.tir.Select(x < 0, tvm.te.min(y, 1), tvm.te.min(z, 0)),
         ),
         TestCase(
             tvm.te.max(tvm.tir.Select(x < 0, y, 0), tvm.tir.Select(x < 0, 1, z)),
-            tvm.tir.Select(x < 0, tvm.te.max(y, 1), tvm.te.max(0, z)),
+            tvm.tir.Select(x < 0, tvm.te.max(y, 1), tvm.te.max(z, 0)),
         ),
         TestCase(tvm.tir.Select(x * 3 + 1 != 0, y, z), y),
         TestCase(tvm.tir.Select(x * 3 + 1 == 0, y, z), z),
@@ -322,13 +322,13 @@ class TestSubIndex(BaseCompare):
         TestCase(x + y - x, y),
         TestCase(x - (y + x), 0 - y),
         TestCase(x - (x + y), 0 - y),
-        TestCase(tvm.te.min(x, y) - x, tvm.te.min(0, y - x)),
+        TestCase(tvm.te.min(x, y) - x, tvm.te.min(y - x, 0)),
         TestCase(tvm.te.min(x, y) - y, tvm.te.min(x - y, 0)),
-        TestCase(tvm.te.max(x, y) - x, tvm.te.max(0, y - x)),
+        TestCase(tvm.te.max(x, y) - x, tvm.te.max(y - x, 0)),
         TestCase(tvm.te.max(x, y) - y, tvm.te.max(x - y, 0)),
-        TestCase(x - tvm.te.min(x, y), tvm.te.max(0, x - y)),
+        TestCase(x - tvm.te.min(x, y), tvm.te.max(x - y, 0)),
         TestCase(y - tvm.te.min(x, y), tvm.te.max(y - x, 0)),
-        TestCase(x - tvm.te.max(x, y), tvm.te.min(0, x - y)),
+        TestCase(x - tvm.te.max(x, y), tvm.te.min(x - y, 0)),
         TestCase(y - tvm.te.max(x, y), tvm.te.min(y - x, 0)),
         # mul co-efficient foldng
         TestCase(x - x, 0),
@@ -415,6 +415,7 @@ class TestMulIndex(BaseCompare):
         TestCase(tvm.te.min(x, y) * tvm.te.max(x, y), x * y),
         TestCase(tvm.te.max(x, y) * tvm.te.min(x, y), x * y),
         TestCase((x - y) * (-2), (y - x) * 2),
+        TestCase((x * 2) * (y * 3), x * y * 6),
     )
 
 
