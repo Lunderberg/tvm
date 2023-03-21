@@ -197,6 +197,18 @@ TVM_DLL Pass ConvertSSA();
 TVM_DLL Pass InstrumentBoundCheckers();
 
 /*!
+ * \brief Convert buffer arguments into primitive types
+ *
+ * The CallNode::buffer_map utility allows high-level user-defined TIR
+ * to pass BufferRegion arguments to subroutines.  However, the code
+ * generators are only required to handle arguments of primitive
+ * types.  This pass converts from the user-friendly passing of
+ * BufferRegion arguments to the codegen-friendly passing of primitive
+ * types.
+ */
+TVM_DLL Pass LowerBufferArguments();
+
+/*!
  * \brief Transform the high-level PrimFunc to a low-level version
  *        that can be used as an API function.
  *

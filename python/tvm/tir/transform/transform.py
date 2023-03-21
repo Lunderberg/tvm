@@ -1068,3 +1068,14 @@ def DefaultGPUSchedule():
     ret: tvm.transform.Pass
     """
     return _ffi_api.DefaultGPUSchedule()  # type: ignore
+
+
+def LowerBufferArguments():
+    """Lower CallNode::buffer_map to an underlying type
+
+
+    Returns
+    -------
+    ret: tvm.transform.Pass
+    """
+    return _ffi_api.LowerBufferArguments()
