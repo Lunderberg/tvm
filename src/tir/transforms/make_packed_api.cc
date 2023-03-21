@@ -140,14 +140,15 @@ inline Stmt MakeAssertEQ(PrimExpr lhs, PrimExpr rhs, std::string msg) {
 }
 
 PrimFunc MakePackedAPI(PrimFunc&& func) {
-  auto global_symbol = func->GetAttr<String>(tvm::attr::kGlobalSymbol);
-  ICHECK(global_symbol) << "MakePackedAPI: Expect PrimFunc to have the global_symbol attribute";
-
   auto target = func->GetAttr<Target>(tvm::attr::kTarget);
   ICHECK(target.defined()) << "MakePackedAPI: Require the target attribute";
   int target_device_type = target.value()->GetTargetDeviceType();
 
-  std::string name_hint = global_symbol.value();
+  auto global_symbol = func->GetAttr<String>(tvm::attr::kGlobalSymbol);
+  if (!global_symbol.defined()) {
+    return func;
+  }
+  std::string name_hint = global_symbol.value_or("MakePackedAPI");
 
   auto* func_ptr = func.CopyOnWrite();
   const Stmt nop = Evaluate(0);
