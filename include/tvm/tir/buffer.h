@@ -254,6 +254,63 @@ TVM_DLL Buffer decl_buffer(Array<PrimExpr> shape, DataType dtype = DataType::Flo
                            Array<IntImm> axis_separators = {}, Span span = Span());
 
 /*!
+ * \brief Representing the region of multi-dimensional buffer access.
+ */
+class BufferRegionNode : public Object {
+ public:
+  /*! \brief The buffer of the buffer region. */
+  Buffer buffer;
+  /*! \brief The region array of the buffer region. */
+  Array<Range> region;
+
+  void VisitAttrs(AttrVisitor* v) {
+    v->Visit("buffer", &buffer);
+    v->Visit("region", &region);
+  }
+
+  bool SEqualReduce(const BufferRegionNode* other, SEqualReducer equal) const {
+    return equal(buffer, other->buffer) && equal(region, other->region);
+  }
+
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce(buffer);
+    hash_reduce(region);
+  }
+
+  static constexpr const char* _type_key = "tir.BufferRegion";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
+  static constexpr const bool _type_has_method_shash_reduce = true;
+  TVM_DECLARE_FINAL_OBJECT_INFO(BufferRegionNode, Object);
+};
+
+/*!
+ * \brief Managed reference to BufferRegionNode.
+ * \sa BufferRegionNode
+ */
+class BufferRegion : public ObjectRef {
+ public:
+  TVM_DLL explicit BufferRegion(Buffer buffer, Array<Range> region);
+
+  /*!
+   * \brief Create a BufferRegion which is full region of the given buffer.
+   * \param buffer The buffer to generate full BufferRegion.
+   * \return The BufferRegion which covers all region of the given buffer
+   */
+  TVM_DLL static BufferRegion FullRegion(Buffer buffer);
+
+  /*!
+   * \brief Create a BufferRegion which is a single point of the given buffer.
+   * \param buffer The buffer to generate single point BufferRegion.
+   * \param indices The access point indices of the buffer
+   * \return The BufferRegion which is the single point of the given buffer.
+   */
+  TVM_DLL static BufferRegion FromPoint(Buffer buffer, Array<PrimExpr> indices);
+
+  TVM_DEFINE_OBJECT_REF_METHODS(BufferRegion, ObjectRef, BufferRegionNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(BufferRegionNode);
+};
+
+/*!
  * \brief Base node for data producers.
  *
  *  A DataProducer stores necessary information(e.g. a tensor expression) to produce

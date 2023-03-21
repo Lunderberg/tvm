@@ -54,6 +54,44 @@ Buffer decl_buffer(Array<PrimExpr> shape, DataType dtype, String name, String st
                 Array<PrimExpr>(), PrimExpr(), name, 0, 0, kDefault, axis_separators, span);
 }
 
+// BufferRegion
+BufferRegion::BufferRegion(Buffer buffer, Array<Range> region) {
+  CHECK_EQ(buffer->shape.size(), region.size())
+      << "The dimension between " << buffer << " and region " << region
+      << " mismatched, the buffer is " << buffer;
+  ObjectPtr<BufferRegionNode> node = make_object<BufferRegionNode>();
+  node->buffer = std::move(buffer);
+  node->region = std::move(region);
+  data_ = std::move(node);
+}
+
+BufferRegion BufferRegion::FullRegion(Buffer buffer) {
+  Array<Range> region;
+  for (PrimExpr extent : buffer->shape) {
+    region.push_back(Range::FromMinExtent(0, extent));
+  }
+  return BufferRegion(buffer, region);
+}
+
+BufferRegion BufferRegion::FromPoint(Buffer buffer, Array<PrimExpr> indices) {
+  Array<Range> region;
+  for (const PrimExpr& index : indices) {
+    if (const RampNode* ramp_index = index.as<RampNode>()) {
+      region.push_back(
+          Range::FromMinExtent(ramp_index->base, ramp_index->stride * ramp_index->lanes));
+    } else {
+      region.push_back(Range::FromMinExtent(index, make_const(index.dtype(), 1)));
+    }
+  }
+  return BufferRegion(buffer, region);
+}
+
+TVM_REGISTER_GLOBAL("tir.BufferRegion").set_body_typed([](Buffer buffer, Array<Range> region) {
+  return BufferRegion(buffer, region);
+});
+
+TVM_REGISTER_NODE_TYPE(BufferRegionNode);
+
 // Split the given expression w.r.t the add operator
 inline std::vector<const PrimExpr*> ExprSplitAddition(const PrimExpr& expr) {
   using namespace tir;
