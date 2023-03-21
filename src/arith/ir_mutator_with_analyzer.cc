@@ -147,6 +147,9 @@ PrimExpr IRMutatorWithAnalyzer::VisitExpr_(const CallNode* op) {
       With<ConstraintContext> constraint(analyzer_, analyzer_->rewrite_simplify(Not(cond)));
       false_value = this->VisitExpr(op->args[2]);
     }
+
+    ICHECK(op->buffer_map.empty()) << "Buffer map not allowed in if_then_else tir::Call";
+
     if (is_zero(cond)) {
       return false_value;
     }

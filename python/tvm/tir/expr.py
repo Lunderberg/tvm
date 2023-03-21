@@ -1151,11 +1151,26 @@ class Call(PrimExprWithOp):
     args : list of Expr
         The input arguments to the call
 
+    buffer_map: Optional[Dict[Var, BufferRegion]]
+
+        A map defining buffers that will be exposed to the call.  Each
+        `Var` may be used in the list of arguments (`args`), and will
+        be lowered to a suitable type for exposing the buffer to the
+        called subroutine.
+
+        The exact type used to expose the buffer is unspecified.  For
+        example, a buffer may be represented as a DLTensor, a data
+        pointer, a data point with associated constants, etc.  The
+        corresponding argument in the callee must appear in the
+        callee's buffer_map, such that an appropriate type to expose
+        the buffer may be selected for both callee and caller.
+
     span : Optional[Span]
         The location of this itervar in the source code.
+
     """
 
-    def __init__(self, dtype, op, args, span=None):
+    def __init__(self, dtype, op, args, buffer_map=None, span=None):
         if isinstance(op, str):
             if not op.startswith("tir."):
                 raise ValueError(
@@ -1167,7 +1182,11 @@ class Call(PrimExprWithOp):
                     % op
                 )
             op = Op.get(op)
-        self.__init_handle_by_constructor__(_ffi_api.Call, dtype, op, args, span)  # type: ignore
+
+        if buffer_map is None:
+            buffer_map = {}
+
+        self.__init_handle_by_constructor__(_ffi_api.Call, dtype, op, args, buffer_map, span)  # type: ignore
 
 
 @tvm._ffi.register_object("tir.Let")

@@ -108,6 +108,14 @@ void VarUseDefAnalyzer::VisitExpr_(const ReduceNode* op) {
   StmtExprVisitor::VisitExpr_(op);
 }
 
+void VarUseDefAnalyzer::VisitExpr_(const CallNode* op) {
+  for (const auto& [var, buffer_region] : op->buffer_map) {
+    VisitBuffer(buffer_region->buffer);
+    HandleDef(var.get());
+  }
+  StmtExprVisitor::VisitExpr_(op);
+}
+
 void VarUseDefAnalyzer::VisitExpr_(const BufferLoadNode* op) {
   VisitBuffer(op->buffer);
   StmtExprVisitor::VisitExpr_(op);

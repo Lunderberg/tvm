@@ -885,21 +885,28 @@ class CallNode : public PrimExprNode {
 
   /*! \brief The arguments. */
   Array<PrimExpr> args;
+
+  /*! \brief Map from buffer region to buffers exposed through the Call */
+  Map<Var, BufferRegion> buffer_map;
+
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
     v->Visit("op", &op);
     v->Visit("args", &args);
+    v->Visit("buffer_map", &buffer_map);
     v->Visit("span", &span);
   }
 
   bool SEqualReduce(const CallNode* other, SEqualReducer equal) const {
-    return equal(dtype, other->dtype) && equal(op, other->op) && equal(args, other->args);
+    return equal(dtype, other->dtype) && equal(op, other->op) && equal(args, other->args) &&
+           equal(buffer_map, other->buffer_map);
   }
 
   void SHashReduce(SHashReducer hash_reduce) const {
     hash_reduce(dtype);
     hash_reduce(op);
     hash_reduce(args);
+    hash_reduce(buffer_map);
   }
 
   static constexpr const char* _type_key = "tir.Call";
@@ -913,6 +920,8 @@ class CallNode : public PrimExprNode {
 class Call : public PrimExpr {
  public:
   TVM_DLL Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Span span = Span());
+  TVM_DLL Call(DataType dtype, RelayExpr op, Array<PrimExpr> args,
+               Map<Var, BufferRegion> buffer_map, Span span = Span());
   TVM_DEFINE_OBJECT_REF_METHODS(Call, PrimExpr, CallNode);
   TVM_DEFINE_OBJECT_REF_COW_METHOD(CallNode);
 };

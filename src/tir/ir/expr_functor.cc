@@ -155,10 +155,39 @@ PrimExpr ExprMutator::VisitExpr_(const CallNode* op) {
   auto fmutate = [this](const PrimExpr& e) { return this->VisitExpr(e); };
   Array<PrimExpr> args = op->args.Map(fmutate);
 
-  if (args.same_as(op->args)) {
+  auto new_buffer_map = [&]() -> Map<Var, BufferRegion> {
+    Map<Var, BufferRegion> new_buffer_map;
+    bool made_change = false;
+
+    for (const auto& [var, buffer_region] : op->buffer_map) {
+      auto new_region = buffer_region->region.Map([&](const auto& range) {
+        PrimExpr min = VisitExpr(range->min);
+        PrimExpr extent = VisitExpr(range->extent);
+        if (min.same_as(range->min) && extent.same_as(range->extent)) {
+          return range;
+        } else {
+          return Range::FromMinExtent(min, extent);
+        }
+      });
+      if (new_region.same_as(buffer_region->region)) {
+        new_buffer_map.Set(var, buffer_region);
+      } else {
+        made_change = true;
+        new_buffer_map.Set(var, BufferRegion(buffer_region->buffer, new_region));
+      }
+    }
+
+    if (made_change) {
+      return new_buffer_map;
+    } else {
+      return op->buffer_map;
+    }
+  }();
+
+  if (args.same_as(op->args) && new_buffer_map.same_as(op->buffer_map)) {
     return GetRef<PrimExpr>(op);
   } else {
-    return Call(op->dtype, op->op, args);
+    return Call(op->dtype, op->op, args, new_buffer_map);
   }
 }
 

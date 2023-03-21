@@ -489,8 +489,10 @@ TVM_REGISTER_GLOBAL("tir.Let").set_body_typed([](Var var, PrimExpr value, PrimEx
 
 TVM_REGISTER_NODE_TYPE(LetNode);
 
+Call::Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Span span) : Call(dtype, op, args, {}, span) { }
+
 // Call
-Call::Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Span span) {
+Call::Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Map<Var,BufferRegion> buffer_map, Span span) {
   for (size_t i = 0; i < args.size(); ++i) {
     ICHECK(args[i].defined()) << "arg " << i << " is not defined()";
   }
@@ -499,12 +501,13 @@ Call::Call(DataType dtype, RelayExpr op, Array<PrimExpr> args, Span span) {
   node->dtype = dtype;
   node->op = std::move(op);
   node->args = std::move(args);
+  node->buffer_map = std::move(buffer_map);
   node->span = std::move(span);
   data_ = std::move(node);
 }
 
 TVM_REGISTER_GLOBAL("tir.Call")
-    .set_body_typed([](DataType type, RelayExpr op, Array<ObjectRef> args, Span span) {
+.set_body_typed([](DataType type, RelayExpr op, Array<ObjectRef> args, Map<Var,BufferRegion> buffer_map, Span span) {
       Array<PrimExpr> prim_expr_args;
       for (const auto& it : args) {
         ICHECK(it->IsInstance<runtime::StringObj>() || it->IsInstance<PrimExprNode>() ||
@@ -531,7 +534,7 @@ TVM_REGISTER_GLOBAL("tir.Call")
           prim_expr_args.push_back(Downcast<PrimExpr>(it));
         }
       }
-      return Call(type, op, prim_expr_args, span);
+      return Call(type, op, prim_expr_args, buffer_map, span);
     });
 
 TVM_REGISTER_NODE_TYPE(CallNode);

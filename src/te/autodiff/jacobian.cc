@@ -113,6 +113,7 @@ class JacobianMutator : public ExprMutator {
                                              FloatImm(type, -1.0)));
     } else if (op->op.same_as(op_if_then_else_)) {
       Array<PrimExpr> new_args = {op->args[0], Mutate(op->args[1]), Mutate(op->args[2])};
+      ICHECK(op->buffer_map.empty()) << "CallNode::buffer_map is not supported for if_then_else op";
       return Call(op->dtype, op->op, new_args);
     } else if (piecewise_const.count(op->op)) {
       return FloatImm(expr.dtype(), 0.0);
