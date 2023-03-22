@@ -158,6 +158,10 @@ class BufferNode : public Object {
    */
   Array<PrimExpr> ElemOffset(Array<PrimExpr> index) const;
 
+  /*! \brief Pack the buffer to a DLTensor using tvm_stack_make_array */
+  PrimExpr AsDLTensor(Optional<PrimExpr> device_type = NullOpt,
+                      Optional<PrimExpr> device_id = NullOpt) const;
+
   static constexpr const char* _type_key = "tir.Buffer";
   static constexpr const bool _type_has_method_sequal_reduce = true;
   static constexpr const bool _type_has_method_shash_reduce = true;
@@ -276,6 +280,10 @@ class BufferRegionNode : public Object {
     hash_reduce(buffer);
     hash_reduce(region);
   }
+
+  /*! \brief Pack the BufferRegion to a DLTensor using tvm_stack_make_array */
+  PrimExpr AsDLTensor(Optional<PrimExpr> device_type = NullOpt,
+                      Optional<PrimExpr> device_id = NullOpt) const;
 
   static constexpr const char* _type_key = "tir.BufferRegion";
   static constexpr const bool _type_has_method_sequal_reduce = true;

@@ -111,25 +111,7 @@ inline Array<Tensor> make_extern(const Array<Array<PrimExpr>>& out_shapes,
  *
  * \return An expression representing the pack operation
  */
-inline PrimExpr pack_buffer(Buffer buf) {
-  ICHECK_GT(buf->shape.size(), 0) << "buf shape must have at least one element";
-  auto shape =
-      tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), buf->shape);
-  PrimExpr strides;
-  if (buf->strides.size() > 0) {
-    strides =
-        tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), buf->strides);
-  } else {
-    strides = 0;
-  }
-  Array<PrimExpr> pack_args{buf->data,
-                            shape,
-                            strides,
-                            make_const(DataType::Int(32), static_cast<int64_t>(buf->shape.size())),
-                            make_const(buf->dtype, 0),
-                            buf->elem_offset};
-  return tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_array(), pack_args);
-}
+inline PrimExpr pack_buffer(Buffer buf) { return buf->AsDLTensor(); }
 
 /*!
  * \brief Construct an Expr representing the invocation of a PackedFunc

@@ -86,6 +86,14 @@ BufferRegion BufferRegion::FromPoint(Buffer buffer, Array<PrimExpr> indices) {
   return BufferRegion(buffer, region);
 }
 
+PrimExpr BufferRegionNode::AsDLTensor(Optional<PrimExpr> device_type,
+                                      Optional<PrimExpr> device_id) const {
+  auto min = region.Map([](const auto& range) { return range->min; });
+  auto extent = region.Map([](const auto& range) { return range->extent; });
+  auto slice = buffer.MakeSlice(min, extent);
+  return slice->AsDLTensor(device_type, device_id);
+}
+
 TVM_REGISTER_GLOBAL("tir.BufferRegion").set_body_typed([](Buffer buffer, Array<Range> region) {
   return BufferRegion(buffer, region);
 });
@@ -621,6 +629,36 @@ Buffer::Buffer(Var data, DataType dtype, Array<PrimExpr> shape, Array<PrimExpr> 
   }
   n->span = std::move(span);
   data_ = std::move(n);
+}
+
+PrimExpr BufferNode::AsDLTensor(Optional<PrimExpr> device_type,
+                                Optional<PrimExpr> device_id) const {
+  auto stack_shape =
+      tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), shape);
+  PrimExpr stack_strides = [&]() -> PrimExpr {
+    if (strides.size() > 0) {
+      return tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), strides);
+    } else {
+      return 0;
+    }
+  }();
+  Array<PrimExpr> pack_args{data,
+                            stack_shape,
+                            stack_strides,
+                            make_const(DataType::Int(32), static_cast<int64_t>(shape.size())),
+                            make_const(dtype, 0),
+                            elem_offset};
+
+  if (device_type) {
+    pack_args.push_back(device_type.value());
+  }
+  if (device_id) {
+    CHECK(device_type)
+        << "tvm_stack_make_array() cannot specify device_id without also specifying device_type";
+    pack_args.push_back(device_id.value());
+  }
+
+  return tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_array(), pack_args);
 }
 
 tir::Buffer BufferWithOffsetAlignment(Array<PrimExpr> shape, DataType dtype, std::string name,
