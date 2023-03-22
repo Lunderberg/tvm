@@ -209,6 +209,14 @@ TVM_DLL Pass InstrumentBoundCheckers();
 TVM_DLL Pass LowerBufferArguments();
 
 /*!
+ * \brief Inline static parameters to internal subroutines
+ *
+ * Inline parameters into internal subroutines, if all call-sites of
+ * that subroutine use the same static argument.
+ */
+TVM_DLL Pass InlineStaticArguments();
+
+/*!
  * \brief Transform the high-level PrimFunc to a low-level version
  *        that can be used as an API function.
  *

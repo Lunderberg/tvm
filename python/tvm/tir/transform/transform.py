@@ -1079,3 +1079,18 @@ def LowerBufferArguments():
     ret: tvm.transform.Pass
     """
     return _ffi_api.LowerBufferArguments()
+
+
+def InlineStaticArguments():
+    """Lower CallNode::buffer_map to an underlying type
+
+    The `InlineStaticArguments` pass will inline parameters into a
+    subroutine, if all call-sites of that subroutine use the same
+    static argument.
+
+    Returns
+    -------
+    ret: tvm.transform.Pass
+
+    """
+    return _ffi_api.InlineStaticArguments()
