@@ -102,8 +102,9 @@ namespace transform {
 
 Pass CombineContextCall() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
-    auto* n = f.CopyOnWrite();
-    n->body = ContextCallCombiner().Combine(std::move(n->body));
+    if (f->HasNonzeroAttr(tir::attr::kIsHostFunc)) {
+      f.CopyOnWrite()->body = ContextCallCombiner().Combine(f->body);
+    }
     return f;
   };
   return CreatePrimFuncPass(pass_func, 0, "tir.CombineContextCall", {});
