@@ -100,10 +100,12 @@ class BuiltinLower : public StmtExprMutator {
     }
   };
 
+  BuiltinLower(Optional<String> global_symbol) : global_symbol_(global_symbol) {}
+
   Stmt Build(Stmt stmt) { return this->VisitBodyAndRealizeAlloca(stmt); }
 
   StackSizes GetMaxStack(Stmt stmt) {
-    BuiltinLower precheck;
+    BuiltinLower precheck(global_symbol_);
     precheck.is_precheck_ = true;
     precheck.device_id_ = this->device_id_;
     precheck.device_type_ = this->device_type_;
@@ -243,8 +245,12 @@ class BuiltinLower : public StmtExprMutator {
       // set total_bytes to uint64 to avoid overflow
       total_bytes = total_bytes * op->extents[i];
     }
-    ICHECK(device_type_) << "Unknown device type in current IR";
-    ICHECK(device_id_) << "Unknown device id in current IR";
+    ICHECK(device_type_.defined())
+        << "Function " << global_symbol_ << " uses tir::Allocate, "
+        << "but doesn't have a defined device_type on which to allocate memory";
+    ICHECK(device_id_.defined())
+        << "Function " << global_symbol_ << " uses tir::Allocate, "
+        << "but doesn't have a defined device_id on which to allocate memory";
     Stmt throw_last_error = Evaluate(Call(DataType::Int(32), builtin::tvm_throw_last_error(), {}));
 
     Stmt body = SeqStmt({IfThenElse(Call(DataType::Bool(1), builtin::isnullptr(), {op->buffer_var}),
@@ -272,14 +278,11 @@ class BuiltinLower : public StmtExprMutator {
     if (op->attr_key == attr::device_id) {
       ICHECK(!device_id_);
       device_id_ = op->value;
-      return this->VisitStmt(op->body);
     } else if (op->attr_key == attr::device_type) {
       ICHECK(!device_type_);
       device_type_ = op->value;
-      return this->VisitStmt(op->body);
-    } else {
-      return StmtExprMutator::VisitStmt_(op);
     }
+    return StmtExprMutator::VisitStmt_(op);
   }
   Stmt VisitStmt_(const ForNode* op) final {
     PrimExpr min = this->VisitExpr(op->min);
@@ -621,6 +624,8 @@ class BuiltinLower : public StmtExprMutator {
     return false;
   }
 
+  Optional<String> global_symbol_;
+
   // The prepration sequence to be emitted before the current statement.
   std::vector<std::vector<Stmt>> prep_seq_stack_;
   Optional<PrimExpr> device_type_{NullOpt};
@@ -638,7 +643,7 @@ Pass LowerTVMBuiltin() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
     if (f->HasNonzeroAttr(tir::attr::kIsHostFunc)) {
       auto global_symbol = f->GetAttr<String>(tvm::attr::kGlobalSymbol);
-      f.CopyOnWrite()->body = BuiltinLower().Build(f->body);
+      f.CopyOnWrite()->body = BuiltinLower(global_symbol).Build(f->body);
       VLOG(2) << "LowerTVMBuiltin: " << f;
     }
     return f;
