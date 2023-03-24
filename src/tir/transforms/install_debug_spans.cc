@@ -129,14 +129,30 @@ namespace transform {
 
 Pass InstallDebugSpans() {
   auto pass_func = [](PrimFunc f, IRModule m, PassContext ctx) {
-    ICHECK(m->functions.size() == 1)
-        << "Debug info can only be added to IRModules with a single function";
-    // There is known to be only 1 function in the module at this point
-    auto entry = m->functions.begin();
-    auto name = std::get<0>(*entry)->name_hint;
-    auto* n = f.CopyOnWrite();
+    auto num_host_functions = [&m]() {
+      size_t count = 0;
+      for (const auto& [gvar, base_func] : m->functions) {
+        if (auto* ptr = base_func.as<PrimFuncNode>()) {
+          count += ptr->HasNonzeroAttr(tir::attr::kIsHostFunc);
+        }
+      }
+      return count;
+    }();
+    ICHECK_EQ(num_host_functions, 1)
+        << "Debug info can only be added to IRModules with a single host function";
 
-    n->body = DebugInfoInstaller::InstallInfo(std::move(name), std::move(f->body));
+    auto name = [&]() -> std::string {
+      if (auto opt = f->GetAttr<String>(tvm::attr::kGlobalSymbol)) {
+        return opt.value();
+      }
+      for (const auto& [gvar, mod_func] : m->functions) {
+        if (mod_func.same_as(f)) {
+          return gvar->name_hint;
+        }
+      }
+      return "primfunc";
+    }();
+    f.CopyOnWrite()->body = DebugInfoInstaller::InstallInfo(name, f->body);
 
     return f;
   };
