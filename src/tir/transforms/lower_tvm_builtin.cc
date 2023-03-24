@@ -275,14 +275,19 @@ class BuiltinLower : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
+    auto prev_device_id = device_id_;
+    auto prev_device_type = device_type_;
+
     if (op->attr_key == attr::device_id) {
-      ICHECK(!device_id_);
       device_id_ = op->value;
     } else if (op->attr_key == attr::device_type) {
-      ICHECK(!device_type_);
       device_type_ = op->value;
     }
-    return StmtExprMutator::VisitStmt_(op);
+
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    device_id_ = prev_device_id;
+    device_type_ = prev_device_type;
+    return ret;
   }
   Stmt VisitStmt_(const ForNode* op) final {
     PrimExpr min = this->VisitExpr(op->min);
