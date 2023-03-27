@@ -346,6 +346,8 @@ void CodeGenLLVM::AddFunctionInternal(const GlobalVar& gvar, const PrimFunc& f, 
   }
 }
 
+void CodeGenLLVM::Print() const { module_->print(llvm::outs(), nullptr); }
+
 void CodeGenLLVM::Verify() const {
   std::string verify_errors_storage;
   llvm::raw_string_ostream verify_errors(verify_errors_storage);

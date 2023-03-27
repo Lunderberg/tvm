@@ -155,6 +155,9 @@ class CodeGenLLVM : public ExprFunctor<llvm::Value*(const PrimExpr&)>,
    */
   virtual std::unique_ptr<llvm::Module> Finish();
 
+  /*! \brief Print the generated module */
+  void Print() const;
+
   /*!
    * \brief Validate the generated module using llvm::verifyModule
    */
