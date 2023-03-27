@@ -76,6 +76,33 @@ Var Arg(String name, Var var) {
 Buffer Arg(String name, Buffer buffer) {
   PrimFuncFrame frame = FindPrimFuncFrame("T.Arg");
   details::Namer::Name(buffer, name);
+
+  // Assing a default name for otherwise unnamed variables.  This can
+  // occur when defining dynamic TIR buffer arguments (e.g. `A:
+  // T.Buffer(shape=[T.int32(), T.int32()])`).  Providing names for
+  // these otherwise-anonymous variables allows them to work on TVM
+  // backends based on CodeGenC (e.g. CUDA), where the TIR variable
+  // name is used as the name of generated variable, and must not be
+  // empty.
+  auto name_var = [](const PrimExpr& expr, const String& name) {
+    if (auto* ptr = expr.as<tvm::tir::VarNode>()) {
+      if (ptr->name_hint.empty()) {
+        details::Namer::Name(GetRef<tvm::tir::Var>(ptr), name);
+      }
+    }
+  };
+  name_var(buffer->elem_offset, name + "_elem_offset");
+  for (size_t i = 0; i < buffer->shape.size(); i++) {
+    std::stringstream ss;
+    ss << name << ".shape[" << i << "]";
+    name_var(buffer->shape[i], ss.str());
+  }
+  for (size_t i = 0; i < buffer->strides.size(); i++) {
+    std::stringstream ss;
+    ss << name << ".strides[" << i << "]";
+    name_var(buffer->strides[i], ss.str());
+  }
+
   Var handle(buffer->name + "_handle", DataType::Handle());
   frame->args.push_back(handle);
   frame->buffer_map.Set(handle, buffer);
