@@ -157,7 +157,16 @@ class SubroutineCallRewriter : public StmtExprMutator {
 
     if (auto* gvar_ptr = node->op.as<GlobalVarNode>()) {
       auto gvar = GetRef<GlobalVar>(gvar_ptr);
-      if (auto symbol = external_methods_.Get(gvar)) {
+      auto symbol = external_methods_.Get(gvar);
+
+      CHECK(symbol || op->buffer_map.empty())
+          << "CallNode " << node << " has a buffer map, but is not exposed externally.  "
+          << "MakePackedAPI only handles packing of externally-exposed functions "
+          << "that use the PackedFunc interface.  "
+          << "Internal function calls using CallNode::buffer_map "
+          << "should have been lowered to primitive arguments during tir.LowerBufferArguments.";
+
+      if (symbol) {
         Array<PrimExpr> cpacked_args;
         cpacked_args.push_back(tir::StringImm(symbol.value()));
         for (auto arg : node->args) {
