@@ -85,10 +85,7 @@ inline ExprDoc DefineVar(const tir::Var& var, const Frame& frame, const IRDocsif
   if (Optional<ExprDoc> doc = d->GetVarDoc(var)) {
     return doc.value();
   }
-  return d->Define(
-      var, frame,
-      (std::stringstream() << (var->name_hint.empty() ? "v" : var->name_hint) << "_" << var.get())
-          .str());
+  return d->Define(var, frame, var->name_hint.empty() ? "v" : var->name_hint);
 }
 
 /*!
@@ -100,10 +97,7 @@ inline ExprDoc DefineVar(const tir::Var& var, const Frame& frame, const IRDocsif
  * \return The IdDoc corresponding to the buffer
  */
 inline IdDoc DefineBuffer(const tir::Buffer& buffer, const Frame& frame, const IRDocsifier& d) {
-  return d->Define(buffer, frame,
-                   (std::stringstream()
-                    << (buffer->name.empty() ? "buffer" : buffer->name) << "_" << buffer.get())
-                       .str());
+  return d->Define(buffer, frame, buffer->name.empty() ? "buffer" : buffer->name);
 }
 
 /*!

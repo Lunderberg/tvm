@@ -111,7 +111,40 @@ inline Array<Tensor> make_extern(const Array<Array<PrimExpr>>& out_shapes,
  *
  * \return An expression representing the pack operation
  */
-inline PrimExpr pack_buffer(Buffer buf) { return buf->AsDLTensor(); }
+inline PrimExpr pack_buffer(Buffer buf) {
+  ICHECK_GT(buf->shape.size(), 0) << "buf shape must have at least one element";
+  auto shape =
+      tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), buf->shape);
+  PrimExpr strides;
+  if (buf->strides.size() > 0) {
+    strides =
+        tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), buf->strides);
+  } else {
+    strides = 0;
+  }
+  Array<PrimExpr> pack_args{buf->data,
+                            shape,
+                            strides,
+                            make_const(DataType::Int(32), static_cast<int64_t>(buf->shape.size())),
+                            make_const(buf->dtype, 0),
+                            buf->elem_offset};
+  return tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_array(), pack_args);
+}
+
+/*!
+ * \brief This function is used to create a DLTensor structure on the stack to
+ * be able to pass a symbolic buffer as arguments to TVM PackedFunc
+ *
+ * \param buf The buffer to pack
+ *
+ * \return An expression representing the pack operation
+ */
+inline PrimExpr pack_buffer(BufferRegion buffer_region) {
+  auto min = buffer_region->region.Map([](const auto& range) { return range->min; });
+  auto extent = buffer_region->region.Map([](const auto& range) { return range->extent; });
+  auto slice = buffer_region->buffer.MakeSlice(min, extent);
+  return pack_buffer(slice);
+}
 
 /*!
  * \brief Construct an Expr representing the invocation of a PackedFunc

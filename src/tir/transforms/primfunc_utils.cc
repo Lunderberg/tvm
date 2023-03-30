@@ -44,9 +44,9 @@ transform::Pass BindTarget(Target target) {
       if (target_host && !func_target_host && is_externally_exposed) {
         auto new_target = Target::WithHost(func_target.value(), target_host.value());
         return WithAttr(std::move(f), tvm::attr::kTarget, new_target);
-      } else {
-        return f;
       }
+      return f;
+
     } else if (f->GetAttr<Integer>(tvm::tir::attr::kIsHostFunc) == 1) {
       return WithAttr(std::move(f), tvm::attr::kTarget, target_host);
     } else if (is_externally_exposed) {

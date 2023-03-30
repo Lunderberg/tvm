@@ -245,12 +245,14 @@ class BuiltinLower : public StmtExprMutator {
       // set total_bytes to uint64 to avoid overflow
       total_bytes = total_bytes * op->extents[i];
     }
+
     ICHECK(device_type_.defined())
         << "Function " << global_symbol_ << " uses tir::Allocate, "
         << "but doesn't have a defined device_type on which to allocate memory";
     ICHECK(device_id_.defined())
         << "Function " << global_symbol_ << " uses tir::Allocate, "
         << "but doesn't have a defined device_id on which to allocate memory";
+
     Stmt throw_last_error = Evaluate(Call(DataType::Int(32), builtin::tvm_throw_last_error(), {}));
 
     Stmt body = SeqStmt({IfThenElse(Call(DataType::Bool(1), builtin::isnullptr(), {op->buffer_var}),
@@ -340,6 +342,7 @@ class BuiltinLower : public StmtExprMutator {
     } else if (op->op.same_as(builtin::dma_end_group())) {
       return MakeDMAEndGroup(op);
     } else {
+      StackContext context(this);
       return StmtExprMutator::VisitExpr_(op);
     }
   }
@@ -455,12 +458,28 @@ class BuiltinLower : public StmtExprMutator {
     }
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrByteOffset,
                                        cast(DataType::UInt(64), byte_offset)));
-    ICHECK(device_type_) << "Unknown device type in current IR";
-    ICHECK(device_id_) << "Unknown device id in current IR";
+
+    auto array_device_type = [&]() {
+      if (op->args.size() > 6) {
+        return op->args[6];
+      }
+      ICHECK(device_type_.defined()) << "Unknown device type in current IR";
+      return device_type_.value();
+    }();
+
+    auto array_device_id = [&]() {
+      if (op->args.size() > 7) {
+        return op->args[7];
+      }
+      ICHECK(device_id_.defined()) << "Unknown device id in current IR";
+      return device_id_.value();
+    }();
+
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceId,
-                                       cast(DataType::Int(32), device_id_.value())));
+                                       cast(DataType::Int(32), array_device_id)));
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceType,
-                                       cast(DataType::Int(32), device_type_.value())));
+                                       cast(DataType::Int(32), array_device_type)));
+
     return TVMStructGet(DataType::Handle(), scope.stack_array, idx, builtin::kArrAddr);
   }
 
@@ -528,8 +547,8 @@ class BuiltinLower : public StmtExprMutator {
     auto& scope = alloca_scope_.back();
     auto& prep_seq = prep_seq_stack_.back();
 
-    int64_t restore_shape_stack = scope.run_sizes.shape_stack;
-    size_t restore_array_stack = scope.run_sizes.array_stack;
+    StackContext context(this);
+
     size_t arg_stack_begin = scope.run_sizes.arg_stack;
 
     size_t args_begin = name_offset + 1;
@@ -551,15 +570,7 @@ class BuiltinLower : public StmtExprMutator {
       this->SetPackedArg(op->args[args_begin + i], scope.stack_value, scope.stack_tcode,
                          arg_stack_begin + i, &prep_seq);
     }
-    // Verify stack size matches earlier value.
-    if (is_precheck_) {
-      scope.UpdateMax();
-    } else {
-      scope.AssertMaxIsValid();
-    }
-    scope.run_sizes.shape_stack = restore_shape_stack;
-    scope.run_sizes.array_stack = restore_array_stack;
-    scope.run_sizes.arg_stack = arg_stack_begin;
+
     Array<PrimExpr> packed_args = {op->args[name_offset], scope.stack_value,
                                    scope.stack_tcode->data, ConstInt32(arg_stack_begin),
                                    ConstInt32(arg_stack_begin + num_args)};
@@ -637,6 +648,24 @@ class BuiltinLower : public StmtExprMutator {
   Optional<PrimExpr> device_id_{NullOpt};
 
   bool is_precheck_{false};
+
+  struct StackContext {
+    StackContext(BuiltinLower* self)
+        : self(self), scope(self->alloca_scope_.back()), cache(scope.run_sizes) {}
+    ~StackContext() {
+      // Verify stack size matches earlier value.
+      if (self->is_precheck_) {
+        scope.UpdateMax();
+      } else {
+        scope.AssertMaxIsValid();
+      }
+      scope.run_sizes = cache;
+    }
+
+    BuiltinLower* self;
+    AllocaScope& scope;
+    StackSizes cache;
+  };
 
   // Record all stack frames.
   std::vector<AllocaScope> alloca_scope_;

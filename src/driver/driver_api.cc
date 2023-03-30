@@ -599,9 +599,11 @@ transform::Sequential MixedModulePassManager(IRModule mixed_mod, Optional<Target
 
   mixed_pass_list.push_back(tir::transform::AnnotateDeviceRegions());
   mixed_pass_list.push_back(tir::transform::SplitHostDevice());
+  mixed_pass_list.push_back(tir::transform::InsertCrossDeviceCopies());
 
   mixed_pass_list.push_back(tir::transform::LowerBufferArguments());
   mixed_pass_list.push_back(tir::transform::InlineStaticArguments());
+  mixed_pass_list.push_back(tir::transform::LowerBufferCopy());
 
   bool unpacked_api = mixed_mod->GetAttr<relay::Executor>(tvm::attr::kExecutor)
                           .value_or(relay::Executor::Create("graph", {}))

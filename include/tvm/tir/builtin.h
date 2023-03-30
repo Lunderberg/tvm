@@ -725,6 +725,12 @@ TVM_DLL const Op& texture2d_store();
  */
 TVM_DLL const Op& texture2d_load();
 
+/*! \brief Copy data from the src to dst buffer
+ *
+ * Uses the parameter convention of memcpy, with the dst buffer as the first argument.
+ */
+TVM_DLL const Op& buffer_copy();
+
 /*!
  * \brief Initiate a non-blocking DMA copy from source to destination
  *
