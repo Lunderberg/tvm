@@ -195,20 +195,21 @@ class BF16ComputeLegalizer : public StmtExprMutator {
   }
 
   PrimExpr VisitExpr_(const CallNode* op) final {
+    auto node = Downcast<Call>(StmtExprMutator::VisitExpr_(op));
+
     // presertve reinterpret<bf16>() behavior.
-    if (op->op.same_as(builtin::reinterpret())) {
-      return StmtExprMutator::VisitExpr_(op);
+    if (node->op.same_as(builtin::reinterpret())) {
+      return std::move(node);
     }
     // update normal computations to return f32 instead.
-    auto fmutate = [this](const PrimExpr& e) { return PromoteBF16ToF32(this->VisitExpr(e)); };
-    Array<PrimExpr> args = op->args.Map(fmutate);
-    if (op->dtype.is_bfloat16()) {
-      return Call(DataType::Float(32, op->dtype.lanes()), op->op, args);
-    }
-    if (args.same_as(op->args)) {
-      return GetRef<PrimExpr>(op);
+    Array<PrimExpr> args = node->args.Map(PromoteBF16ToF32);
+    DataType dtype =
+        node->dtype.is_bfloat16() ? DataType::Float(32, node->dtype.lanes()) : node->dtype;
+
+    if (dtype == node->dtype && args.same_as(node->args)) {
+      return std::move(node);
     } else {
-      return Call(op->dtype, op->op, args);
+      return Call(dtype, node->op, args, node->buffer_map);
     }
   }
 
@@ -377,7 +378,7 @@ class BF16ComputeLegalizer : public StmtExprMutator {
    * \param value The input value.
    * \return The converted value.
    */
-  PrimExpr PromoteBF16ToF32(PrimExpr value) {
+  static PrimExpr PromoteBF16ToF32(PrimExpr value) {
     if (!value.dtype().is_bfloat16()) return value;
     if (const CastNode* cast = value.as<CastNode>()) {
       if (cast->value.dtype() == DataType::Float(32)) return cast->value;
@@ -385,7 +386,6 @@ class BF16ComputeLegalizer : public StmtExprMutator {
     DataType f32 = DataType::Float(32, value.dtype().lanes());
     DataType u16 = DataType::UInt(16, value.dtype().lanes());
     DataType u32 = DataType::UInt(32, value.dtype().lanes());
-    // reinterpret<f32>((cast<u32>(reinterpret<u16>(bf16_value)) << 16))
     return reinterpret(f32, cast(u32, reinterpret(u16, value)) << 16);
   }
 
@@ -433,10 +433,32 @@ class BF16ComputeLegalizer : public StmtExprMutator {
 class BF16StorageLegalizer : public StmtExprMutator {
  public:
   PrimFunc Legalize(PrimFunc func) {
-    ICHECK_EQ(func->buffer_map.size(), 0) << "This pass must be called after MakePackedAPI";
+    std::vector<std::tuple<Var, PrimExpr>> pointer_conversions;
+
     auto* n = func.CopyOnWrite();
-    n->params = n->params.Map([this](Var var) { return this->RemapVarDef(var); });
-    n->body = this->VisitStmt(std::move(n->body));
+    n->params = n->params.Map([&](Var var) {
+      // Preserve the Buffer in the buffer map if this pass is called
+      // before MakePackedAPI.  However, because use of the buffer
+      // requires the backing buffer to have dtype u16should still
+      // define a
+      if (auto opt = n->buffer_map.Get(var)) {
+        Var old_buffer_var = opt.value()->data;
+        Var new_buffer_var = RemapVarDef(old_buffer_var);
+        pointer_conversions.push_back({new_buffer_var, old_buffer_var});
+        return var;
+      } else {
+        return this->RemapVarDef(var);
+      }
+    });
+
+    n->body = [&]() {
+      Stmt body = this->VisitStmt(std::move(n->body));
+      for (const auto& [var, expr] : pointer_conversions) {
+        body = LetStmt(var, expr, std::move(body));
+      }
+      return body;
+    }();
+
     return func;
   }
 
