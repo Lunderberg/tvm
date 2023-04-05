@@ -92,7 +92,7 @@ class BufferCopyLowerer : public StmtExprMutator {
     PrimExpr src = get_arg(1);
 
     return Call(DataType::Int(32), Op::Get("tir.TVMDeviceCopyDataFromTo"),
-                {src, dst, reinterpret(DataType::Handle(), Integer(0))});
+                {src, dst, reinterpret(DataType::Handle(), make_const(DataType::Int(64), 0))});
   }
 
  private:
