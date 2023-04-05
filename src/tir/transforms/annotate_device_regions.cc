@@ -34,26 +34,35 @@ namespace tir {
 
 class DeviceRegionAnnotater : public StmtMutator {
  public:
-  explicit DeviceRegionAnnotater(Target device_target) : device_target_(device_target) {}
+  explicit DeviceRegionAnnotater(Optional<Target> device_target) : device_target_(device_target) {}
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
     if (op->attr_key == tvm::attr::kTarget) {
-      // If a target attribute already exists, use it as-is.
-      return GetRef<Stmt>(op);
-    } else if (op->attr_key == attr::thread_extent || op->attr_key == attr::pipeline_exec_scope ||
-               op->attr_key == attr::device_scope) {
+      auto target = Downcast<Target>(op->node);
+      // If a target attribute already exists, use it as-is, stripping
+      // off the Host annotation if present.
+      if (target->GetHost()) {
+        return AttrStmt(target.WithoutHost(), tvm::attr::kTarget, 0, op->body);
+      } else {
+        return GetRef<Stmt>(op);
+      }
+    }
+
+    if (device_target_ &&
+        (op->attr_key == attr::thread_extent || op->attr_key == attr::pipeline_exec_scope ||
+         op->attr_key == attr::device_scope)) {
       // These attributes are only allowed in device-side code, so
       // they should be annotated with the function's default target.
       Stmt body = GetRef<Stmt>(op);
-      return AttrStmt(device_target_, tvm::attr::kTarget, 0, body);
-    } else {
-      // All other annotations are ignored
-      return StmtMutator::VisitStmt_(op);
+      return AttrStmt(device_target_.value(), tvm::attr::kTarget, 0, body);
     }
+
+    // All other annotations are ignored
+    return StmtMutator::VisitStmt_(op);
   }
 
  private:
-  Target device_target_;
+  Optional<Target> device_target_;
 };
 
 namespace transform {
@@ -64,10 +73,13 @@ Pass AnnotateDeviceRegions() {
     ICHECK(opt_target) << "AnnotateDeviceRegions: Require the target attribute";
     Target target = opt_target.value();
 
-    if (target->GetHost()) {
-      DeviceRegionAnnotater mutator(target.WithoutHost());
-      func.CopyOnWrite()->body = mutator(func->body);
+    DeviceRegionAnnotater mutator(target->GetHost() ? Optional<Target>(target.WithoutHost())
+                                                    : NullOpt);
+    auto body = mutator(func->body);
+    if (!body.same_as(func->body)) {
+      func.CopyOnWrite()->body = body;
     }
+
     return func;
   };
 
