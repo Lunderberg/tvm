@@ -168,18 +168,6 @@ class IRConvertSSA final : public StmtExprMutator {
           value = VisitExpr(GetRef<PrimExpr>(expr));
         } else if (auto* stmt = value.as<StmtNode>()) {
           value = VisitStmt(GetRef<Stmt>(stmt));
-        } else if (value->IsInstance<ArrayNode>()) {
-          Array<IterVar> iter_vars = Downcast<Array<IterVar>>(value);
-          value = iter_vars.Map([this](IterVar iter_var) {
-            if (iter_var->dom.defined()) {
-              PrimExpr min = VisitExpr(iter_var->dom->min);
-              PrimExpr extent = VisitExpr(iter_var->dom->extent);
-              if (!min.same_as(iter_var->dom->min) || !extent.same_as(iter_var->dom->extent)) {
-                iter_var.CopyOnWrite()->dom = Range::FromMinExtent(min, extent);
-              }
-            }
-            return iter_var;
-          });
         }
 
         made_change = made_change || !value.same_as(old_value);

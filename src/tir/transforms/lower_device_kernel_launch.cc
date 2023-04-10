@@ -179,8 +179,8 @@ class DeviceKernelMutator : public StmtExprMutator {
     ICHECK(dev_info.launch_params.defined())
         << "CallNode attempted kernel launch to " << gvar->name_hint << " on target "
         << dev_info.target << ", but subroutine " << gvar->name_hint
-        << " did not have the tir::attr::kKernelLaunchParams attribute "
-        << "required for cross-target kernel launch";
+        << " did not have the tir::attr::kKernelLaunchParams attribute (\""
+        << tir::attr::kKernelLaunchParams << "\") required for cross-target kernel launch";
 
     // Collected kernel information may be in terms of the callee's
     // arguments, but we need expressions for them in terms of the

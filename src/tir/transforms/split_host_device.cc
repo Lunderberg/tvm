@@ -101,12 +101,13 @@ class HostDeviceSplitter : public StmtMutator {
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
     if (op->attr_key == tvm::attr::kTarget) {
-      auto device_target = [&]() {
-        auto output = make_object<TargetNode>(*op->node.as<TargetNode>());
-        output->host = NullOpt;
-        return Target(output);
-      }();
-      return SplitDeviceFunc(op->body, device_target);
+      return SplitDeviceFunc(op->body, Downcast<Target>(op->node));
+      // auto device_target = [&]() {
+      //   auto output = make_object<TargetNode>(*op->node.as<TargetNode>());
+      //   output->host = NullOpt;
+      //   return Target(output);
+      // }();
+      // return SplitDeviceFunc(op->body, device_target);
     }
     return StmtMutator::VisitStmt_(op);
   }

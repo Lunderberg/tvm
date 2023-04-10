@@ -219,12 +219,18 @@ PrimFunc MakePackedAPI(PrimFunc func) {
     return func;
   }
 
-  // Internal function calls do not need the PackedFunc API
+  // Internal function calls do not need the PackedFunc API, because
+  // (1) any buffers have already been lowered to primitive types, and
+  // (2) internal functions do not need the PackedFunc API isn't
+  // necessary for external FFI.
   auto global_symbol = func->GetAttr<String>(tvm::attr::kGlobalSymbol);
   if (!global_symbol.defined()) {
+    ICHECK(func->buffer_map.empty())
+        << "Internal subroutine contains buffer map " << func->buffer_map
+        << ", which should have been lowered earlier during \"tir.LowerBufferArguments\" pass.";
     return func;
   }
-  std::string name_hint = global_symbol.value_or("MakePackedAPI");
+  std::string name_hint = global_symbol.value();
 
   auto* func_ptr = func.CopyOnWrite();
   const Stmt nop = Evaluate(0);
