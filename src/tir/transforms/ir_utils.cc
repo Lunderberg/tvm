@@ -278,9 +278,14 @@ class IRConvertSSA final : public StmtExprMutator {
     // new buffer, pushing it onto the scoped stack of existing
     // buffers.  This will be popped when the new_buffer_var
     // redefinition is popped.
-    Buffer new_buf(new_buffer_var, buf->dtype, shape, strides, elem_offset, buf->name,
-                   buf->data_alignment, buf->offset_factor, buf->buffer_type, buf->axis_separators,
-                   buf->span);
+    auto new_buf = buf;
+    {
+      auto write_ptr = new_buf.CopyOnWrite();
+      write_ptr->data = new_buffer_var;
+      write_ptr->shape = shape;
+      write_ptr->strides = strides;
+      write_ptr->elem_offset = elem_offset;
+    }
     buffers.push_back(new_buf);
     return new_buf;
   }
