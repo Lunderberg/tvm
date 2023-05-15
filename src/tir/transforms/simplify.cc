@@ -150,6 +150,7 @@ class StmtSimplifier : public IRMutatorWithAnalyzer {
 
   bool CanInlineLetStmt(const LetStmtNode* op) {
     if (is_const_number(op->value)) return true;
+    if (op->value->dtype.is_handle()) return false;
     if (op->value.as<VarNode>()) return true;
     // Won't face the deep expression explosion problem as in Let expression.
     // attempt to inline as much as possible if the value integer type(can be index).
