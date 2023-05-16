@@ -262,8 +262,22 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
         args.push_back(LiteralDoc::DataType(call->dtype, call_p->Attr("dtype")));
       }
 
+      auto format_arg = [&](int i, const PrimExpr& arg) -> ExprDoc {
+        auto arg_path = call_p->Attr("args")->ArrayIndex(i);
+        if (auto* ptr = arg.as<tir::VarNode>()) {
+          auto var = GetRef<tir::Var>(ptr);
+          if (auto it = call->buffer_map.find(var); it != call->buffer_map.end()) {
+            tir::BufferRegion buffer_region = (*it).second;
+            auto path = call_p->Attr("buffer_map")->MapValue(arg_path);
+            return d->AsDoc<ExprDoc>(buffer_region, path);
+          }
+        }
+
+        return d->AsDoc<ExprDoc>(arg, arg_path);
+      };
+
       for (int i = 0; i < n_args; ++i) {
-        args.push_back(d->AsDoc<ExprDoc>(call->args[i], call_p->Attr("args")->ArrayIndex(i)));
+        args.push_back(format_arg(i, call->args[i]));
       }
       if (dtype_print_location == tir::ScriptDtypePrintLocation::kLast) {
         args.push_back(LiteralDoc::DataType(call->dtype, call_p->Attr("dtype")));
