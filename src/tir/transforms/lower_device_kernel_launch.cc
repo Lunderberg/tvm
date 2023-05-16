@@ -159,6 +159,11 @@ class DeviceKernelMutator : public StmtExprMutator {
     auto* gvar = op->op.as<GlobalVarNode>();
     if (!gvar) return std::move(node);
 
+    ICHECK(node->buffer_map.empty())
+        << "Cross-device subroutines must be lowered to primitive arguments "
+        << "prior to calling tir.LowerDeviceKernelLaunch.  "
+        << "Please call tir.LowerBufferArguments first";
+
     auto it = device_info_map_.find(gvar);
     ICHECK(it != device_info_map_.end())
         << "CallNode attempted subroutine call to " << gvar->name_hint << ", but "
