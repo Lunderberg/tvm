@@ -161,6 +161,12 @@ class SubroutineCallRewriter : public StmtExprMutator {
         Array<PrimExpr> cpacked_args;
         cpacked_args.push_back(tir::StringImm(symbol.value()));
         for (auto arg : node->args) {
+          // Replace any BufferRegions with a DLTensor stack argument
+          if (auto* var = arg.as<VarNode>()) {
+            if (auto it = node->buffer_map.find(GetRef<Var>(var)); it != node->buffer_map.end()) {
+              arg = tvm::topi::detail::pack_buffer((*it).second);
+            }
+          }
           cpacked_args.push_back(arg);
         }
 
