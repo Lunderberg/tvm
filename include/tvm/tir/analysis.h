@@ -95,11 +95,19 @@ TVM_DLL double EstimateTIRFlops(const IRModule& mod);
 
 /*!
  * \brief Find undefined vars in the statement.
+ *
  * \param stmt The statement to be checked.
+ *
  * \param defs The vars that is defined.
+ *
+ * \param buffer_map The buffer_map, which may provide implicit
+ * definitions for variables used in the shape, stride, and
+ * elem_offset of the buffer.
+ *
  * \return Array of undefined vars.
  */
-TVM_DLL Array<Var> UndefinedVars(const Stmt& stmt, const Array<Var>& defs);
+TVM_DLL Array<Var> UndefinedVars(const Stmt& stmt, const Array<Var>& defs,
+                                 const Map<Var, Buffer>& buffer_map = {});
 
 /*!
  * \brief Find undefined vars in the expression.

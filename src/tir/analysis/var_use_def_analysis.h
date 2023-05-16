@@ -40,7 +40,8 @@ namespace tir {
  */
 class VarUseDefAnalyzer : public StmtExprVisitor {
  public:
-  explicit VarUseDefAnalyzer(const Array<Var>& defined_vars, bool visit_thread_extent = true);
+  explicit VarUseDefAnalyzer(const Array<Var>& defined_vars, bool visit_thread_extent = true,
+                             const Map<Var, Buffer>& buffer_map = {});
   // The fields are publically readible to
   // be accessible to the users.
   bool visit_thread_extent_{true};

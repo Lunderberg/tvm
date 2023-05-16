@@ -298,7 +298,12 @@ inline size_t NumBufferArgs(const std::vector<DLDataType>& arg_types) {
     }
   }
   for (size_t i = base; i < arg_types.size(); ++i) {
-    ICHECK(arg_types[i].code != kTVMOpaqueHandle) << "Device function need to be organized";
+    ICHECK(arg_types[i].code != kTVMOpaqueHandle)
+        << "Invalid argument order.  "
+        << "The device function must have all buffer parameters first, "
+        << "followed by scalar parameters.  "
+        << "However, args[" << base << "] is scalar with type " << arg_types[base] << ", "
+        << "and is followed by buffer argument args[" << i << "]";
   }
   return base;
 }

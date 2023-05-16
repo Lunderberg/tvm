@@ -553,6 +553,8 @@ class CodeGenLLVM : public ExprFunctor<llvm::Value*(const PrimExpr&)>,
   // that function.
   std::unordered_map<const GlobalVarNode*, llvm::Function*> functions_;
 
+  // The GlobalVar of the current function, to be used for error messages
+  Optional<GlobalVar> current_function_{NullOpt};
   // Whether current function is restricted
   bool is_restricted_{true};
   // The analyzer information

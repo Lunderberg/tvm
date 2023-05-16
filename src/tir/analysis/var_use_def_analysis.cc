@@ -25,10 +25,41 @@
 namespace tvm {
 namespace tir {
 
-VarUseDefAnalyzer::VarUseDefAnalyzer(const Array<Var>& defined_vars, bool visit_thread_extent)
+VarUseDefAnalyzer::VarUseDefAnalyzer(const Array<Var>& defined_vars, bool visit_thread_extent,
+                                     const Map<Var, Buffer>& buffer_map)
     : visit_thread_extent_(visit_thread_extent) {
+  Array<Buffer> buffer_defs;
   for (const Var v : defined_vars) {
     use_count_[v.get()] = 0;
+
+    if (auto opt = buffer_map.Get(v)) {
+      buffer_defs.push_back(opt.value());
+    }
+  }
+
+  Array<PrimExpr> delayed_visit;
+  for (const Buffer& buf : buffer_defs) {
+    auto handle_expr = [this, &delayed_visit](const PrimExpr& expr) {
+      if (auto var = expr.as<VarNode>()) {
+        if (!use_count_.count(var)) {
+          use_count_[var] = 0;
+          return;
+        }
+      }
+      delayed_visit.push_back(expr);
+    };
+
+    handle_expr(buf->elem_offset);
+    for (const auto& dim : buf->shape) {
+      handle_expr(dim);
+    }
+    for (const auto& stride : buf->strides) {
+      handle_expr(stride);
+    }
+  }
+
+  for (const PrimExpr& expr : delayed_visit) {
+    VisitExpr(expr);
   }
 }
 
@@ -154,8 +185,9 @@ void VarUseDefAnalyzer::HandleUse(const VarNode* v) {
   }
 }
 
-Array<Var> UndefinedVars(const Stmt& stmt, const Array<Var>& args) {
-  VarUseDefAnalyzer m(args);
+Array<Var> UndefinedVars(const Stmt& stmt, const Array<Var>& args,
+                         const Map<Var, Buffer>& buffer_map) {
+  VarUseDefAnalyzer m(args, true, buffer_map);
   m(stmt);
   return m.undefined_;
 }

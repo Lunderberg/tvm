@@ -263,7 +263,7 @@ llvm::Function* CodeGenLLVM::DeclareFunctionInternal(const GlobalVar& gvar, cons
   }
 
   ICHECK_EQ(func->buffer_map.size(), 0U)
-      << "Cannot codegen function with buffer_map, please lower them first";
+      << "Cannot codegen function " << gvar << " with buffer_map, please lower them first";
 
   std::vector<llvm::Type*> param_types;
   is_restricted_ = func->HasNonzeroAttr(tir::attr::kNoAlias);
@@ -298,6 +298,7 @@ llvm::Function* CodeGenLLVM::DeclareFunctionInternal(const GlobalVar& gvar, cons
 void CodeGenLLVM::AddFunctionInternal(const GlobalVar& gvar, const PrimFunc& f, bool ret_void) {
   this->InitFuncState();
 
+  current_function_ = gvar;
   function_ = DeclareFunctionInternal(gvar, f, ret_void);
 
   // set var map and align information
@@ -344,6 +345,7 @@ void CodeGenLLVM::AddFunctionInternal(const GlobalVar& gvar, const PrimFunc& f, 
   } else {
     builder_->CreateRet(ConstInt32(0));
   }
+  current_function_ = NullOpt;
 }
 
 void CodeGenLLVM::Print() const { module_->print(llvm::outs(), nullptr); }
@@ -973,7 +975,8 @@ CodeGenLLVM::TypedPointer CodeGenLLVM::CreateBufferPtr(llvm::Value* buffer_ptr,
 
 llvm::Value* CodeGenLLVM::GetVarValue(const VarNode* v) const {
   auto it = var_map_.find(v);
-  ICHECK(it != var_map_.end()) << "cannot find variable " << v->name_hint;
+  ICHECK(it != var_map_.end()) << "In function " << current_function_ << ", cannot find variable "
+                               << v->name_hint;
   return it->second;
 }
 
