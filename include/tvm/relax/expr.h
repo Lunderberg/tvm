@@ -1029,7 +1029,7 @@ class ExternFuncNode : public BaseFuncNode {
 
 class ExternFunc : public BaseFunc {
  public:
-  TVM_DLL ExternFunc(String global_symbol, Span span = Span());
+  TVM_DLL ExternFunc(String global_symbol, Optional<StructInfo> info = NullOpt, Span span = Span());
   TVM_DEFINE_OBJECT_REF_METHODS(ExternFunc, BaseFunc, ExternFuncNode);
   TVM_DEFINE_OBJECT_REF_COW_METHOD(ExternFuncNode);
 };

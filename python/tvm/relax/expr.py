@@ -622,15 +622,17 @@ class ExternFunc(BaseFunc):
 
     global_symbol: String
 
-    def __init__(self, global_symbol: String, span: Span = None) -> None:
+    def __init__(
+        self, global_symbol: String, sinfo: Optional[StructInfo] = None, span: Span = None
+    ) -> None:
         self.__init_handle_by_constructor__(
-            _ffi_api.ExternFunc, global_symbol, span  # type: ignore
+            _ffi_api.ExternFunc, global_symbol, sinfo, span  # type: ignore
         )
 
 
-def extern(name: str, span: Span = None):
+def extern(name: str, sinfo: Optional[StructInfo] = None, span: Span = None):
     """Create extern function."""
-    return ExternFunc(name, span)
+    return ExternFunc(name, sinfo, span)
 
 
 def const(

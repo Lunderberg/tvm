@@ -535,19 +535,21 @@ FuncStructInfo GetExternFuncStructInfo() {
 
 TVM_REGISTER_NODE_TYPE(ExternFuncNode);
 
-ExternFunc::ExternFunc(String global_symbol, Span span) {
+ExternFunc::ExternFunc(String global_symbol, Optional<StructInfo> opt_info, Span span) {
   ObjectPtr<ExternFuncNode> n = make_object<ExternFuncNode>();
   n->global_symbol = std::move(global_symbol);
   n->span = span;
-  static auto sinfo = GetExternFuncStructInfo();
+  static auto default_sinfo = GetExternFuncStructInfo();
+  auto sinfo = opt_info.value_or(default_sinfo);
   n->struct_info_ = sinfo;
   n->checked_type_ = GetStaticType(sinfo);
   data_ = std::move(n);
 }
 
-TVM_REGISTER_GLOBAL("relax.ExternFunc").set_body_typed([](String global_symbol, Span span) {
-  return ExternFunc(global_symbol, span);
-});
+TVM_REGISTER_GLOBAL("relax.ExternFunc")
+    .set_body_typed([](String global_symbol, Optional<StructInfo> opt_info, Span span) {
+      return ExternFunc(global_symbol, opt_info, span);
+    });
 
 Expr GetShapeOf(const Expr& expr) {
   // default case, to be normalized.
