@@ -544,6 +544,12 @@ TVM_DLL Pass InjectPermutedLayout();
 TVM_DLL Pass TransformMmaBufferLayout();
 
 /*!
+ * \brief Lower the Target annotation in a tir::Block to a tir::AttrStmt
+ * \return The pass.
+ */
+TVM_DLL Pass LowerScheduleableTargetAnnotation();
+
+/*!
  * \brief Remove the block to ensure that the TIR can not be scheduled again.
  * \return The pass.
  */
