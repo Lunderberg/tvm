@@ -130,6 +130,32 @@ class BufferTouchedDomain final : public IRVisitorWithAnalyzer {
   std::unordered_map<const BufferNode*, BufferDomainAccess> buffer_access_map_;
 };
 
+BufferTouchResults DomainTouched(const Stmt& stmt) {
+  auto access_map = BufferTouchedDomain(stmt).GetAccessedBufferRegions();
+  BufferTouchResults results;
+
+  for (const auto& [buffer_ptr, domain_access] : access_map) {
+    Buffer buf = GetRef<Buffer>(buffer_ptr);
+    if (auto writes = std::get<StoreAccess>(domain_access).set; writes.size()) {
+      std::vector<Range> region;
+      for (const auto& int_sets : writes) {
+        region.push_back(arith::Union(int_sets).CoverRange(Range()));
+      }
+      results.writes.push_back(BufferRegion(buf, region));
+    }
+
+    if (auto reads = std::get<LoadAccess>(domain_access).set; reads.size()) {
+      std::vector<Range> region;
+      for (const auto& int_sets : reads) {
+        region.push_back(arith::Union(int_sets).CoverRange(Range()));
+      }
+      results.reads.push_back(BufferRegion(buf, region));
+    }
+  }
+
+  return results;
+}
+
 Region DomainTouched(const Stmt& stmt, const Buffer& buffer, bool consider_loads,
                      bool consider_stores) {
   return BufferTouchedDomain(stmt).FindUnion(buffer, consider_loads, consider_stores);
@@ -162,7 +188,8 @@ Map<Buffer, runtime::ADT> DomainTouchedAccessMap(const PrimFunc& func) {
   return ret;
 }
 
-TVM_REGISTER_GLOBAL("arith.DomainTouched").set_body_typed(DomainTouched);
+TVM_REGISTER_GLOBAL("arith.DomainTouched")
+    .set_body_typed(static_cast<Region (*)(const Stmt&, const Buffer&, bool, bool)>(DomainTouched));
 TVM_REGISTER_GLOBAL("arith.DomainTouchedAccessMap").set_body_typed(DomainTouchedAccessMap);
 
 }  // namespace arith

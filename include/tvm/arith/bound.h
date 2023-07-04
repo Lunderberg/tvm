@@ -80,6 +80,13 @@ IntSet DeduceBound(PrimExpr v, PrimExpr cond,
 Region DomainTouched(const Stmt& body, const tir::Buffer& buffer, bool consider_loads,
                      bool consider_stores);
 
+struct BufferTouchResults {
+  std::vector<tir::BufferRegion> reads;
+  std::vector<tir::BufferRegion> writes;
+};
+
+BufferTouchResults DomainTouched(const Stmt& body);
+
 }  // namespace arith
 }  // namespace tvm
 #endif  // TVM_ARITH_BOUND_H_
