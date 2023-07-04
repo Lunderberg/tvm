@@ -1838,6 +1838,9 @@ assume = _op_wrapper(_tir_op.assume)
 undef = _op_wrapper(_tir_op.undef)
 TVMBackendAllocWorkspace = _op_wrapper(_tir_op.TVMBackendAllocWorkspace)
 TVMBackendFreeWorkspace = _op_wrapper(_tir_op.TVMBackendFreeWorkspace)
+buffer_copy = _op_wrapper(_tir_op.buffer_copy)
+TVMDeviceCopyDataFromTo = _op_wrapper(_tir_op.TVMDeviceCopyDataFromTo)
+TVMSynchronize = _op_wrapper(_tir_op.TVMSynchronize)
 start_profile_intrinsic = _op_wrapper(_tir_op.start_profile_intrinsic)
 end_profile_intrinsic = _op_wrapper(_tir_op.end_profile_intrinsic)
 
@@ -2164,4 +2167,7 @@ __all__ = [
     "IterVar",
     "CommReducer",
     "Range",
+    "buffer_copy",
+    "TVMDeviceCopyDataFromTo",
+    "TVMSynchronize",
 ]

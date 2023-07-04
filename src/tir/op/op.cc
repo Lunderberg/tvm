@@ -963,6 +963,16 @@ TVM_TIR_REGISTER_OP("TVMBackendFreeWorkspace")
     .set_attr<TGlobalSymbol>("TGlobalSymbol", "TVMBackendFreeWorkspace")
     .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kOpaque));
 
+TVM_TIR_REGISTER_OP("TVMDeviceCopyDataFromTo")
+    .set_num_inputs(2)
+    .set_attr<TGlobalSymbol>("TGlobalSymbol", "TVMDeviceCopyDataFromTo")
+    .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kUpdateState));
+
+TVM_TIR_REGISTER_OP("TVMSynchronize")
+    .set_num_inputs(3)
+    .set_attr<TGlobalSymbol>("TGlobalSymbol", "TVMSynchronize")
+    .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kUpdateState));
+
 // expose basic functions to node namespace
 TVM_REGISTER_GLOBAL("node._const").set_body([](TVMArgs args, TVMRetValue* ret) {
   if (args[0].type_code() == kDLInt) {

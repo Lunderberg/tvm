@@ -329,6 +329,18 @@ TIR_DEFINE_BUILTIN_FUNC(texture2d_load)
     .set_attr<TVectorizable>("TVectorizable", true)
     .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kOpaque));
 
+TIR_DEFINE_BUILTIN_FUNC(buffer_copy)
+    .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kUpdateState))
+    .set_num_inputs(2)
+    .add_argument("dst", "handle", "The destination of the copy")
+    .add_argument("src", "handle", "The source of the copy")
+    .describe(R"code(Copy data from the source location to the destination location.
+
+The argument uses the destination first, following the convention of
+memcpy.
+
+)code");
+
 TIR_DEFINE_BUILTIN_FUNC(dma_copy).set_attr<TCallEffectKind>("TCallEffectKind",
                                                             Integer(CallEffectKind::kOpaque));
 

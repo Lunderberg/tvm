@@ -103,6 +103,9 @@ void InitContextFunctions(std::function<void*(const char*)> fgetsymbol) {
   TVM_INIT_CONTEXT_FUNC(TVMBackendParallelLaunch);
   TVM_INIT_CONTEXT_FUNC(TVMBackendParallelBarrier);
 
+  TVM_INIT_CONTEXT_FUNC(TVMDeviceCopyDataFromTo);
+  TVM_INIT_CONTEXT_FUNC(TVMSynchronize);
+
 #undef TVM_INIT_CONTEXT_FUNC
 }
 

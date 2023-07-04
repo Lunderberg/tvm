@@ -3094,6 +3094,81 @@ def TVMBackendFreeWorkspace(device_type, device_id, ptr):
     return call_intrin("int32", "tir.TVMBackendFreeWorkspace", device_type, device_id, ptr)
 
 
+def buffer_copy(dst_dltensor, src_dltensor):
+    """TIR built-in to copy a buffer
+
+    Parameters
+    ----------
+    dst_dltensor: PrimExpr
+        The data source to copy.
+
+    src_dltensor: PrimExpr
+        The destination of the copy
+
+    Returns
+    -------
+    call : PrimExpr
+        The call expression.
+    """
+    return call_intrin("int32", "tir.buffer_copy", dst_dltensor, src_dltensor)
+
+
+def TVMDeviceCopyDataFromTo(src_dltensor, dst_dltensor, stream_handle):
+    """Backend function to copy data.
+
+    Parameters
+    ----------
+    src_dltensor: PrimExpr
+        The destination of the copy
+
+    dst_dltensor: PrimExpr
+        The data source to copy.
+
+    stream_handle: TVMStreamHandle
+        The execution stream on which to perform the copy
+
+    Returns
+    -------
+    call : PrimExpr
+        The call expression.
+    """
+    return call_intrin(
+        "int32",
+        "tir.TVMDeviceCopyDataFromTo",
+        dst_dltensor,
+        src_dltensor,
+        stream_handle,
+    )
+
+
+def TVMSynchronize(device_type, device_id, stream_handle):
+    """Backend function to wait for execution to complete.
+
+    Parameters
+    ----------
+    device_type: int
+        The device type to wait on
+
+    device_id: int
+        The device id to wait on
+
+    stream_handle: TVMStreamHandle
+        The execution stream on which to synchronize
+
+    Returns
+    -------
+    call : PrimExpr
+        The call expression.
+    """
+    return call_intrin(
+        "int32",
+        "tir.TVMSynchronize",
+        device_type,
+        device_id,
+        stream_handle,
+    )
+
+
 # pylint: disable=unnecessary-lambda
 sum = comm_reducer(lambda x, y: x + y, lambda t: const(0, dtype=t), name="sum")
 min = comm_reducer(lambda x, y: _ffi_api._OpMin(x, y, None), max_value, name="min")  # type: ignore

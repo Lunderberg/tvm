@@ -292,6 +292,20 @@ TVM_DLL Pass AnnotateDeviceRegions();
 TVM_DLL Pass SplitHostDevice();
 
 /*!
+ * \brief Insert copies to expose buffers to cross-device subroutine
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass InsertCrossDeviceCopies();
+
+/*!
+ * \brief Lower the builtin::buffer_copy to contiguous DeviceAPI calls
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass LowerBufferCopy();
+
+/*!
  * \brief Lower cross-device function calls.
  *
  * Prior to this pass, host to device calls are represented as
