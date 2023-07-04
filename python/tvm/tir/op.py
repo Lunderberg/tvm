@@ -376,7 +376,9 @@ def tvm_stack_make_shape(*args):
     return call_intrin("handle", "tir.tvm_stack_make_shape", *args)
 
 
-def tvm_stack_make_array(data, shape, strides, ndim, arr_dtype, elem_offset):
+def tvm_stack_make_array(
+    data, shape, strides, ndim, arr_dtype, elem_offset, device_type=None, device_id=None
+):
     """Allocate a NDArray(DLTensor) on stack, return the handle
 
     Parameters
@@ -396,17 +398,31 @@ def tvm_stack_make_array(data, shape, strides, ndim, arr_dtype, elem_offset):
     arr_dtype : Expr
         The data type of array.
 
-    elem_offse : Expr
+    elem_offset : Expr
         The element offset of array.
+
+    device_type : Optional[Expr]
+        The device type on which the array exists.
+
+    device_id : Optional[Expr]
+        The device id on which the array exists.
 
     Returns
     -------
     call : PrimExpr
         The call expression.
     """
-    return call_intrin(
-        "handle", "tir.tvm_stack_make_array", data, shape, strides, ndim, arr_dtype, elem_offset
-    )
+
+    args = [data, shape, strides, ndim, arr_dtype, elem_offset]
+
+    if device_type is not None:
+        args.append(device_type)
+
+    if device_id is not None:
+        assert device_type is not None, "Cannot specify device_id without specifying device_type"
+        args.append(device_id)
+
+    return call_intrin("handle", "tir.tvm_stack_make_array", *args)
 
 
 def assume(cond=None):

@@ -443,13 +443,29 @@ class BuiltinLower : public StmtExprMutator {
     }
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrByteOffset,
                                        cast(DataType::UInt(64), byte_offset)));
-    ICHECK(current_device_.device_type) << "Unknown device type in current IR";
-    ICHECK(current_device_.device_id) << "Unknown device id in current IR";
+
+    auto device_type = [&]() -> PrimExpr {
+      if (op->args.size() > 6) {
+        return op->args[6];
+      } else {
+        ICHECK(current_device_.device_type) << "Unknown device type in current IR";
+        return current_device_.device_type.value();
+      }
+    }();
+
+    auto device_id = [&]() -> PrimExpr {
+      if (op->args.size() > 7) {
+        return op->args[7];
+      } else {
+        ICHECK(current_device_.device_id) << "Unknown device id in current IR";
+        return current_device_.device_id.value();
+      }
+    }();
+
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceId,
-                                       cast(DataType::Int(32), current_device_.device_id.value())));
-    prep_seq.emplace_back(
-        TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceType,
-                     cast(DataType::Int(32), current_device_.device_type.value())));
+                                       cast(DataType::Int(32), device_id)));
+    prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceType,
+                                       cast(DataType::Int(32), device_type)));
     return TVMStructGet(DataType::Handle(), scope.stack_array, idx, builtin::kArrAddr);
   }
   // call packed.

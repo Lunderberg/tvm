@@ -188,7 +188,6 @@ TIR_DEFINE_BUILTIN_FUNC(tvm_stack_make_shape)
     .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kOpaque));
 
 TIR_DEFINE_BUILTIN_FUNC(tvm_stack_make_array)
-    .set_num_inputs(6)
     .set_attr<TCallEffectKind>("TCallEffectKind", Integer(CallEffectKind::kOpaque));
 
 // When num_inputs are not set, the function is assumed to be variable length.

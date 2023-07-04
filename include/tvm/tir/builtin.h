@@ -331,7 +331,9 @@ TVM_DLL const Op& tvm_stack_make_shape();
  *                            Expr strides,
  *                            Expr ndim,
  *                            Expr dtype,
- *                            Expr elem_offset) {
+ *                            Expr elem_offset,
+ *                            Optional<Expr> device_type = NullOpt,
+ *                            Optional<Expr> device_id = NullOpt) {
  *     ret = alloca stack DLTensor();
  *     ret->data = data;
  *     ret->shape = shape;
@@ -339,6 +341,8 @@ TVM_DLL const Op& tvm_stack_make_shape();
  *     ret->ndim = ndim;
  *     ret->dtype = dtype.type();
  *     ret->byte_offset = elem_offset * sizeof(dtype);
+ *     ret->device_type = device_id.value_or(attribute_device_type);
+ *     ret->device_id = device_id.value_or(attribute_device_id);
  *     return ret;
  *  }
  */
