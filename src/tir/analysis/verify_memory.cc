@@ -177,7 +177,8 @@ std::vector<String> VerifyMemory_(const PrimFunc& func) {
           << func;
 
   if (func->GetAttr<Integer>(tvm::attr::kCallingConv, Integer(CallingConv::kDefault)) ==
-      CallingConv::kDefault) {
+          CallingConv::kDefault &&
+      target.value()->GetHost().defined()) {
     MemoryAccessVerifier v(func, target.value()->GetTargetDeviceType());
     v.Run();
     return v.Errors();
