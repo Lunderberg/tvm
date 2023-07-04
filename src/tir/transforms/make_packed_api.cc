@@ -344,13 +344,6 @@ PrimFunc MakePackedAPI(PrimFunc func) {
     ObjectRef node = String("default");
     seq_check.push_back(AttrStmt(node, attr::device_id, device_id, nop));
     seq_check.push_back(AttrStmt(node, attr::device_type, device_type, nop));
-
-    if (runtime::DeviceAPI::NeedSetDevice(target_device_type)) {
-      Stmt set_device =
-          Evaluate(Call(DataType::Int(32), builtin::tvm_call_packed(),
-                        {StringImm(runtime::symbol::tvm_set_device), device_type, device_id}));
-      body = SeqStmt({set_device, body});
-    }
   }
 
   // Return error code of zero on success

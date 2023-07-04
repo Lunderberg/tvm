@@ -236,6 +236,32 @@ class DeviceKernelMutator : public StmtExprMutator {
   }
 
  private:
+  Stmt VisitStmt(const Stmt& stmt) override {
+    need_set_device_.push_back(false);
+    Stmt output = Parent::VisitStmt(stmt);
+    if (need_set_device_.back()) {
+      Call set_device(DataType::Int(32), builtin::tvm_call_packed(),
+                      {StringImm(runtime::symbol::tvm_set_device),
+                       current_device_.device_type.value(), current_device_.device_id.value()});
+      output = SeqStmt::Flatten(Evaluate(set_device), output);
+    }
+    need_set_device_.pop_back();
+    return output;
+  }
+
+  Stmt VisitStmt_(const AttrStmtNode* op) override {
+    auto cache = current_device_;
+    if (op->attr_key == attr::device_type) {
+      current_device_.device_type = Downcast<Integer>(op->value);
+    } else if (op->attr_key == attr::device_id) {
+      current_device_.device_id = op->value;
+    }
+
+    auto out = Parent::VisitStmt_(op);
+    current_device_ = cache;
+    return out;
+  }
+
   PrimExpr VisitExpr_(const CallNode* op) override {
     auto node = Downcast<Call>(Parent::VisitExpr_(op));
 
@@ -258,10 +284,10 @@ class DeviceKernelMutator : public StmtExprMutator {
       return std::move(node);
     }
 
-    bool same_device_type =
-        caller_target->GetTargetDeviceType() == callee_target->GetTargetDeviceType();
-    bool linkable_module = (caller_target->GetTargetDeviceType() == kDLCPU) &&
-                           (callee_target->GetTargetDeviceType() == kDLExtDev);
+    auto callee_target_kind = callee_target->GetTargetDeviceType();
+    bool same_device_type = caller_target->GetTargetDeviceType() == callee_target_kind;
+    bool linkable_module =
+        (caller_target->GetTargetDeviceType() == kDLCPU) && (callee_target_kind == kDLExtDev);
     if (same_device_type || linkable_module) {
       // Calls to another target using the same device (e.g. LLVM
       // calling a custom TIRToRuntime target) do not require a kernel
@@ -280,6 +306,37 @@ class DeviceKernelMutator : public StmtExprMutator {
         << dev_info.target << ", but subroutine " << gvar->name_hint
         << " did not have the tir::attr::kKernelLaunchParams attribute "
         << "required for cross-target kernel launch";
+
+    ICHECK(current_device_.device_type.defined())
+        << "CallNode attempted kernel launch to " << gvar->name_hint << " on target "
+        << dev_info.target << ", but this occurred outside of a tir::attr::device_type AttrStmt";
+
+    ICHECK_EQ(current_device_.device_type.value()->value, callee_target_kind)
+        << "CallNode attempted kernel launch to " << gvar->name_hint << " on target "
+        << callee_target
+        << ", but this occurred within a tir::attr::device_type AttrStmt for device type = "
+        << current_device_.device_type << " (" << [&]() -> std::string {
+      try {
+        return runtime::DeviceName(current_device_.device_type.value()->value);
+      } catch (tvm::Error&) {
+        return "unknown";
+      }
+    }() << ")";
+
+    ICHECK(current_device_.device_id.defined())
+        << "CallNode attempted kernel launch to " << gvar->name_hint << " on target "
+        << dev_info.target << ", but this occurred outside of a tir::attr::device_id AttrStmt";
+
+    // The device kernel calling convention does not specify the
+    // device kind or id on which to run, and instead specifies this
+    // with the tvm_set_device call.  This call must occur prior to
+    // the kernel itself, and sets a per-thread global variable
+    // indicating which device should execute the following call.
+    // Since we need to replace the Call with another PrimExpr, mark
+    // the tvm_set_device to be prepended before the current Stmt.
+    if (runtime::DeviceAPI::NeedSetDevice(callee_target_kind)) {
+      need_set_device_.back() = true;
+    }
 
     // Collected kernel information may be in terms of the callee's
     // arguments, but we need expressions for them in terms of the
@@ -310,10 +367,18 @@ class DeviceKernelMutator : public StmtExprMutator {
 
     auto dtype = node->dtype.is_void() ? DataType::Int(32) : node->dtype;
 
-    return Call(dtype, builtin::tvm_call_packed(), call_args);
+    Call device_kernel_call(dtype, builtin::tvm_call_packed(), call_args);
+    return device_kernel_call;
   }
 
+  struct DeviceInfo {
+    Optional<Integer> device_type;
+    Optional<PrimExpr> device_id;
+  };
+  DeviceInfo current_device_;
+
   Optional<Target> current_target_;
+  std::vector<bool> need_set_device_;
   std::unordered_map<const GlobalVarNode*, KernelInfo> device_info_map_;
   std::unordered_set<const GlobalVarNode*> device_kernel_launch_;
   std::unordered_set<const GlobalVarNode*> extern_function_call_;
