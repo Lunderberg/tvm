@@ -105,8 +105,7 @@ class BuiltinLower : public StmtExprMutator {
   StackSizes GetMaxStack(Stmt stmt) {
     BuiltinLower precheck;
     precheck.is_precheck_ = true;
-    precheck.device_id_ = this->device_id_;
-    precheck.device_type_ = this->device_type_;
+    precheck.current_device_ = this->current_device_;
 
     precheck.alloca_scope_.emplace_back();
     {
@@ -228,7 +227,7 @@ class BuiltinLower : public StmtExprMutator {
         return stmt;
       }
     }
-    if (const auto* dev_type = device_type_.as<IntImmNode>();
+    if (const auto* dev_type = current_device_.device_type.as<IntImmNode>();
         dev_type && dev_type->value == kDLCPU) {
       auto storage_scope = Downcast<PointerType>(op->buffer_var->type_annotation)->storage_scope;
       if (storage_scope == "global") {
@@ -243,8 +242,9 @@ class BuiltinLower : public StmtExprMutator {
       // set total_bytes to uint64 to avoid overflow
       total_bytes = total_bytes * op->extents[i];
     }
-    ICHECK(device_type_) << "Unknown device type in current IR";
-    ICHECK(device_id_) << "Unknown device id in current IR";
+    ICHECK(current_device_.device_type) << "Unknown device type in current IR";
+    ICHECK(current_device_.device_id) << "Unknown device id in current IR";
+
     Stmt throw_last_error = Evaluate(Call(DataType::Int(32), builtin::tvm_throw_last_error(), {}));
 
     Stmt body = SeqStmt({IfThenElse(Call(DataType::Bool(1), builtin::isnullptr(), {op->buffer_var}),
@@ -252,15 +252,16 @@ class BuiltinLower : public StmtExprMutator {
                          op->body});
     Stmt alloca = LetStmt(op->buffer_var,
                           Call(op->buffer_var.dtype(), Op::Get("tir.TVMBackendAllocWorkspace"),
-                               {cast(DataType::Int(32), device_type_.value()),
-                                cast(DataType::Int(32), device_id_.value()), total_bytes,
-                                IntImm(DataType::Int(32), op->dtype.code()),
+                               {cast(DataType::Int(32), current_device_.device_type.value()),
+                                cast(DataType::Int(32), current_device_.device_id.value()),
+                                total_bytes, IntImm(DataType::Int(32), op->dtype.code()),
                                 IntImm(DataType::Int(32), op->dtype.bits())}),
                           body);
 
-    PrimExpr free_op = Call(DataType::Int(32), Op::Get("tir.TVMBackendFreeWorkspace"),
-                            {cast(DataType::Int(32), device_type_.value()),
-                             cast(DataType::Int(32), device_id_.value()), op->buffer_var});
+    PrimExpr free_op =
+        Call(DataType::Int(32), Op::Get("tir.TVMBackendFreeWorkspace"),
+             {cast(DataType::Int(32), current_device_.device_type.value()),
+              cast(DataType::Int(32), current_device_.device_id.value()), op->buffer_var});
     Stmt free_stmt = IfThenElse(free_op != make_zero(DataType::Int(32)), throw_last_error);
     body = SeqStmt({alloca, free_stmt});
     body = AttrStmt(op->buffer_var, attr::storage_alignment,
@@ -269,18 +270,18 @@ class BuiltinLower : public StmtExprMutator {
   }
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
-    if (op->attr_key == attr::device_id) {
-      ICHECK(!device_id_);
-      device_id_ = op->value;
-      return this->VisitStmt(op->body);
-    } else if (op->attr_key == attr::device_type) {
-      ICHECK(!device_type_);
-      device_type_ = op->value;
-      return this->VisitStmt(op->body);
-    } else {
-      return StmtExprMutator::VisitStmt_(op);
+    auto cache = current_device_;
+    if (op->attr_key == attr::device_type) {
+      current_device_.device_type = op->value;
+    } else if (op->attr_key == attr::device_id) {
+      current_device_.device_id = op->value;
     }
+
+    auto out = StmtExprMutator::VisitStmt_(op);
+    current_device_ = cache;
+    return out;
   }
+
   Stmt VisitStmt_(const ForNode* op) final {
     PrimExpr min = this->VisitExpr(op->min);
     PrimExpr extent = this->VisitExpr(op->extent);
@@ -324,19 +325,22 @@ class BuiltinLower : public StmtExprMutator {
     } else if (op->op.same_as(builtin::dma_end_group())) {
       return MakeDMAEndGroup(op);
     } else {
+      StackContext context(this);
       return StmtExprMutator::VisitExpr_(op);
     }
   }
 
   StringImm GetDeviceMethodName(const char* method_name) const {
-    CHECK(device_type_) << "Method " << method_name << " requires the device type, "
-                        << "but occurred outside of a \"device_type\" annotation";
+    CHECK(current_device_.device_type) << "Method " << method_name << " requires the device type, "
+                                       << "but occurred outside of a \"device_type\" annotation";
 
-    auto as_int = device_type_.as<IntImmNode>();
+    auto as_int = current_device_.device_type.as<IntImmNode>();
     CHECK(as_int) << "Method " << method_name
                   << " requires the device type to be a DLDeviceType enum value, "
-                  << "but was instead the expression " << device_type_ << " with type "
-                  << device_type_.value()->GetTypeKey();
+                  << "but was instead the expression " << current_device_.device_type
+                  << " with type " << current_device_.device_type.value()->GetTypeKey();
+
+    CHECK_GT(as_int->value, 0);
 
     String device_name = runtime::DeviceName(as_int->value);
     return StringImm("device_api." + device_name + "." + method_name);
@@ -439,12 +443,13 @@ class BuiltinLower : public StmtExprMutator {
     }
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrByteOffset,
                                        cast(DataType::UInt(64), byte_offset)));
-    ICHECK(device_type_) << "Unknown device type in current IR";
-    ICHECK(device_id_) << "Unknown device id in current IR";
+    ICHECK(current_device_.device_type) << "Unknown device type in current IR";
+    ICHECK(current_device_.device_id) << "Unknown device id in current IR";
     prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceId,
-                                       cast(DataType::Int(32), device_id_.value())));
-    prep_seq.emplace_back(TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceType,
-                                       cast(DataType::Int(32), device_type_.value())));
+                                       cast(DataType::Int(32), current_device_.device_id.value())));
+    prep_seq.emplace_back(
+        TVMStructSet(scope.stack_array, idx, builtin::kArrDeviceType,
+                     cast(DataType::Int(32), current_device_.device_type.value())));
     return TVMStructGet(DataType::Handle(), scope.stack_array, idx, builtin::kArrAddr);
   }
   // call packed.
@@ -452,8 +457,8 @@ class BuiltinLower : public StmtExprMutator {
     auto& scope = alloca_scope_.back();
     auto& prep_seq = prep_seq_stack_.back();
 
-    int64_t restore_shape_stack = scope.run_sizes.shape_stack;
-    size_t restore_array_stack = scope.run_sizes.array_stack;
+    StackContext context(this);
+
     size_t arg_stack_begin = scope.run_sizes.arg_stack;
 
     size_t arg_count = op->args.size();
@@ -491,8 +496,6 @@ class BuiltinLower : public StmtExprMutator {
     } else {
       scope.AssertMaxIsValid();
     }
-    scope.run_sizes.shape_stack = restore_shape_stack;
-    scope.run_sizes.array_stack = restore_array_stack;
     scope.run_sizes.arg_stack = arg_stack_begin;
     Array<PrimExpr> packed_args = {op->args[0], scope.stack_value, scope.stack_tcode->data,
                                    ConstInt32(arg_stack_begin),
@@ -520,8 +523,7 @@ class BuiltinLower : public StmtExprMutator {
     auto& scope = alloca_scope_.back();
     auto& prep_seq = prep_seq_stack_.back();
 
-    int64_t restore_shape_stack = scope.run_sizes.shape_stack;
-    size_t restore_array_stack = scope.run_sizes.array_stack;
+    StackContext context(this);
     size_t arg_stack_begin = scope.run_sizes.arg_stack;
     scope.run_sizes.arg_stack += op->args.size();
     size_t args_size = op->args.size();
@@ -549,8 +551,6 @@ class BuiltinLower : public StmtExprMutator {
     } else {
       scope.AssertMaxIsValid();
     }
-    scope.run_sizes.shape_stack = restore_shape_stack;
-    scope.run_sizes.array_stack = restore_array_stack;
     // Update the top of the stack, so we can use more than one
     // packed function's arguments with the one stack.
     scope.run_sizes.arg_stack = arg_stack_begin + args_size - 1;
@@ -563,8 +563,8 @@ class BuiltinLower : public StmtExprMutator {
   }
 
   Stmt MakeNdMemAllocWithScope(const LetStmtNode* let, const CallNode* call) {
-    ICHECK(device_type_) << "Unknown device type in current IR";
-    ICHECK(device_id_) << "Unknown device id in current IR";
+    ICHECK(current_device_.device_type) << "Unknown device type in current IR";
+    ICHECK(current_device_.device_id) << "Unknown device id in current IR";
     Stmt throw_last_error = Evaluate(Call(DataType::Int(32), builtin::tvm_throw_last_error(), {}));
 
     Stmt body = SeqStmt(
@@ -575,13 +575,11 @@ class BuiltinLower : public StmtExprMutator {
         let->var->type_annotation.as<PointerTypeNode>()->element_type.as<PrimTypeNode>()->dtype;
 
     std::string fdevapi_prefix = "device_api.";
-    fdevapi_prefix += runtime::DeviceName(device_type_.as<IntImmNode>()->value);
+    fdevapi_prefix += runtime::DeviceName(current_device_.device_type.as<IntImmNode>()->value);
 
     Array<PrimExpr> args = {
-        GetDeviceMethodName("alloc_nd"),
-        device_type_.value(),
-        device_id_.value(),
-        IntImm(DataType::Int(32), dtype.code()),
+        GetDeviceMethodName("alloc_nd"),         current_device_.device_type.value(),
+        current_device_.device_id.value(),       IntImm(DataType::Int(32), dtype.code()),
         IntImm(DataType::Int(32), dtype.bits()),
     };
 
@@ -594,8 +592,8 @@ class BuiltinLower : public StmtExprMutator {
 
     PrimExpr storage_scope = call->args[0];
     Call free_op = Call(DataType::Int(32), builtin::tvm_call_packed(),
-                        {GetDeviceMethodName("free_nd"), device_type_.value(), device_id_.value(),
-                         storage_scope, let->var});
+                        {GetDeviceMethodName("free_nd"), current_device_.device_type.value(),
+                         current_device_.device_id.value(), storage_scope, let->var});
 
     Stmt free_stmt = IfThenElse(free_op != make_zero(DataType::Int(32)), throw_last_error);
     body = SeqStmt({alloca, free_stmt});
@@ -616,10 +614,32 @@ class BuiltinLower : public StmtExprMutator {
 
   // The prepration sequence to be emitted before the current statement.
   std::vector<std::vector<Stmt>> prep_seq_stack_;
-  Optional<PrimExpr> device_type_{NullOpt};
-  Optional<PrimExpr> device_id_{NullOpt};
+
+  struct DeviceInfo {
+    Optional<PrimExpr> device_type;
+    Optional<PrimExpr> device_id;
+  };
+  DeviceInfo current_device_;
 
   bool is_precheck_{false};
+
+  struct StackContext {
+    StackContext(BuiltinLower* self)
+        : self(self), scope(self->alloca_scope_.back()), cache(scope.run_sizes) {}
+    ~StackContext() {
+      // Verify stack size matches earlier value.
+      if (self->is_precheck_) {
+        scope.UpdateMax();
+      } else {
+        scope.AssertMaxIsValid();
+      }
+      scope.run_sizes = cache;
+    }
+
+    BuiltinLower* self;
+    AllocaScope& scope;
+    StackSizes cache;
+  };
 
   // Record all stack frames.
   std::vector<AllocaScope> alloca_scope_;
