@@ -33,7 +33,7 @@ from tvm import ir
 from tvm.ir import Type
 from tvm.ir.base import deprecated
 from tvm.runtime import String, convert, ndarray
-from tvm.target import Target
+from tvm.target import Target, DynamicTarget
 
 # pylint: disable=unused-import
 from tvm.target.codegen import llvm_lookup_intrinsic_id
@@ -1694,6 +1694,47 @@ def target(
             "or as a separate argument, but not both."
         )
     return Target(target_config, host)
+
+
+def dynamic_target(
+    target: Target,
+    device_id: PrimExpr = 0,
+) -> DynamicTarget:
+    """
+    Create a target
+
+    Parameters
+    ----------
+    target_config : Union[Dict, str]
+        The target configuration.
+
+    host : Optional[Union[Dict, str, Target]]
+        The target configuration.
+
+    Returns
+    -------
+    res : Target
+        The target.
+    """
+    if not isinstance(target, Target):
+        raise ValueError(
+            f"T.dynamic_target expected a target as the first argument, but got {type(target)}"
+        )
+
+    if not isinstance(device_id, (int, PrimExpr)):
+        raise ValueError(
+            f"T.dynamic_target expected a PrimExpr as the second argument, "
+            f"but got {type(device_id)}"
+        )
+
+    if isinstance(device_id, PrimExpr):
+        if not device_id.dtype.startswith("int"):
+            raise ValueError(
+                f"T.dynamic_target expected the device_id argument to have an integer dtype, "
+                f"but got {device_id.dtype}"
+            )
+
+    return DynamicTarget(target, device_id)
 
 
 def Range(begin: PrimExpr, end: PrimExpr) -> ir.Range:  # pylint: disable=invalid-name

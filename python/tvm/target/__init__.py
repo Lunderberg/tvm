@@ -79,3 +79,4 @@ from .generic_func import GenericFunc
 from .generic_func import generic_func, get_native_generic_func, override_native_generic_func
 from . import datatype
 from . import codegen
+from .dynamic_target import DynamicTarget

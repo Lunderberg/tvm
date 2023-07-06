@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <tvm/target/dynamic_target.h>
 #include <tvm/target/target.h>
 
 #include "./utils.h"
@@ -94,6 +95,27 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
       Map<String, ObjectRef> config = target->Export();
       return TIR(d, "target")->Call({d->AsDoc<ExprDoc>(config, p)});
     });
+
+TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
+    .set_dispatch<DynamicTarget>("",
+                                 [](DynamicTarget dyn_target, ObjectPath p, IRDocsifier d) -> Doc {
+                                   auto target =
+                                       d->AsDoc<ExprDoc>(dyn_target->target, p->Attr("target"));
+
+                                   Array<ExprDoc> args = {target};
+
+                                   bool is_device_zero = [&]() {
+                                     auto as_int = dyn_target->device_id.as<IntImmNode>();
+                                     return as_int && as_int->value == 0;
+                                   }();
+                                   if (!is_device_zero) {
+                                     auto device_id = d->AsDoc<ExprDoc>(dyn_target->device_id,
+                                                                        p->Attr("device_id"));
+                                     args.push_back(device_id);
+                                   }
+
+                                   return TIR(d, "dynamic_target")->Call(args);
+                                 });
 
 TVM_SCRIPT_REPR(IntImmNode, ReprPrintTIR);
 TVM_SCRIPT_REPR(FloatImmNode, ReprPrintTIR);
