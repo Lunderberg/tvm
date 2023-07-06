@@ -122,9 +122,49 @@ class TestSplitHostDevice(BaseCompare):
                         "target": T.target("cuda"),
                         "tir.noalias": T.bool(True),
                         "tir.is_global_func": True,
+                        "tir.is_entry_func": False,
                     }
                 )
                 T.evaluate(n)
+
+        return mod
+
+
+class TestSplitHostDeviceOnCPU(BaseCompare):
+    """A kernel running on the CPU may return an error code"""
+
+    def before(self):
+        @I.ir_module
+        class mod:
+            @T.prim_func
+            def main(n: T.int32):
+                T.func_attr({"target": T.target("cuda", host="llvm -opt-level=0")})
+                T.attr(T.target("llvm"), "target", 0)
+                T.evaluate(n)
+
+        return mod
+
+    def expected(self):
+        @I.ir_module
+        class mod:
+            @T.prim_func
+            def main(n: T.int32):
+                T.func_attr({"target": T.target("cuda", host="llvm -opt-level=0")})
+                err = mod.main_kernel(n)
+                assert err == 0, "Error executing compute kernel"
+
+            @T.prim_func
+            def main_kernel(n: T.int32) -> T.int32:
+                T.func_attr(
+                    {
+                        "target": T.target("llvm"),
+                        "tir.noalias": T.bool(True),
+                        "tir.is_global_func": True,
+                        "tir.is_entry_func": False,
+                    }
+                )
+                T.evaluate(n)
+                T.ret(0)
 
         return mod
 
@@ -162,6 +202,7 @@ class TestSplitHostDeviceWithoutFuncHostAttribute(BaseCompare):
                         "target": T.target("cuda"),
                         "tir.noalias": T.bool(True),
                         "tir.is_global_func": True,
+                        "tir.is_entry_func": False,
                     }
                 )
                 T.evaluate(n)
@@ -223,6 +264,7 @@ class TestSplitHostDeviceNameCollision(BaseCompare):
                         "target": T.target("cuda"),
                         "tir.noalias": T.bool(True),
                         "tir.is_global_func": True,
+                        "tir.is_entry_func": False,
                     }
                 )
                 T.evaluate(n)

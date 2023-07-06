@@ -49,7 +49,7 @@ void CodeGenCUDA::Init(bool output_ssa) {
   ICHECK_EQ(vid_global_barrier_state_, runtime::symbol::tvm_global_barrier_state);
 }
 
-void CodeGenCUDA::PrintFuncPrefix(std::ostream& os) { os << "extern \"C\" __global__ "; }
+void CodeGenCUDA::PrintFuncPrefix(std::ostream& os) { os << "extern \"C\" "; }
 
 class ThreadIdxExtractor : public tir::StmtVisitor {
  private:
@@ -75,7 +75,13 @@ class ThreadIdxExtractor : public tir::StmtVisitor {
   PrimExpr threadIdx_z_ext = Integer(1);
 };
 
-void CodeGenCUDA::PrintExtraAttrs(const PrimFunc& f) {
+void CodeGenCUDA::PrintExtraAttrs(const PrimFunc& f, std::ostream& os) {
+  if (f->GetAttr<String>(tvm::attr::kGlobalSymbol)) {
+    os << " __global__ ";
+  } else {
+    os << " __device__ ";
+  }
+
   ThreadIdxExtractor extractor;
   extractor(f->body);
   arith::Analyzer analyzer;
@@ -86,7 +92,7 @@ void CodeGenCUDA::PrintExtraAttrs(const PrimFunc& f) {
       // unable to extract the number of threads per block, hence directly return
       return;
     }
-    stream << " __launch_bounds__(" << threadIdx_ext_int->value << ")";
+    os << " __launch_bounds__(" << threadIdx_ext_int->value << ")";
   }
 }
 
