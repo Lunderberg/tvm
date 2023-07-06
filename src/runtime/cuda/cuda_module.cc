@@ -28,6 +28,7 @@
 
 #include <array>
 #include <mutex>
+#include <nvtx3/nvtx3.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -167,6 +168,8 @@ class CUDAWrappedFunc {
   }
   // invoke the function with void arguments
   void operator()(TVMArgs args, TVMRetValue* rv, void** void_args) const {
+    nvtx3::scoped_range nv("CUDAWrappedFunc::operator()");
+
     int device_id;
     CUDA_CALL(cudaGetDevice(&device_id));
     ThreadWorkLoad wl = launch_param_config_.Extract(args);

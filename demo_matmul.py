@@ -8,6 +8,7 @@ import tvm.testing
 
 from tvm.script import tir as T, ir as I
 
+import nvtx
 
 dtype = tvm.testing.parameter("float32")
 use_dynamic_shape = tvm.testing.parameter(
@@ -23,6 +24,7 @@ use_dynamic_shape = tvm.testing.parameter(
 
 
 @tvm.testing.fixture
+@nvtx.annotate("Generating schedule")
 def matmul_module(use_dynamic_shape, dtype):
     if use_dynamic_shape:
         M = tir.Var("M", "int64")
@@ -70,6 +72,7 @@ def matmul_module(use_dynamic_shape, dtype):
 
 
 @tvm.testing.fixture
+@nvtx.annotate("Generating expected numpy results")
 def np_data(dtype):
     m, k, n = 128, 64, 128
     a_np = np.random.random((m, k)).astype(dtype)
@@ -78,18 +81,26 @@ def np_data(dtype):
     return a_np, b_np, c_np
 
 
+repeat_iter = tvm.testing.parameter(by_dict={f"iter{i}": i for i in range(3)})
+
+
 @tvm.testing.parametrize_targets("llvm")
-def test_matmul(matmul_module, np_data, target, dev):
+@nvtx.annotate("Running test_matmul")
+def test_matmul(matmul_module, np_data, target, dev, repeat_iter):
     from lunderberg_tvm_instrument import PrintTransformSequence
 
     with tvm.transform.PassContext(instruments=[PrintTransformSequence()]):
-        built = tvm.build(matmul_module, target=target)
+        with nvtx.annotate("Building module"):
+            built = tvm.build(matmul_module, target=target)
 
     a_np, b_np, c_np = np_data
-    a_tvm = tvm.nd.array(a_np, device=dev)
-    b_tvm = tvm.nd.array(b_np, device=dev)
-    c_tvm = tvm.nd.array(np.zeros_like(c_np), device=dev)
-    built(a_tvm, b_tvm, c_tvm)
+    with nvtx.annotate("Constructing TVM NDArrays on CPU"):
+        a_tvm = tvm.nd.array(a_np, device=dev)
+        b_tvm = tvm.nd.array(b_np, device=dev)
+        c_tvm = tvm.nd.array(np.zeros_like(c_np), device=dev)
+
+    with nvtx.annotate("Executing kernel"):
+        built(a_tvm, b_tvm, c_tvm)
 
     c_actual = c_tvm.numpy()
 

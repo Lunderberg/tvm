@@ -29,6 +29,7 @@
 #include <tvm/runtime/registry.h>
 
 #include <cstring>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda_common.h"
 
@@ -140,6 +141,7 @@ class CUDADeviceAPI final : public DeviceAPI {
   void CopyDataFromTo(const void* from, size_t from_offset, void* to, size_t to_offset, size_t size,
                       Device dev_from, Device dev_to, DLDataType type_hint,
                       TVMStreamHandle stream) final {
+    nvtx3::scoped_range nv("CUDADeviceAPI::CopyDataFromTo", nvtx3::rgb(0, 196, 0));
     cudaStream_t cu_stream = static_cast<cudaStream_t>(stream);
     from = static_cast<const char*>(from) + from_offset;
     to = static_cast<char*>(to) + to_offset;
@@ -202,6 +204,7 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
   void StreamSync(Device dev, TVMStreamHandle stream) final {
+    nvtx3::scoped_range nv("CUDADeviceAPI::StreamSync");
     CUDA_CALL(cudaSetDevice(dev.device_id));
     CUDA_CALL(cudaStreamSynchronize(static_cast<cudaStream_t>(stream)));
   }
@@ -211,6 +214,7 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
   void* AllocWorkspace(Device dev, size_t size, DLDataType type_hint) final {
+    nvtx3::scoped_range nv("CUDADeviceAPI::AllocWorkspace", nvtx3::rgb(0, 196, 0));
     return CUDAThreadEntry::ThreadLocal()->pool.AllocWorkspace(dev, size);
   }
 
