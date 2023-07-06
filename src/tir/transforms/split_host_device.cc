@@ -24,6 +24,7 @@
 #include <tvm/ir/global_var_supply.h>
 #include <tvm/ir/transform.h>
 #include <tvm/runtime/registry.h>
+#include <tvm/target/dynamic_target.h>
 #include <tvm/target/target.h>
 #include <tvm/tir/analysis.h>
 #include <tvm/tir/builtin.h>
@@ -48,14 +49,26 @@ class HostDeviceSplitter : public StmtMutator {
 
   Stmt VisitStmt_(const AttrStmtNode* op) final {
     if (op->attr_key == tvm::attr::kTarget) {
-      auto device_target = op->node.as<Target>().value().WithoutHost();
-      return SplitDeviceFunc(op->body, device_target);
+      auto [target, device_id] = [&]() -> std::tuple<Target, Optional<PrimExpr>> {
+        if (auto opt = op->node.as<Target>()) {
+          return {opt.value(), NullOpt};
+        } else if (auto opt = op->node.as<DynamicTarget>()) {
+          auto dyn_target = opt.value();
+          return {dyn_target->target.WithoutHost(), dyn_target->device_id};
+        } else {
+          LOG(FATAL) << "Expected tvm::attr::kTarget annotation (\"" << tvm::attr::kTarget
+                     << "\") to be a Target or DynamicTarget, "
+                     << "but found " << op->node->GetTypeKey();
+        }
+      }();
+
+      return SplitDeviceFunc(op->body, target.WithoutHost(), device_id);
     }
     return StmtMutator::VisitStmt_(op);
   }
 
  private:
-  Stmt SplitDeviceFunc(Stmt body, Target device_target) {
+  Stmt SplitDeviceFunc(Stmt body, Target device_target, Optional<PrimExpr> device_id) {
     Array<Var> params = [&]() {
       VarUseDefAnalyzer use_def(/*defined_vars=*/{}, /*visit_thread_extent=*/false);
       use_def(body);
@@ -101,17 +114,27 @@ class HostDeviceSplitter : public StmtMutator {
     (*device_mod_)->Add(kernel_symbol_global, device_func);
     Array<PrimExpr> args = params.Map([](const Var& var) -> PrimExpr { return var; });
 
-    if (can_propagate_errors) {
-      Var kernel_error_code("kernel_error_code", success->dtype);
-      Call kernel_call(success->dtype, kernel_symbol_global, args);
-      AssertStmt assert_success(kernel_error_code == success,
-                                StringImm("Error executing compute kernel"), Evaluate(0));
-      LetStmt let_check(kernel_error_code, kernel_call, assert_success);
+    auto stmt = [&]() -> Stmt {
+      if (can_propagate_errors) {
+        Var kernel_error_code("kernel_error_code", success->dtype);
+        Call kernel_call(success->dtype, kernel_symbol_global, args);
+        AssertStmt assert_success(kernel_error_code == success,
+                                  StringImm("Error executing compute kernel"), Evaluate(0));
+        LetStmt let_check(kernel_error_code, kernel_call, assert_success);
 
-      return std::move(let_check);
-    } else {
-      return Evaluate(Call(DataType::Void(), kernel_symbol_global, args));
+        return std::move(let_check);
+      } else {
+        return Evaluate(Call(DataType::Void(), kernel_symbol_global, args));
+      }
+    }();
+
+    if (device_id) {
+      ObjectRef node = String("default");
+      stmt = AttrStmt(node, attr::device_type, device_target->GetTargetDeviceType(), stmt);
+      stmt = AttrStmt(node, attr::device_id, device_id.value(), stmt);
     }
+
+    return stmt;
   }
 
   // target ir module

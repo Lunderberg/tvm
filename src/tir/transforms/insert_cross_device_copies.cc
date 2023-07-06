@@ -142,6 +142,19 @@ class CrossDeviceCopyInserter : public StmtExprMutator {
     return node;
   }
 
+  Stmt VisitStmt_(const AttrStmtNode* op) override {
+    auto cache = current_device_;
+    if (op->attr_key == attr::device_type) {
+      current_device_.device_type = Downcast<Integer>(op->value);
+    } else if (op->attr_key == attr::device_id) {
+      current_device_.device_id = op->value;
+    }
+
+    auto out = Parent::VisitStmt_(op);
+    current_device_ = cache;
+    return out;
+  }
+
   PrimExpr VisitExpr_(const CallNode* op) override {
     auto call = Downcast<Call>(Parent::VisitExpr_(op));
 
@@ -157,11 +170,27 @@ class CrossDeviceCopyInserter : public StmtExprMutator {
       return (*it).second;
     }();
 
+    // Setup prior to the call.  Declared early in the function, as we
+    // may need to insert `attr::device_id` and `attr::device_type` if
+    // no such annotation already exists.
+    std::vector<Stmt> merge_nest;
+
     Integer callee_device_type(callee_target->GetTargetDeviceType());
     Integer caller_device_type(func_target_->GetTargetDeviceType());
-    // TODO(Lunderberg): Integrate with VirtualDevice to allow non-zero device_id.
-    Integer callee_device_id(0);
     Integer caller_device_id(0);
+
+    PrimExpr callee_device_id;
+    if (current_device_.device_id) {
+      ICHECK(current_device_.device_type);
+      ICHECK_EQ(current_device_.device_type.value()->value, callee_device_type->value);
+      callee_device_id = current_device_.device_id.value();
+    } else {
+      callee_device_id = Integer(0);
+      merge_nest.push_back(
+          AttrStmt(StringImm("default"), attr::device_id, callee_device_id, Evaluate(0)));
+      merge_nest.push_back(
+          AttrStmt(StringImm("default"), attr::device_type, callee_device_type, Evaluate(0)));
+    }
 
     if (callee_device_type->value == caller_device_type->value) {
       return std::move(call);
@@ -247,13 +276,6 @@ class CrossDeviceCopyInserter : public StmtExprMutator {
           Call(DataType::Int(32), builtin::buffer_copy(), {dst_dltensor, src_dltensor}));
     });
 
-    std::vector<Stmt> merge_nest;
-
-    merge_nest.push_back(
-        AttrStmt(StringImm("default"), attr::device_id, callee_device_id, Evaluate(0)));
-    merge_nest.push_back(
-        AttrStmt(StringImm("default"), attr::device_type, callee_device_type, Evaluate(0)));
-
     for (const auto& buf : allocations) {
       // Allocate will be lowered to device-specific
       // TVMBackendAllocWorkspace in LowerTVMBuiltin.
@@ -277,6 +299,12 @@ class CrossDeviceCopyInserter : public StmtExprMutator {
   Target func_target_;
   Map<Var, Buffer> buffer_var_map_;
   std::vector<std::function<Stmt(Stmt)>> postproc_stack_;
+
+  struct DeviceInfo {
+    Optional<Integer> device_type;
+    Optional<PrimExpr> device_id;
+  };
+  DeviceInfo current_device_;
 };
 
 namespace transform {
