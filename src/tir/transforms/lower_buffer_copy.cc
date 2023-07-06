@@ -35,43 +35,7 @@ namespace tir {
 
 class BufferCopyLowerer : public StmtExprMutator {
  public:
-  explicit BufferCopyLowerer(DLDeviceType device_type, size_t device_id = 0)
-      : current_device_(DeviceInfo{Integer(device_type), Integer(device_id)}) {}
-
-  void DefineBufferVar(const Var& var) { alloc_info_[var] = current_device_; }
-
-  Stmt VisitStmt_(const AttrStmtNode* op) final {
-    auto cache = current_device_;
-
-    if (op->attr_key == attr::device_id) {
-      current_device_.device_id = op->value;
-    } else if (op->attr_key == attr::device_type) {
-      current_device_.device_type = op->value;
-    }
-
-    auto ret = StmtExprMutator::VisitStmt_(op);
-    current_device_ = cache;
-    return ret;
-  }
-
-  Stmt VisitStmt_(const AllocateNode* op) {
-    DefineBufferVar(op->buffer_var);
-    return StmtExprMutator::VisitStmt_(op);
-  }
-
-  Stmt VisitStmt(const Stmt& stmt) {
-    auto out = StmtExprMutator::VisitStmt(stmt);
-    if (append_sync_) {
-      auto call_sync =
-          Evaluate(Call(DataType::Int(32), Op::Get("tir.TVMSynchronize"),
-                        {current_device_.device_type, current_device_.device_id,
-                         reinterpret(DataType::Handle(), make_const(DataType::Int(64), 0))}));
-      append_sync_ = false;
-      return SeqStmt::Flatten(call_sync, out, call_sync);
-    } else {
-      return out;
-    }
-  }
+  explicit BufferCopyLowerer(DLDeviceType device_type, size_t device_id = 0) {}
 
   PrimExpr VisitExpr_(const CallNode* op) final {
     auto node = Downcast<Call>(StmtExprMutator::VisitExpr_(op));
@@ -88,23 +52,12 @@ class BufferCopyLowerer : public StmtExprMutator {
     PrimExpr dst_dltensor = op->args[0];
     PrimExpr src_dltensor = op->args[1];
 
-    append_sync_ = true;
     return Call(DataType::Int(32), Op::Get("tir.TVMDeviceCopyDataFromTo"),
                 {src_dltensor, dst_dltensor,
                  reinterpret(DataType::Handle(), make_const(DataType::Int(64), 0))});
   }
 
  private:
-  struct DeviceInfo {
-    PrimExpr device_type;
-    PrimExpr device_id;
-  };
-  DeviceInfo current_device_;
-
-  bool append_sync_{false};
-
-  // Record the device type/id in which buffers were allocated
-  std::unordered_map<Var, DeviceInfo, ObjectPtrHash, ObjectPtrEqual> alloc_info_;
 };
 
 namespace transform {
@@ -118,14 +71,6 @@ Pass LowerBufferCopy() {
     if (target->GetHost()) {
       DLDeviceType device_type = static_cast<DLDeviceType>(target->GetTargetDeviceType());
       BufferCopyLowerer mutator(device_type);
-
-      for (const auto& param : func->params) {
-        if (auto opt = func->buffer_map.Get(param)) {
-          mutator.DefineBufferVar(opt.value()->data);
-        } else if (param->dtype.is_handle()) {
-          mutator.DefineBufferVar(param);
-        }
-      }
 
       func.CopyOnWrite()->body = mutator(func->body);
     }
