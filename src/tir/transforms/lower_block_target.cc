@@ -58,10 +58,8 @@ class TargetAnnotationLowerer : public StmtExprMutator {
   template <typename Node>
   Stmt MoveTargetAnnotation(Node node) {
     if (auto opt = node->annotations.Get(tvm::attr::kTarget)) {
-      auto target = Downcast<Target>(opt.value());
-
       auto writer = node.CopyOnWrite();
-      writer->body = AttrStmt(target, tvm::attr::kTarget, 0, std::move(writer->body));
+      writer->body = AttrStmt(opt.value(), tvm::attr::kTarget, 0, std::move(writer->body));
       writer->annotations.erase(tvm::attr::kTarget);
     }
     return std::move(node);

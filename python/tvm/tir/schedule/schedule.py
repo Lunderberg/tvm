@@ -22,7 +22,7 @@ from tvm.error import TVMError, register_error
 from tvm.ir import GlobalVar, IRModule, PrimExpr
 from tvm.runtime import Object, String
 from tvm.tir import Block, Buffer, FloatImm, For, IntImm, PrimFunc
-from tvm.target import Target
+from tvm.target import Target, DynamicTarget
 
 from ..function import IndexMap
 from . import _ffi_api
@@ -2911,7 +2911,7 @@ class Schedule(Object):
 
     ########## Schedule: Annotation ##########
 
-    PrimAnnotationValueT = Union[str, int, float, ExprRV, Target]
+    PrimAnnotationValueT = Union[str, int, float, ExprRV, Target, DynamicTarget]
     AnnotationValueT = Union[
         PrimAnnotationValueT,
         List[PrimAnnotationValueT],

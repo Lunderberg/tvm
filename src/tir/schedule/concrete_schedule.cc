@@ -18,6 +18,8 @@
  */
 #include "./concrete_schedule.h"
 
+#include <tvm/target/dynamic_target.h>
+
 #include <random>
 
 namespace tvm {
@@ -830,7 +832,7 @@ void ConcreteScheduleNode::Tensorize(const BlockRV& block_rv, const String& intr
 /******** Schedule: Annotation ********/
 
 ObjectRef ConcreteScheduleNode::CheckAndGetAnnotationValue(const ObjectRef& ann_val) {
-  if (ann_val.as<StringObj>() || ann_val.as<TargetNode>()) {
+  if (ann_val.as<StringObj>() || ann_val.as<TargetNode>() || ann_val.as<DynamicTargetNode>()) {
     return ann_val;
   }
   if (const auto* expr = ann_val.as<PrimExprNode>()) {
