@@ -109,9 +109,19 @@ inline Array<Tensor> make_extern(const Array<Array<PrimExpr>>& out_shapes,
  *
  * \param buf The buffer to pack
  *
+ * \param device_type The DLDeviceType of the DLTensor.  If
+ * unspecified, will be determined while lowering, based on the
+ * "device_type" attribute.
+ *
+ * \param device_id The device id of the DLTensor.  If unspecified,
+ * will be determined while lowering, based on the "device_id"
+ * attribute.  If specified, then `device_type` must also be
+ * specified.
+ *
  * \return An expression representing the pack operation
  */
-inline PrimExpr pack_buffer(Buffer buf) {
+inline PrimExpr pack_buffer(Buffer buf, Optional<PrimExpr> device_type = NullOpt,
+                            Optional<PrimExpr> device_id = NullOpt) {
   ICHECK_GT(buf->shape.size(), 0) << "buf shape must have at least one element";
   auto shape =
       tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_shape(), buf->shape);
@@ -128,6 +138,16 @@ inline PrimExpr pack_buffer(Buffer buf) {
                             make_const(DataType::Int(32), static_cast<int64_t>(buf->shape.size())),
                             make_const(buf->dtype, 0),
                             buf->elem_offset};
+
+  if (device_type) {
+    pack_args.push_back(device_type.value());
+  }
+  if (device_id) {
+    CHECK(device_type) << "Attempted to provide explicit device id (" << device_id
+                       << "), but did not also specify device type";
+    pack_args.push_back(device_id.value());
+  }
+
   return tvm::tir::Call(DataType::Handle(), tvm::tir::builtin::tvm_stack_make_array(), pack_args);
 }
 

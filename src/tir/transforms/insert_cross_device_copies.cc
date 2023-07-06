@@ -84,7 +84,8 @@ using ParameterTypeMap =
     std::unordered_map<GlobalVar, std::vector<Parameter>, ObjectPtrHash, ObjectPtrEqual>;
 
 using topi::detail::pack_buffer;
-PrimExpr pack_region(const BufferRegion& region) {
+PrimExpr pack_region(const BufferRegion& region, Optional<PrimExpr> device_type = NullOpt,
+                     Optional<PrimExpr> device_id = NullOpt) {
   bool is_full_buffer = [&]() -> bool {
     StructuralEqual struct_equal;
     ICHECK_EQ(region->region.size(), region->buffer->shape.size());
@@ -101,7 +102,7 @@ PrimExpr pack_region(const BufferRegion& region) {
     return true;
   }();
   if (is_full_buffer) {
-    return pack_buffer(region->buffer);
+    return pack_buffer(region->buffer, device_type, device_id);
   }
 
   Array<PrimExpr> begins;
@@ -110,7 +111,7 @@ PrimExpr pack_region(const BufferRegion& region) {
     begins.push_back(range->min);
     extents.push_back(range->extent);
   }
-  return pack_buffer(region->buffer.MakeSlice(begins, extents));
+  return pack_buffer(region->buffer.MakeSlice(begins, extents), device_type, device_id);
 }
 
 }  // namespace
@@ -156,7 +157,13 @@ class CrossDeviceCopyInserter : public StmtExprMutator {
       return (*it).second;
     }();
 
-    if (callee_target->GetTargetDeviceType() == func_target_->GetTargetDeviceType()) {
+    Integer callee_device_type(callee_target->GetTargetDeviceType());
+    Integer caller_device_type(func_target_->GetTargetDeviceType());
+    // TODO(Lunderberg): Integrate with VirtualDevice to allow non-zero device_id.
+    Integer callee_device_id(0);
+    Integer caller_device_id(0);
+
+    if (callee_device_type->value == caller_device_type->value) {
       return std::move(call);
     }
 
@@ -226,27 +233,26 @@ class CrossDeviceCopyInserter : public StmtExprMutator {
       return std::move(call);
     }
 
-    Array<Stmt> pre_seq = input_regions.Map([](const auto& match) -> Stmt {
-      PrimExpr src_dltensor = pack_region(match->source);
-      PrimExpr dst_dltensor = pack_buffer(match->buffer);
+    Array<Stmt> pre_seq = input_regions.Map([&](const auto& match) -> Stmt {
+      PrimExpr src_dltensor = pack_region(match->source, caller_device_type, caller_device_id);
+      PrimExpr dst_dltensor = pack_buffer(match->buffer, callee_device_type, callee_device_id);
       return Evaluate(
           Call(DataType::Int(32), builtin::buffer_copy(), {dst_dltensor, src_dltensor}));
     });
 
-    Array<Stmt> post_seq = input_regions.Map([](const auto& match) -> Stmt {
-      PrimExpr src_dltensor = pack_buffer(match->buffer);
-      PrimExpr dst_dltensor = pack_region(match->source);
+    Array<Stmt> post_seq = input_regions.Map([&](const auto& match) -> Stmt {
+      PrimExpr src_dltensor = pack_buffer(match->buffer, callee_device_type, callee_device_id);
+      PrimExpr dst_dltensor = pack_region(match->source, caller_device_type, caller_device_id);
       return Evaluate(
           Call(DataType::Int(32), builtin::buffer_copy(), {dst_dltensor, src_dltensor}));
     });
 
     std::vector<Stmt> merge_nest;
 
-    // TODO(Lunderberg): Integrate with VirtualDevice to allow non-zero device_id.
-    int device_id = 0;
-    merge_nest.push_back(AttrStmt(StringImm("default"), attr::device_id, device_id, Evaluate(0)));
-    merge_nest.push_back(AttrStmt(StringImm("default"), attr::device_type,
-                                  callee_target->GetTargetDeviceType(), Evaluate(0)));
+    merge_nest.push_back(
+        AttrStmt(StringImm("default"), attr::device_id, callee_device_id, Evaluate(0)));
+    merge_nest.push_back(
+        AttrStmt(StringImm("default"), attr::device_type, callee_device_type, Evaluate(0)));
 
     for (const auto& buf : allocations) {
       // Allocate will be lowered to device-specific
