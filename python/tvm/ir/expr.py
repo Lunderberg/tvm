@@ -88,7 +88,7 @@ class GlobalVar(RelayExpr):
             from tvm import relay
 
             return relay.Call(self, args)
-        elif all(isinstance(x, (Number, PrimExpr)) for x in args):
+        elif all(isinstance(x, (Number, PrimExpr, tvm.tir.Buffer)) for x in args):
             return tvm.tir.call_tir(self, *args)
 
         arg_types = [type(x) for x in args]

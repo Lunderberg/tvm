@@ -228,6 +228,18 @@ ExprDoc BufferAttn(const tir::Buffer& buffer, const ObjectPath& p, const Frame& 
                    const IRDocsifier& d);
 
 /*!
+ * \brief Display a `tvm_stack_make_array` as the equivalent buffer object
+ *
+ * \param call The call node to be inspected
+ *
+ * \param d The IRDocsifier
+ *
+ * \return The ExprDoc corresponding to the buffer object, or NullOpt
+ * if no such buffer exists.
+ */
+Optional<ExprDoc> PrintPackedBuffer(const tir::Call& call, const IRDocsifier& d);
+
+/*!
  * \brief Print the creation of a Var
  * \param var The Var to be printed
  * \param var_p The object path of the Var

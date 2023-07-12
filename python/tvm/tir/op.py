@@ -468,6 +468,8 @@ def call_tir(global_var: tvm.ir.GlobalVar, *args):
         if hasattr(ret_type, "dtype"):
             dtype = ret_type.dtype
 
+    args = [_pack_buffer(arg) if isinstance(arg, Buffer) else arg for arg in args]
+
     return Call(dtype=dtype, op=global_var, args=args)
 
 

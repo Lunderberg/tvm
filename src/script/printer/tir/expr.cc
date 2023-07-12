@@ -237,6 +237,11 @@ TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
           Op::GetAttrMap<tir::TScriptPrinterName>("TScriptPrinterName");
       static const OpAttrMap<tir::TScriptDtypePrintLocation> dtype_locations =
           Op::GetAttrMap<tir::TScriptDtypePrintLocation>("TScriptDtypePrintLocation");
+
+      if (auto opt = PrintPackedBuffer(call, d)) {
+        return opt.value();
+      }
+
       tir::ScriptDtypePrintLocation dtype_print_location = tir::ScriptDtypePrintLocation::kNone;
       ExprDoc prefix{nullptr};
       if (auto optional_op = call->op.as<Op>()) {

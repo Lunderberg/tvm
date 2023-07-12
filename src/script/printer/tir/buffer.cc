@@ -17,6 +17,7 @@
  * under the License.
  */
 #include <tvm/runtime/device_api.h>  // For `kAllocAlignment`
+#include <tvm/tir/builtin.h>         // For `builtin::tvm_stack_make_array`
 
 #include "./utils.h"
 
@@ -260,6 +261,68 @@ Array<Doc> BufferSlices(const Array<Range>& region, const ObjectPath& p, const I
     }
   }
   return indices;
+}
+
+Optional<ExprDoc> PrintPackedBuffer(const tir::Call& call, const IRDocsifier& d) {
+  if (!d->cfg->syntax_sugar) {
+    return NullOpt;
+  }
+
+  if (!call->op.same_as(tir::builtin::tvm_stack_make_array())) {
+    return NullOpt;
+  }
+
+  auto data = Downcast<tir::Var>(call->args[0]);
+  auto shape = Downcast<tir::Call>(call->args[1])->args;
+  auto strides = [&]() -> Array<PrimExpr> {
+    auto arg = call->args[2];
+    if (tir::is_zero(arg)) {
+      return {};
+    } else {
+      return Downcast<tir::Call>(arg)->args;
+    }
+  }();
+  size_t ndim = Downcast<IntImm>(call->args[3])->value;
+
+  if (ndim != shape.size()) {
+    LOG(WARNING) << "Malformed tvm_stack_make_array, ndim == call->args[3] was " << ndim
+                 << ", but the shape " << shape << " is " << shape.size() << "-dimensional.";
+    return NullOpt;
+  }
+
+  DataType dtype = call->args[4]->dtype;
+  auto elem_offset = call->args[5];
+
+  StructuralEqual equal;
+
+  for (const auto& kv : d->obj2info) {
+    bool is_packed_buffer = [&]() -> bool {
+      const auto& obj = kv.first;
+      auto* buf = obj.as<tir::BufferNode>();
+      if (!buf) return false;
+      if (!buf->data.same_as(data)) return false;
+      if (buf->dtype != dtype) return false;
+
+      if (buf->shape.size() != shape.size()) return false;
+      for (size_t i = 0; i < buf->shape.size(); i++) {
+        if (!equal(buf->shape[i], shape[i])) return false;
+      }
+
+      if (buf->strides.size() != strides.size()) return false;
+      for (size_t i = 0; i < buf->strides.size(); i++) {
+        if (!equal(buf->strides[i], strides[i])) return false;
+      }
+
+      if (!equal(buf->elem_offset, elem_offset)) return false;
+
+      return true;
+    }();
+    if (is_packed_buffer) {
+      return kv.second.creator();
+    }
+  }
+
+  return NullOpt;
 }
 
 TVM_STATIC_IR_FUNCTOR(IRDocsifier, vtable)
