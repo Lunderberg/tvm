@@ -572,12 +572,24 @@ TVM_STATIC_IR_FUNCTOR(Namer, vtable)
       tvm::tir::BufferNode* buffer =
           const_cast<tvm::tir::BufferNode*>(node.as<tvm::tir::BufferNode>());
       buffer->name = name;
-      Namer::Name(buffer->data, name);
-      int n = buffer->strides.size();
-      for (int i = 0; i < n; ++i) {
-        PrimExpr e = buffer->strides[i];
-        if (auto v = e.as<tvm::tir::Var>()) {
-          Namer::Name(v.value(), name + "_s" + std::to_string(i));
+
+      auto requires_rename = [](const PrimExpr& expr) {
+        auto var = expr.as<tvm::tir::VarNode>();
+        return var && (var->name_hint == "v" || var->name_hint == "");
+      };
+
+      if (requires_rename(buffer->data)) {
+        Namer::Name(buffer->data, name);
+      }
+
+      if (requires_rename(buffer->elem_offset)) {
+        Namer::Name(buffer->elem_offset, name + "_elem_offset");
+      }
+
+      for (int i = 0; i < buffer->strides.size(); ++i) {
+        auto stride = buffer->strides[i];
+        if (requires_rename(stride)) {
+          Namer::Name(stride, name + "_s" + std::to_string(i));
         }
       }
     });
