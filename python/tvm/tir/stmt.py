@@ -537,6 +537,11 @@ class BufferRegion(Object, Scriptable):
     def __init__(self, buffer: Buffer, region: List[Range]):
         self.__init_handle_by_constructor__(_ffi_api.BufferRegion, buffer, region)  # type: ignore
 
+    def make_slice(self) -> Buffer:
+        begins = [range.min for range in self.region]
+        extents = [range.extent for range in self.region]
+        return _ffi_api.BufferMakeSlice(self.buffer, begins, extents)  # type: ignore
+
 
 @tvm._ffi.register_object("tir.MatchBufferRegion")
 class MatchBufferRegion(Object, Scriptable):
