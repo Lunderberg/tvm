@@ -186,6 +186,12 @@ class Buffer(Object, Scriptable):
             indices = [indices]
         has_slice = any(isinstance(i, slice) for i in indices)
         has_step = any(isinstance(i, slice) and i.step is not None for i in indices)
+
+        def _sign_check(*exprs):
+            for expr in exprs:
+                if isinstance(expr, int):
+                    assert expr >= 0, "TVMScript does not support negative buffer indices"
+
         analyzer = Analyzer()
         if has_slice and not has_step:
             region = []
@@ -193,8 +199,11 @@ class Buffer(Object, Scriptable):
                 if isinstance(index, slice):
                     start = 0 if index.start is None else index.start
                     stop = self.shape[i] if index.stop is None else index.stop
+                    _sign_check(start, stop)
+
                     region.append(Range.from_min_extent(start, analyzer.simplify(stop - start)))
                 else:
+                    _sign_check(index)
                     region.append(
                         Range.from_min_extent(
                             index, const(1, index.dtype) if isinstance(index, PrimExpr) else 1
@@ -208,6 +217,7 @@ class Buffer(Object, Scriptable):
                     start = 0 if index.start is None else index.start
                     stop = self.shape[i] if index.stop is None else index.stop
                     step = 1 if index.step is None else index.step
+                    _sign_check(start, stop)
                     # We should ensure the dtype of start is the same with that of step.
                     if isinstance(start, tvm.tir.expr.PrimExpr) and isinstance(step, int):
                         step = tvm.tir.expr.IntImm(start.dtype, step)
@@ -217,6 +227,7 @@ class Buffer(Object, Scriptable):
                     else:
                         expr_indices.append(Ramp(start, step, int(lanes)))
                 else:
+                    _sign_check(index)
                     expr_indices.append(index)
             return BufferLoad(self, expr_indices)
 
