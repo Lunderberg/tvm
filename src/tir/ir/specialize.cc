@@ -39,9 +39,39 @@ using VarMap = std::unordered_map<Var, PrimExpr, ObjectPtrHash, ObjectPtrEqual>;
 /**************** Helper functions ****************/
 
 /*! \brief Helper function to check whether the given var is in function parameter list. */
-inline bool IsParam(const PrimFunc& func, const Var& param) {
+inline bool IsExplicitParam(const PrimFunc& func, const Var& param) {
   return std::any_of(func->params.begin(), func->params.end(),
                      [&](const Var& var) { return var.same_as(param); });
+}
+
+inline bool IsImplicitParam(const PrimFunc& func, const Var& param) {
+  return std::any_of(func->params.begin(), func->params.end(), [&](const Var& var) {
+    auto opt = func->buffer_map.Get(var);
+    if (!opt) {
+      return false;
+    }
+
+    auto buf = opt.value();
+    if (buf->elem_offset.same_as(param)) {
+      return true;
+    }
+    for (const auto& dim : buf->shape) {
+      if (dim.same_as(param)) {
+        return true;
+      }
+    }
+    for (const auto& stride : buf->strides) {
+      if (stride.same_as(param)) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+
+inline bool IsParam(const PrimFunc& func, const Var& param) {
+  return IsExplicitParam(func, param) || IsImplicitParam(func, param);
 }
 
 /**************** Specializer ****************/
@@ -138,6 +168,37 @@ class PrimFuncSpecializer : public StmtExprMutator {
       n->writes = std::move(writes);
       return Stmt(n);
     }
+  }
+
+  Stmt VisitStmt_(const DeclBufferNode* op) final {
+    auto new_buf = [&]() -> Buffer {
+      auto buf = op->buffer;
+      auto elem_offset = VisitExpr(buf->elem_offset);
+      auto shape = buf->shape.Map([this](const PrimExpr& expr) { return VisitExpr(expr); });
+      auto strides = buf->strides.Map([this](const PrimExpr& expr) { return VisitExpr(expr); });
+
+      if (!elem_offset.same_as(buf->elem_offset) || !shape.same_as(buf->shape) ||
+          !strides.same_as(buf->strides)) {
+        auto write_ptr = buf.CopyOnWrite();
+        write_ptr->elem_offset = elem_offset;
+        write_ptr->shape = shape;
+        write_ptr->strides = strides;
+      }
+
+      return buf;
+    }();
+
+    if (!op->buffer.same_as(new_buf)) {
+      buffer_map_[op->buffer] = new_buf;
+    }
+
+    auto node = Downcast<DeclBuffer>(StmtExprMutator::VisitStmt_(op));
+
+    if (auto it = buffer_map_.find(op->buffer); it != buffer_map_.end()) {
+      node.CopyOnWrite()->buffer = it->second;
+    }
+
+    return std::move(node);
   }
 
   Stmt VisitStmt_(const BufferStoreNode* op) final {
@@ -340,7 +401,9 @@ void UpdateSpecializeVarMap(const PrimFunc& func, const Var& param, const Buffer
 void UpdateSpecializeVarMap(const PrimFunc& func, const Var& param, const PrimExpr& specific_expr,
                             VarMap* var_map) {
   // check param is in PrimFunc's parameters
-  CHECK(IsParam(func, param)) << "ValueError: Specialize expects param to be in PrimFunc's params";
+  CHECK(IsParam(func, param))
+      << "ValueError: Specialize expects param to be in PrimFunc's params, but " << param
+      << " is not in the function's parameters";
   // specialize a param not in buffer_map
   CHECK_EQ(func->buffer_map.count(param), 0)
       << "ValueError: Specialize expects param to not be in PrimFunc's buffer_map";
