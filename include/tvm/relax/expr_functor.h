@@ -278,6 +278,37 @@ class ExprVisitor : public ExprFunctor<void(const Expr&)> {
   virtual void VisitSpan(const Span& span);
   virtual void VisitPrimExpr(const PrimExpr& expr);
 
+  /*!
+   * \brief Look up the value bound to a variable.
+   * \param var The var to be looked up.
+   * \return The value bound to the input \p var.
+   * \note For function parameters, this function returns NullOpt.
+   */
+  inline Optional<Expr> LookupBinding(const Var& var) {
+    if (auto it = binding_table_.find(var->vid); it != binding_table_.end()) {
+      return it->second;
+    } else {
+      return NullOpt;
+    }
+  }
+
+  /*!
+   * \brief Unwrap any known binding
+   * \param expr The expression to be unwrapped.
+   * \return The expression after following any known Var bindings
+   */
+  inline Expr UnwrapBindings(Expr expr) {
+    while (true) {
+      auto as_var = expr.as<Var>();
+      if (!as_var) return expr;
+
+      auto bound_expr = LookupBinding(as_var.value());
+      if (!bound_expr) return expr;
+
+      expr = bound_expr.value();
+    }
+  }
+
  private:
   using TSelf = ExprVisitor;
   using VisitBindingVTable =
@@ -308,6 +339,14 @@ class ExprVisitor : public ExprFunctor<void(const Expr&)> {
   // This visitor is not visible to child classes and only
   // used to supported default visiting behavior.
   DefaultStructInfoFieldVisitor default_struct_info_field_visitor_{this};
+
+  /*! \brief A binding table that maps var to value.
+   *
+   * Unlike ExprMutator, which can rely on the binding table of the
+   * internal BlockBuilder, ExprVisitor needs to track the bindings on
+   * its own.
+   */
+  std::unordered_map<Id, Expr, ObjectPtrHash, ObjectPtrEqual> binding_table_;
 };
 
 void PostOrderVisit(const Expr& node, std::function<void(const Expr&)> fvisit);
@@ -511,6 +550,23 @@ class ExprMutator : public ExprMutatorBase {
    * \note For function parameters, this function returns NullOpt.
    */
   Optional<Expr> LookupBinding(const Var& var);
+
+  /*!
+   * \brief Unwrap any known binding
+   * \param expr The expression to be unwrapped.
+   * \return The expression after following any known Var bindings
+   */
+  inline Expr UnwrapBindings(Expr expr) {
+    while (true) {
+      auto as_var = expr.as<Var>();
+      if (!as_var) return expr;
+
+      auto bound_expr = LookupBinding(as_var.value());
+      if (!bound_expr) return expr;
+
+      expr = bound_expr.value();
+    }
+  }
 
   /*!
    * \brief Post-order rewrite a node and normalize.
