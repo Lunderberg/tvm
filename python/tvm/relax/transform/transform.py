@@ -1266,21 +1266,66 @@ def UpdateParamStructInfo(sinfo_func: Callable[[Var], Optional[StructInfo]]):
     return _ffi_api.UpdateParamStructInfo(sinfo_func)  # type: ignore
 
 
-def AdjustMatmulOrder():
-    """Reorder `x*(A*B)` to `(x*A)*B`
+def InjectLora(
+    params_to_update: Union[str, Var, List[Union[str, Var]]],
+    lora_r: Optional[int] = None,
+    lora_param_order: str = "after_corresponding_base_weight",
+):
+    """Update weights to use LoRA
 
-    Useful for optimizing LoRA computations, where `matmul(x,
-    LoraA*LoraB)` may be computed as `matmul(matmul(x, LoraA),
-    LoraB)`, reducing the total memory usage.
+    Parameters
+    ----------
+    params_to_update: Union[str, Var, List[Union[str, Var]]]
+
+        The parameters to update.  Each item in the list can be either
+        a relax Var, or a regular expression.  Any function parameter
+        that is either contained in `params_to_update`, or has a name
+        that matches a regular expression in `params_to_update`, will
+        be updated to accept additional parameters `$NAME_LA` and
+        `$NAME_LB`.
+
+    lora_r: Optional[int]
+
+        The size of the lora.  If unspecified, will be a unique
+        symbolic variable for each weight that is updated.  (The
+        symbolic variable can be inferred at runtime, or bound to a
+        static value later in lowering.)
+
+    lora_param_order: str
+
+        Specifies where the newly-generated LoRA parameters should be
+        placed in the function signature.  Allowed options are below.
+        Any other option will raise an exception.
+
+        - "after_corresponding_base_weight" (default)
+
+          Insert (lora_A, lora_B) after the corresponding base weight.
+
+        - "after_all_params"
+
+          Append (lora_A, lora_B) after all other parameters.
+
+        - "end_of_runtime_params"
+
+          Insert (lora_A, lora_B) after the location specified by
+          `attr::kNumInput` ("num_input"), incrementing
+          `attr::kNumInput` to mark the LoRA as being provided at
+          runtime.  If `attr::kNumInput` is absent, this is equivalent
+          to `AfterAllParams`.
 
 
     Returns
     -------
     ret : tvm.transform.Pass
         The corresponding pass.
-    """
 
-    return _ffi_api.AdjustMatmulOrder()  # type: ignore
+    """
+    if isinstance(params_to_update, (str, Var)):
+        params_to_update = [params_to_update]
+
+    lora_r = tvm.runtime.convert(lora_r)
+
+    return _ffi_api.InjectLora(params_to_update, lora_r, lora_param_order)  # type: ignore
 
 
 def ExpandMatmulOfSum():
@@ -1301,6 +1346,26 @@ def ExpandMatmulOfSum():
     """
 
     return _ffi_api.ExpandMatmulOfSum()  # type: ignore
+
+
+def AdjustMatmulOrder():
+    """Reorder `x*(A*B)` to `(x*A)*B`
+
+    Useful for optimizing LoRA computations, where `matmul(x,
+    LoraA*LoraB)` may be computed as `matmul(matmul(x, LoraA),
+    LoraB)`, reducing the total memory usage.
+
+    Useful for optimizing LoRA computations, where `matmul(x,
+    LoraA*LoraB)` may be computed as `matmul(matmul(x, LoraA),
+    LoraB)`, reducing the total memory usage.
+
+    Returns
+    -------
+    ret : tvm.transform.Pass
+        The corresponding pass.
+    """
+
+    return _ffi_api.AdjustMatmulOrder()  # type: ignore
 
 
 def ReorderTakeAfterMatmul():

@@ -46,6 +46,7 @@ from .transform import (
     FuseTIR,
     FusionPattern,
     Gradient,
+    InjectLora,
     InlinePrivateFunctions,
     KillAfterLastUse,
     LambdaLift,
