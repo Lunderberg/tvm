@@ -1343,6 +1343,55 @@ def InjectLora(
     return _ffi_api.InjectLora(params_to_update, lora_r, lora_param_order)  # type: ignore
 
 
+def InjectRoutingTable(
+    params_to_update: Union[str, Var, List[Union[str, Var]]],
+    routing_table_size: Optional[tvm.tir.PrimExpr] = None,
+):
+    """Update to use a routing table to determine weights
+
+    If model weights may differ for each item in a batch
+    (e.g. `weights: [batch_size, infeatures, outfeatures]`), but may
+    also be reused, the total memory footprint can be reduced by using
+    a lookup table to determine which weights to use.  This transform
+    allows the weight(s) to be replaced by a smaller table of weights,
+    along with a lookup table for each item in the batch.
+
+    For example, a weight tensor with shape `[batch_size, infeature,
+    outfeature]` may be replaced by a weight tensor with shape
+    `[routing_table_size, infeature, outfeature]`, along with a
+    routing table of shape `[batch_size]`, where all items in the
+    routing table are on the range `[0, routing_table_size)`.
+
+    Parameters
+    ----------
+    params_to_update: Union[str, Var, List[Union[str, Var]]]
+
+        The parameters to update.  Each item in the list can be either
+        a relax Var, or a regular expression.  Any function parameter
+        that is either contained in `params_to_update`, or has a name
+        that matches a regular expression in `params_to_update`, will
+        be updated to accept additional parameters `$NAME_LA` and
+        `$NAME_LB`.
+
+    routing_table_size: Optional[tvm.tir.PrimExpr]
+
+        The size of the routing table.  If unspecified, will be a new
+        symbolic variable.
+
+    Returns
+    -------
+    ret : tvm.transform.Pass
+        The corresponding pass.
+    """
+
+    if isinstance(params_to_update, (str, Var)):
+        params_to_update = [params_to_update]
+
+    routing_table_size = tvm.runtime.convert(routing_table_size)
+
+    return _ffi_api.InjectRoutingTable(params_to_update, routing_table_size)  # type: ignore
+
+
 def ExpandMatmulOfSum():
     """Expand `matmul(x, A+B)` to `matmul(x,A) + matmul(x,B)`
 
