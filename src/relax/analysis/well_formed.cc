@@ -576,6 +576,50 @@ class WellFormedChecker : public relax::ExprVisitor,
   tvm::OpAttrMap<FNormalize> op_map_normalize_ = Op::GetAttrMap<FNormalize>("FNormalize");
 };
 
+class VerifySSA : public relax::ExprVisitor {
+ public:
+  static bool Check(Variant<IRModule, relax::Expr> arg, bool assert_on_error) {
+    VerifySSA ssa_checker = VerifySSA(assert_on_error);
+
+    if (auto mod = arg.as<IRModuleNode>()) {
+      for (const auto& [gvar, base_func] : mod->functions) {
+        if (auto func = base_func.as<Function>()) {
+          ssa_checker.VisitExpr(func.value());
+        }
+      }
+
+    } else if (auto expr = arg.as<relax::Expr>()) {
+      ssa_checker.VisitExpr(expr.value());
+
+    } else {
+      LOG(FATAL) << "InternalError: "
+                 << "Argument did not match any type in the Variant";
+    }
+    return ssa_checker.well_formed_;
+  }
+
+ private:
+  using relax::ExprVisitor::VisitExpr;
+  using relax::ExprVisitor::VisitExpr_;
+
+  explicit VerifySSA(bool assert_on_error) : assert_on_error_(assert_on_error) {}
+
+  void VisitVarDef(const Var& var) final {
+    if (var_set_.count(var)) {
+      well_formed_ = false;
+      if (assert_on_error_) {
+        LOG(FATAL) << "Variable " << var << " is defined multiple times";
+      }
+    }
+    var_set_.insert(var);
+    relax::ExprVisitor::VisitVarDef(var);
+  }
+
+  bool well_formed_ = true;
+  bool assert_on_error_ = true;
+  std::unordered_set<Var, ObjectPtrHash, ObjectPtrEqual> var_set_;
+};
+
 bool WellFormed(IRModule m, bool check_struct_info) {
   return WellFormedChecker::Check(std::move(m), check_struct_info);
 }
@@ -584,6 +628,8 @@ TVM_REGISTER_GLOBAL(("relax.analysis.well_formed"))
     .set_body_typed([](IRModule m, bool check_struct_info) {
       return WellFormed(m, check_struct_info);
     });
+
+TVM_REGISTER_GLOBAL(("relax.analysis.verify_ssa")).set_body_typed(VerifySSA::Check);
 
 }  // namespace relax
 }  // namespace tvm

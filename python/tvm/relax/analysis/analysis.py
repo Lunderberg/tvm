@@ -460,6 +460,33 @@ def well_formed(mod: IRModule, check_struct_info: bool = True) -> bool:
     return _ffi_api.well_formed(mod, check_struct_info)  # type: ignore
 
 
+def verify_ssa(expr: Union[Expr, IRModule], assert_on_error: bool = True):
+    """Check if the relax functions in the IRModule follow SSA.,
+
+    This is a subset of the checks performed with `relax.analysis.well_formed`.
+
+    Parameters
+    ----------
+    expr : Union[Expr, tvm.IRModule]
+
+        The input IRModule or relax expression.
+
+    assert_on_error : bool
+
+        A boolean flag indicating how errors should be handled.  If
+        True, they will cause an exception to be raised.  If False,
+        they will be returned as a boolean.
+
+    Returns
+    -------
+    ret: bool
+
+        True if the IRModule is single-site assignment, False if not.
+
+    """
+    return _ffi_api.verify_ssa(expr, assert_on_error)  # type: ignore
+
+
 def _get_prim_func_default_dtype(func: PrimFunc):
     """Detect default index dtype from function buffer map"""
     for _, v in func.buffer_map.items():
