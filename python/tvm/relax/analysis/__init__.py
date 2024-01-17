@@ -42,5 +42,6 @@ from .analysis import (
     tir_vars_in_struct_info,
     udchain,
     well_formed,
+    verify_ssa,
 )
 from .estimate_memory_usage import estimate_memory_usage

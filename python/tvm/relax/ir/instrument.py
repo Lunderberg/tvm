@@ -56,3 +56,20 @@ class WellFormedInstrument:
             if not is_well_formed:
                 mod.show(name=f"{name_prefix}{pass_name}")
             assert is_well_formed
+
+
+@tvm.instrument.pass_instrument
+class VerifySSAInstrument:
+    """An instrument that checks the input/output IRModule is SSA"""
+
+    def run_before_pass(self, mod, pass_info):
+        self._check(mod, pass_info.name, "Before")
+
+    def run_after_pass(self, mod, pass_info):
+        self._check(mod, pass_info.name, "After")
+
+    def _check(self, mod, pass_name, name_prefix):
+        is_ssa = relax.analysis.verify_ssa(mod, assert_on_error=False)
+        if not is_ssa:
+            mod.show(name=f"{name_prefix}{pass_name}")
+        assert relax.analysis.verify_ssa(mod, assert_on_error=True)
