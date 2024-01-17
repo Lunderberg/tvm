@@ -823,6 +823,9 @@ class Function(BaseFunc, Scriptable):
     ) -> "Function":
         return _ffi_api.FunctionInlineFunctions(self, function_map)  # type: ignore
 
+    def with_reordered_parameters(self, new_param_order: List[Var]) -> "Function":
+        return _ffi_api.FunctionWithReorderedParameters(self, new_param_order)  # type: ignore
+
 
 @tvm._ffi.register_object("relax.expr.ExternFunc")
 class ExternFunc(BaseFunc):

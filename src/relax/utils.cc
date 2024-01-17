@@ -24,6 +24,8 @@
 #include <tvm/relax/expr_functor.h>
 #include <tvm/tir/stmt_functor.h>
 
+#include <algorithm>
+
 namespace tvm {
 namespace relax {
 
@@ -265,6 +267,36 @@ Expr GetBoundValue(const Binding& b) {
 Function CopyWithNewVars(Function func) { return FunctionCopier().Copy(func); }
 
 TVM_REGISTER_GLOBAL("relax.CopyWithNewVars").set_body_typed(CopyWithNewVars);
+
+Function FunctionWithReorderedParameters(Function func, Array<relax::Var> new_param_order) {
+  CHECK_EQ(func->params.size(), new_param_order.size())
+      << "ValueError: "
+      << "Function with " << func->params.size() << " params cannot be reordered into "
+      << new_param_order.size() << " params.";
+
+  {
+    std::unordered_set<relax::Var, ObjectPtrHash, ObjectPtrEqual> new_params(
+        new_param_order.begin(), new_param_order.end());
+    CHECK_EQ(new_param_order.size(), new_params.size())
+        << "ValueError: "
+        << "All parameters used to reorder function params must be unique";
+
+    for (const auto& param : func->params) {
+      CHECK(new_params.count(param))
+          << "Parameter " << param << " does not appear in the new parameter list";
+    }
+  }
+
+  bool all_params_equal =
+      std::equal(func->params.begin(), func->params.end(), new_param_order.begin());
+  if (!all_params_equal) {
+    func.CopyOnWrite()->params = new_param_order;
+  }
+  return func;
+}
+
+TVM_REGISTER_GLOBAL("relax.FunctionWithReorderedParameters")
+    .set_body_typed(FunctionWithReorderedParameters);
 
 }  // namespace relax
 }  // namespace tvm
