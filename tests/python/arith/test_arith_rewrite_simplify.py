@@ -59,7 +59,6 @@ class BaseCompare:
                 with analyzer.constraint_scope(test_case.constraint):
                     analyzer.rewrite_simplify(test_case.before)
         else:
-
             with analyzer.constraint_scope(test_case.constraint):
                 after = analyzer.rewrite_simplify(test_case.before)
 
@@ -947,6 +946,30 @@ class TestComparisons(BaseCompare):
         TestCase(y * y >= 0, tvm.tir.const(1, "bool"), y <= 0),
         TestCase(x * 6 <= -3, tvm.tir.const(0, "bool"), x >= 0),
         TestCase(tmod(y - 1, 3) == 0, tmod(y + (-1), 3) == 0),
+        # Special inequality cases
+        TestCase(
+            x * y < (x + y) * 2048,
+            tvm.tir.const(1, "bool"),
+            [x > 0, y > 0, x < 2048],
+        ),
+        TestCase(
+            x * y < (x + y) * 2048,
+            tvm.tir.const(1, "bool"),
+            [x > 0, y > 0, x < 4096, y < 4096],
+        ),
+        TestCase(
+            # Both sides are divisible by 8192
+            x * y * 8192 < (y + x) * 16777216,
+            tvm.tir.const(1, "bool"),
+            [x > 0, y > 0, x < 4096, y < 4096],
+        ),
+        TestCase(
+            # The two sides have co-prime factors, but the bounds are
+            # still sufficient to prove the inequality.
+            x * y * 59 < (y + x) * 176128,
+            tvm.tir.const(1, "bool"),
+            [x > 0, y > 0, x < 4096, y < 4096],
+        ),
     )
 
 
