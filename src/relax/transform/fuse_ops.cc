@@ -1198,10 +1198,11 @@ class CompositeFunctionAnnotator : public ExprMutator {
         if (func->GetAttr<String>(attr::kComposite).defined()) {
           continue;
         }
-        auto new_body = VisitExpr(func->body);
+
+        auto new_body = VisitWithNewScope(func->body, func->params);
         if (!new_body.same_as(func->body)) {
-          auto new_func = Function(func->params, VisitExpr(func->body), func->ret_struct_info,
-                                   func->is_pure, func->attrs, func->span);
+          auto new_func = Function(func->params, new_body, func->ret_struct_info, func->is_pure,
+                                   func->attrs, func->span);
           builder_->UpdateFunction(entry.first, new_func);
         }
       }
