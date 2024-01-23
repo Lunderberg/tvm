@@ -65,6 +65,7 @@ from .transform import (
     RemovePurityChecking,
     RemoveUnusedParameters,
     RemoveUnusedOutputs,
+    ReorderPermuteDimsAfterConcat,
     ReorderTakeAfterMatmul,
     RewriteCUDAGraph,
     RewriteDataflowReshape,
