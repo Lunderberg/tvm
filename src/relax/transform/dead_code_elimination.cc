@@ -48,12 +48,15 @@ class CallTracer : public ExprVisitor {
   explicit CallTracer(IRModule mod) : mod_{mod}, called_funcs_{}, visiting_{} {}
 
   void VisitExpr_(const GlobalVarNode* op) final {
-    called_funcs_.insert(GetRef<GlobalVar>(op));
-    auto func = mod_->Lookup(op->name_hint);
-    if (const auto* function_node = func.as<FunctionNode>()) {
-      VisitExpr(GetRef<Function>(function_node));
+    auto gvar = GetRef<GlobalVar>(op);
+    called_funcs_.insert(gvar);
+
+    if (auto it = mod_->functions.find(gvar); it != mod_->functions.end()) {
+      if (auto func = (*it).second.as<Function>()) {
+        VisitExpr(func.value());
+      }
+      // else: Don't visit PrimFuncs -- we don't need to collect any tir.Calls therein.
     }
-    // else: Don't visit PrimFuncs -- we don't need to collect any tir.Calls therein.
   }
 
   void VisitExpr_(const CallNode* call_node) final { ExprVisitor::VisitExpr_(call_node); }
@@ -89,6 +92,19 @@ class CallTracer : public ExprVisitor {
 
 IRModule RemoveUnusedFunctions(
     IRModule mod, const std::unordered_set<GlobalVar, ObjectPtrHash, ObjectPtrEqual>& entry_funcs) {
+  bool every_func_is_entry_func = [&]() -> bool {
+    for (const auto& [gvar, base_func] : mod->functions) {
+      if (!entry_funcs.count(gvar)) {
+        return false;
+      }
+    }
+    return true;
+  }();
+  if (every_func_is_entry_func) {
+    // Early bail-out if every function is externally exposed.
+    return mod;
+  }
+
   CallTracer tracer(mod);
   for (const auto& gvar : entry_funcs) {
     tracer.VisitExpr(gvar);
