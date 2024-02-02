@@ -140,7 +140,12 @@ class LazyTransformParamsFuncCreator:
         self.memory_free_insertion = None
 
     def transform(self, func: relax.Function) -> relax.Function:
-        self.input_tuple_param = func.params[0]
+        if func.attrs is not None and "num_input" in func.attrs:
+            num_input = func.attrs["num_input"].value
+        else:
+            num_input = 0
+
+        self.input_tuple_param = func.params[num_input]
         seq_expr = func.body
         self.out_tuple_var = seq_expr.body
 
@@ -165,7 +170,11 @@ class LazyTransformParamsFuncCreator:
             new_body = LazyOutputMutator(self, self.mod).visit_expr(new_body)
 
         # Step 4. Add parameters of get_item and set_item (except index) to the function.
-        params = [*self.extra_get_item_params, *self.extra_set_item_params]
+        params = [
+            *func.params[:num_input],
+            *self.extra_get_item_params,
+            *self.extra_set_item_params,
+        ]
 
         # Step 5. Find all shape parameters that should be retained as
         # parameters.
