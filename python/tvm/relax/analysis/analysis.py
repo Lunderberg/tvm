@@ -607,3 +607,7 @@ def computable_at_compile_time(func: Function) -> List[Var]:
         order of their occurrence within the function.
     """
     return _ffi_api.computable_at_compile_time(func)  # type: ignore
+
+
+def infer_symbolic_var_map(param_map: Dict[Var, Expr]) -> Dict[tir.Var, tir.PrimExpr]:
+    return _ffi_api.InferSymbolicVarMap(param_map)  # type: ignore
