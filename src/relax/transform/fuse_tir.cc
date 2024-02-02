@@ -951,58 +951,67 @@ class TIRFuseMutator : public ExprMutator {
     if (call->op->IsInstance<GlobalVarNode>()) {
       // Case 1. It is a relax cross function call
       GlobalVar old_gv = Downcast<GlobalVar>(call->op);
-      auto relax_func = Downcast<Function>(mod_->Lookup(old_gv));
+      auto base_func = mod_->Lookup(old_gv);
+
       auto it = fused_tir_funcs_.find(old_gv);
-      if (it != fused_tir_funcs_.end()) {
-        const tir::PrimFunc& fused_tir = (*it).second;
-        // Case 1.1. It calls a primitive relax function, update the call into a call_tir
-        GlobalVar fused_tir_gv = this->builder_->AddFunction(fused_tir, old_gv->name_hint);
-        // Step a. Flatten all args since call_tir does not support Tuple value.
-        Array<Expr> arg_list;
-        Array<PrimExpr> tir_vars;
-        for (size_t i = 0; i < call->args.size(); ++i) {
-          auto arg = call->args[i];
-          auto sinfo = GetStructInfo(arg);
-
-          ICHECK(!relax_func->params[i]->struct_info_->IsInstance<TupleStructInfoNode>() &&
-                 !sinfo.as<TupleStructInfoNode>())
-              << "InternalError: "
-              << "All tuple parameters should be expanded before this point in FuseTIR.  "
-              << "However, argument " << arg << " with struct info " << arg->struct_info_
-              << " is passed as argument " << i << " to Primitive Relax function " << old_gv
-              << ", which expects parameter " << relax_func->params[i] << " to have struct info "
-              << relax_func->params[i]->struct_info_;
-
-          if (const auto* shape = sinfo.as<ShapeStructInfoNode>()) {
-            CHECK(shape->values.defined())
-                << "FuseTIR requires all shape input has struct_info value.";
-            for (const PrimExpr& prim_value : shape->values.value()) {
-              CHECK(prim_value->IsInstance<tir::VarNode>())
-                  << "All shape inputs are expected to be single tir var.";
-              tir_vars.push_back(prim_value);
-            }
-          } else if (const auto* prim_value = sinfo.as<PrimStructInfoNode>()) {
-            CHECK(prim_value->value.defined())
-                << "FuseTIR requires all R.Prim arguments to have a known value.";
-            PrimExpr expr = prim_value->value.value();
-            CHECK(expr->IsInstance<tir::VarNode>())
-                << "FuseTIR currently requires all R.Prim arguments to provide a single tir::Var.";
-            tir_vars.push_back(expr);
-
-          } else {
-            arg_list.push_back(arg);
-          }
-        }
-        // Step b. Create call_tir
-        Array<Expr> call_args = {fused_tir_gv, Tuple(arg_list)};
-        if (!tir_vars.empty()) {
-          call_args.push_back(ShapeExpr(tir_vars));
-        }
-        return Call(call_tir_op_, call_args, call->attrs, {GetStructInfo(call)});
-      } else {
+      if (it == fused_tir_funcs_.end()) {
         // Case 1.2. The callee function is not primitive, nothing to do.
         return call;
       }
+      const tir::PrimFunc& fused_tir = (*it).second;
+
+      auto opt_relax_func = base_func.as<Function>();
+      CHECK(opt_relax_func)
+          << "FuseTIR expects all Call(globar_var, ...) to refer to Relax functions, "
+          << "however global var " << old_gv << ", used in expression " << call << ", refers to a "
+          << base_func->GetTypeKey();
+      auto relax_func = opt_relax_func.value();
+
+      // Case 1.1. It calls a primitive relax function, update the call into a call_tir
+      GlobalVar fused_tir_gv = this->builder_->AddFunction(fused_tir, old_gv->name_hint);
+      // Step a. Flatten all args since call_tir does not support Tuple value.
+      Array<Expr> arg_list;
+      Array<PrimExpr> tir_vars;
+      for (size_t i = 0; i < call->args.size(); ++i) {
+        auto arg = call->args[i];
+        auto sinfo = GetStructInfo(arg);
+
+        ICHECK(!relax_func->params[i]->struct_info_->IsInstance<TupleStructInfoNode>() &&
+               !sinfo.as<TupleStructInfoNode>())
+            << "InternalError: "
+            << "All tuple parameters should be expanded before this point in FuseTIR.  "
+            << "However, argument " << arg << " with struct info " << arg->struct_info_
+            << " is passed as argument " << i << " to Primitive Relax function " << old_gv
+            << ", which expects parameter " << relax_func->params[i] << " to have struct info "
+            << relax_func->params[i]->struct_info_;
+
+        if (const auto* shape = sinfo.as<ShapeStructInfoNode>()) {
+          CHECK(shape->values.defined())
+              << "FuseTIR requires all shape input has struct_info value.";
+          for (const PrimExpr& prim_value : shape->values.value()) {
+            CHECK(prim_value->IsInstance<tir::VarNode>())
+                << "All shape inputs are expected to be single tir var.";
+            tir_vars.push_back(prim_value);
+          }
+        } else if (const auto* prim_value = sinfo.as<PrimStructInfoNode>()) {
+          CHECK(prim_value->value.defined())
+              << "FuseTIR requires all R.Prim arguments to have a known value.";
+          PrimExpr expr = prim_value->value.value();
+          CHECK(expr->IsInstance<tir::VarNode>())
+              << "FuseTIR currently requires all R.Prim arguments to provide a single tir::Var.";
+          tir_vars.push_back(expr);
+
+        } else {
+          arg_list.push_back(arg);
+        }
+      }
+      // Step b. Create call_tir
+      Array<Expr> call_args = {fused_tir_gv, Tuple(arg_list)};
+      if (!tir_vars.empty()) {
+        call_args.push_back(ShapeExpr(tir_vars));
+      }
+      return Call(call_tir_op_, call_args, call->attrs, {GetStructInfo(call)});
+
     } else if (call->op == call_tir_op_) {
       // Case 2. It is a call_tir, re-emit the PrimFunc.
       if (const auto* gv = call->args[0].as<GlobalVarNode>()) {
