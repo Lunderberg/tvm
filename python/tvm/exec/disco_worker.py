@@ -57,6 +57,11 @@ def _shape_tuple_func(x: ShapeTuple):  # pylint: disable=invalid-name
     return ShapeTuple(list(x) + [4, 5])
 
 
+@register_func("runtime.disco._import_python_module")
+def _import_python_module(module_name: str) -> None:
+    __import__(module_name)
+
+
 def main():
     """Main worker function"""
     if len(sys.argv) != 5:
