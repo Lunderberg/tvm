@@ -34,6 +34,7 @@ from .analysis import (
     get_static_type,
     get_var2val,
     has_reshape_pattern,
+    infer_symbolic_var_map,
     name_to_binding,
     post_order_visit,
     remove_all_unused,

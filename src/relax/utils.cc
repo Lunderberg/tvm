@@ -220,6 +220,12 @@ tvm::Map<tir::Var, PrimExpr> InferSymbolicVarMap(
   return tir_var_remap;
 }
 
+TVM_REGISTER_GLOBAL("relax.analysis.InferSymbolicVarMap")
+    .set_body_typed([](const tvm::Map<relax::Var, relax::Expr>& relax_var_remap) {
+      arith::Analyzer analyzer;
+      return InferSymbolicVarMap(relax_var_remap, &analyzer);
+    });
+
 bool IsBoolStructInfo(const StructInfo& sinfo, bool permit_unknown_rank,
                       bool permit_unknown_dtype) {
   const TensorStructInfoNode* tt = sinfo.as<TensorStructInfoNode>();
