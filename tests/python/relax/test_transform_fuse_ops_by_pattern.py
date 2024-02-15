@@ -1076,5 +1076,169 @@ def test_error_on_repeated_variable_definitions():
         relax.transform.FuseOpsByPattern(patterns)(mod)
 
 
+def test_matmul_symbolic_var():
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(
+            x: R.Tensor(["batch_size", 1024], "float16"),
+            w1: R.Tensor([1024, 1024], "float16"),
+            w2: R.Tensor([1024, "M"], "float16"),
+        ):
+            with R.dataflow():
+                matmul1 = R.matmul(x, w1)
+                matmul2 = R.matmul(x, w2)
+                out = (matmul1, matmul2)
+                R.output(out)
+            return out
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(
+            x: R.Tensor(["batch_size", 1024], "float16"),
+            w1: R.Tensor([1024, 1024], "float16"),
+            w2: R.Tensor([1024, "M"], "float16"),
+        ) -> R.Tuple(
+            R.Tensor(["batch_size", 1024], "float16"),
+            R.Tensor(["batch_size", "M"], "float16"),
+        ):
+            cls = Expected
+            with R.dataflow():
+                matmul1 = cls.fused_relax_matmul_cublas(x, w1)
+                matmul2 = cls.fused_relax_matmul1_cublas(x, w2)
+                out = (matmul1, matmul2)
+                R.output(out)
+            return out
+
+        @R.function
+        def fused_relax_matmul_cublas(
+            x: R.Tensor(["batch_size", 1024], "float16"),
+            w1: R.Tensor([1024, 1024], "float16"),
+        ) -> R.Tensor(["batch_size", 1024], "float16"):
+            batch_size = T.int64()
+            R.func_attr({"Codegen": "cublas"})
+
+            @R.function
+            def inner_func(
+                x: R.Tensor([batch_size, 1024], "float16"),
+                w1: R.Tensor([1024, 1024], "float16"),
+            ) -> R.Tensor([batch_size, 1024], "float16"):
+                R.func_attr({"Composite": "cublas.matmul"})
+                with R.dataflow():
+                    out = R.matmul(x, w1)
+                    R.output(out)
+                return out
+
+            out = inner_func(x, w1)
+            return out
+
+        @R.function
+        def fused_relax_matmul1_cublas(
+            x: R.Tensor(["batch_size", 1024], "float16"),
+            w2: R.Tensor([1024, "M"], "float16"),
+        ) -> R.Tensor(["batch_size", "M"], "float16"):
+            batch_size = T.int64()
+            M = T.int64()
+            R.func_attr({"Codegen": "cublas"})
+
+            @R.function
+            def inner_func(
+                x: R.Tensor([batch_size, 1024], "float16"),
+                w2: R.Tensor((1024, M), "float16"),
+            ) -> R.Tensor([batch_size, M], "float16"):
+                R.func_attr({"Composite": "cublas.matmul"})
+                with R.dataflow():
+                    out = R.matmul(x, w2)
+                    R.output(out)
+                return out
+
+            out = inner_func(x, w2)
+            return out
+
+    patterns = relax.backend.pattern_registry.get_patterns_with_prefix("cublas.matmul")
+    After = relax.transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(
+        Before
+    )
+    tvm.ir.assert_structural_equal(Expected, After)
+
+
+def test_matmul_symbolic_expr():
+    """Like `test_matmul_symbolic_var`, but with a PrimExpr shape
+
+    The shape of weights used in the matmul are `[1024, M + 1024]`,
+    which can result from `CombineParallelMatmul`.  If the fused
+    function is written in terms of `M`, then `M` must be provided as
+    an additional `ShapeExpr`, as it cannot be inferred from the
+    tensor shape.  This can cause issues for downstream passes, as
+    CodeGenJSON, used by the TVM's runtime for cublas and cutlass,
+    only supports `R.Tensor` and tuples of `R.Tensor`.
+
+    If a symbolic variable is only used within expressions that
+    themselves are inferable from the tensor shapes, then the fused
+    function could be written in terms of that expression, removing
+    the need for the `ShapeExpr`.  Here, the expression `M + 1024` is
+    replaced by the variable `w2_size`.
+    """
+
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(
+            x: R.Tensor(["batch_size", 1024], dtype="float16"),
+            w1: R.Tensor([1024, 1024], dtype="float16"),
+            w2: R.Tensor([1024, "M"], dtype="float16"),
+        ) -> R.Tensor(["batch_size", "M + 1024"], "float16"):
+            with R.dataflow():
+                concat = R.concat([w1, w2], axis=1)
+                out = R.matmul(x, concat)
+                R.output(out)
+            return out
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(
+            x: R.Tensor(["batch_size", 1024], dtype="float16"),
+            w1: R.Tensor([1024, 1024], dtype="float16"),
+            w2: R.Tensor([1024, "M"], dtype="float16"),
+        ) -> R.Tensor(["batch_size", "M + 1024"], "float16"):
+            cls = Expected
+            with R.dataflow():
+                concat = R.concat([w1, w2], axis=1)
+                out = cls.fused_relax_matmul_cublas(x, concat)
+                R.output(out)
+            return out
+
+        @R.function
+        def fused_relax_matmul_cublas(
+            x: R.Tensor(["batch_size", 1024], dtype="float16"),
+            w2: R.Tensor([1024, "w2_size"], dtype="float16"),
+        ) -> R.Tensor(["batch_size", "w2_size"], dtype="float16"):
+            batch_size = T.int64()
+            w2_size = T.int64()
+            R.func_attr({"Codegen": "cublas"})
+
+            @R.function
+            def inner_func(
+                x: R.Tensor([batch_size, 1024], dtype="float16"),
+                w2: R.Tensor((1024, w2_size), dtype="float16"),
+            ) -> R.Tensor([batch_size, w2_size], dtype="float16"):
+                R.func_attr({"Composite": "cublas.matmul"})
+                with R.dataflow():
+                    out = R.matmul(x, w2)
+                    R.output(out)
+                return out
+
+            out = inner_func(x, w2)
+            return out
+
+    patterns = relax.backend.pattern_registry.get_patterns_with_prefix("cublas.matmul")
+    After = relax.transform.FuseOpsByPattern(patterns, bind_constants=False, annotate_codegen=True)(
+        Before
+    )
+    tvm.ir.assert_structural_equal(Expected, After)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
