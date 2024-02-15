@@ -51,6 +51,7 @@ from .transform import (
     InlinePrivateFunctions,
     KillAfterLastUse,
     LambdaLift,
+    LazyGetInput,
     LegalizeOps,
     LiftTransformParams,
     LowerAllocTensor,

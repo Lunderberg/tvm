@@ -628,5 +628,32 @@ def test_params_without_tuple():
     tvm.ir.assert_structural_equal(After, Expected)
 
 
+def test_lazy_get_input():
+    @I.ir_module
+    class Before:
+        @R.function
+        def transform_params(A: R.Tensor([16, 16], "float32"), B: R.Tensor([16, 16], "float32")):
+            C = R.multiply(A, R.const(2, "float32"))
+            D = R.add(C, B)
+            return (D, B)
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def transform_params(fget_param: R.Callable([R.Object, R.Prim("int64")], R.Object)):
+            R.func_attr({"num_input": 1})
+            A = fget_param(R.str("A"), R.prim_value(0))
+            A = R.match_cast(A, R.Tensor([16, 16], "float32"))
+            C = R.multiply(A, R.const(2, "float32"))
+
+            B = fget_param(R.str("B"), R.prim_value(1))
+            B = R.match_cast(B, R.Tensor([16, 16], "float32"))
+            D = R.add(C, B)
+            return (D, B)
+
+    After = relax.transform.LazyGetInput()(Before)
+    tvm.ir.assert_structural_equal(After, Expected)
+
+
 if __name__ == "__main__":
     tvm.testing.main()
