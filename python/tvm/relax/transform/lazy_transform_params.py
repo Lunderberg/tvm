@@ -132,8 +132,6 @@ class LazyTransformParamsFuncCreator:
         self.extra_get_item_params = extra_get_item_params
         self.fset_item = fset_item
         self.extra_set_item_params = extra_set_item_params
-        # the only input param, which should be a Tuple
-        self.input_tuple_param = None
         self.input_params_set = None
         self.out_tuple_map = None
         self.out_tuple_var = None
@@ -145,12 +143,11 @@ class LazyTransformParamsFuncCreator:
         else:
             num_input = 0
 
-        self.input_tuple_param = func.params[num_input]
         seq_expr = func.body
         self.out_tuple_var = seq_expr.body
 
         # Step 1. collect out_tuple_map and input_params_set
-        forward_collector = ForwardCollector(self.out_tuple_var, self.input_tuple_param)
+        forward_collector = ForwardCollector(self.out_tuple_var, func.params[num_input])
         forward_collector.visit_expr(func)
         self.out_tuple_map = forward_collector.out_tuple_map
         # input_params_set is the set of binding var for var = params[i]
@@ -180,10 +177,19 @@ class LazyTransformParamsFuncCreator:
         # parameters.
         symbolic_vars = relax.analysis.defined_symbolic_vars(func)
         if symbolic_vars:
+
+            def unpack_sinfo(sinfo):
+                if isinstance(sinfo, relax.TupleStructInfo):
+                    for field in sinfo.fields:
+                        yield from unpack_sinfo(field)
+                else:
+                    yield sinfo
+
             # direct iterate over the struct info annotation
-            for sinfo in self.input_tuple_param.struct_info.fields:
-                if not isinstance(sinfo, relax.TensorStructInfo):
-                    params.append(relax.Var("symbolic_var_holder", sinfo))
+            for param in func.params[num_input:]:
+                for sinfo in unpack_sinfo(param.struct_info):
+                    if not isinstance(sinfo, relax.TensorStructInfo):
+                        params.append(relax.Var("symbolic_var_holder", sinfo))
 
         return relax.Function(
             params,
