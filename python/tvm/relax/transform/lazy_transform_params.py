@@ -164,6 +164,29 @@ class LazyTransformParamsFuncCreator:
 
         new_body = new_func.body
         if self.fset_item is not None:
+            leaf_outputs = {
+                expr: indices
+                for expr, indices in self.out_tuple_map.items()
+                if not isinstance(expr, relax.Var)
+            }
+            if leaf_outputs:
+                new_bindings = [
+                    relax.VarBinding(
+                        relax.Var("_", relax.ObjectStructInfo()),
+                        relax.Call(
+                            relax.ExternFunc(self.fset_item),
+                            [*self.extra_set_item_params, index, expr],
+                            None,
+                            [relax.ObjectStructInfo()],
+                        ),
+                    )
+                    for expr, indices in leaf_outputs.items()
+                    for index in indices
+                ]
+                new_body = relax.SeqExpr(
+                    [*new_body.blocks, relax.BindingBlock(new_bindings)], new_body.body
+                )
+
             new_body = LazyOutputMutator(self, self.mod).visit_expr(new_body)
 
         # Step 4. Add parameters of get_item and set_item (except index) to the function.
