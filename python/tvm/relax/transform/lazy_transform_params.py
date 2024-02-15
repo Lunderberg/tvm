@@ -162,10 +162,10 @@ class LazyTransformParamsFuncCreator:
         self.memory_free_insertion = liveness.var_liveness_end
 
         # Step 3. rewrite get item and set item
-        new_body = func.body
         if self.fget_item is not None:
-            new_body = LazyInputMutator(self, self.mod).visit_expr(new_body)
+            new_func = LazyInputMutator(self, self.mod).visit_expr(func)
 
+        new_body = new_func.body
         if self.fset_item is not None:
             new_body = LazyOutputMutator(self, self.mod).visit_expr(new_body)
 
@@ -200,22 +200,67 @@ class LazyInputMutator(PyExprMutator):
         self.func_creator = func_creator
         super().__init__(mod)
 
-    def visit_tuple_getitem_(self, op: relax.TupleGetItem) -> relax.Expr:
-        # rewrite get item
-        tuple_get_item = super().visit_tuple_getitem_(op)
-        if tuple_get_item.tuple_value == self.func_creator.input_tuple_param:
+    def visit_function_(self, func: relax.Function) -> relax.Expr:
+        if func.attrs is not None and "num_input" in func.attrs:
+            num_input = func.attrs["num_input"].value
+        else:
+            num_input = 0
+
+        params = list(func.params)[num_input:]
+        if len(params) == 1 and isinstance(params[0].struct_info_, relax.TupleStructInfo):
+            self.tuple_param = params[0]
+            self.params = {}
+        else:
+            self.tuple_param = None
+            self.params = {var: i for i, var in enumerate(params)}
+        func = relax.Function(
+            func.params[:num_input],
+            func.body,
+            func.ret_struct_info,
+            is_pure=False,
+            attrs=func.attrs,
+            span=func.span,
+        ).without_attr("relax.force_pure")
+        output = super().visit_function_(func)
+        self.tuple_param = None
+        self.params = {}
+        return output
+
+    def visit_var_(self, var: relax.Var) -> relax.Expr:
+        if var in self.params:
+            index = self.params[var]
             get_item_result = self.builder_.emit(
                 relax.Call(
                     relax.ExternFunc(self.func_creator.fget_item),
-                    self.func_creator.extra_get_item_params
-                    + [relax.PrimValue(tuple_get_item.index)],
+                    self.func_creator.extra_get_item_params + [relax.PrimValue(index)],
                     None,
                     [relax.ObjectStructInfo()],
                 )
             )
-            return self.builder_.match_cast(get_item_result, op.struct_info)
+            match_cast = relax.MatchCast(var, get_item_result, var.struct_info)
+            self.builder_.emit_normalized(match_cast)
+
+            del self.params[var]
+
+        return super().visit_var_(var)
+
+    def visit_tuple_getitem_(self, node: relax.TupleGetItem) -> relax.Expr:
+        sinfo = node.struct_info
+
+        node = super().visit_tuple_getitem_(node)
+
+        if self.tuple_param is not None and node.tuple_value.same_as(self.tuple_param):
+            get_item_result = self.builder_.emit(
+                relax.Call(
+                    relax.ExternFunc(self.func_creator.fget_item),
+                    self.func_creator.extra_get_item_params + [relax.PrimValue(node.index)],
+                    None,
+                    [relax.ObjectStructInfo()],
+                )
+            )
+            return self.builder_.match_cast(get_item_result, sinfo)
         else:
-            return tuple_get_item
+            return node
 
 
 @mutator

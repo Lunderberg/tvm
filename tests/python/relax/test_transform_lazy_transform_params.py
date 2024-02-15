@@ -602,5 +602,31 @@ def test_duplicate_outputs():
     tvm.ir.assert_structural_equal(after, Expected)
 
 
+def test_params_without_tuple():
+    @I.ir_module
+    class Before:
+        @R.function
+        def transform_params(A: R.Tensor([16, 16], "float32"), B: R.Tensor([16, 16], "float32")):
+            C = R.multiply(A, R.const(2, "float32"))
+            D = R.add(C, B)
+            return (D, B)
+
+    @I.ir_module
+    class Expected:
+        @R.function(pure=False)
+        def transform_params():
+            A = R.call_packed("get_item", R.prim_value(0), sinfo_args=[R.Object])
+            A = R.match_cast(A, R.Tensor([16, 16], "float32"))
+            C = R.multiply(A, R.const(2, "float32"))
+
+            B = R.call_packed("get_item", R.prim_value(1), sinfo_args=[R.Object])
+            B = R.match_cast(B, R.Tensor([16, 16], "float32"))
+            D = R.add(C, B)
+            return (D, B)
+
+    After = LazyTransformParams(fset_item=None)(Before)
+    tvm.ir.assert_structural_equal(After, Expected)
+
+
 if __name__ == "__main__":
     tvm.testing.main()
