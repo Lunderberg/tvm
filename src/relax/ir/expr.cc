@@ -501,7 +501,12 @@ SeqExpr::SeqExpr(Expr body, Span span) {
 }
 
 SeqExpr::SeqExpr(Array<BindingBlock> blocks, Expr body, Span span) {
+  CHECK(body.defined());
   ObjectPtr<SeqExprNode> n = make_object<SeqExprNode>();
+  if (body->struct_info_.defined()) {
+    n->struct_info_ = body->struct_info_;
+    n->checked_type_ = GetStaticType(GetStructInfo(body));
+  }
   n->blocks = std::move(blocks);
   n->body = std::move(body);
   n->span = span;

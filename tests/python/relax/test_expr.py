@@ -190,6 +190,21 @@ def test_seq_expr() -> None:
     assert seqe.body == x
 
 
+def test_seq_expr_may_infer_sinfo_from_body():
+    x = rx.Var("foo", rx.ObjectStructInfo())
+    seq_expr = rx.SeqExpr([], x)
+
+    assert seq_expr.struct_info_ is not None
+    tvm.ir.assert_structural_equal(seq_expr.struct_info, rx.ObjectStructInfo())
+
+
+def test_seq_expr_may_not_infer_sinfo_from_body_without_sinfo():
+    x = rx.Var("foo")
+    seq_expr = rx.SeqExpr([], x)
+
+    assert seq_expr.struct_info_ is None
+
+
 def test_func():
     x = rx.Var("foo", R.Tensor(dtype="float32", ndim=2))
     bindings = [rx.VarBinding(x, rx.const(1))]
@@ -201,7 +216,7 @@ def test_func():
     func = func.with_attr("global_symbol", "func")
     assert func.params[0] == x
     assert func.body == seqe
-    assert func.ret_struct_info == ret_struct_info
+    assert tvm.relax.analysis.struct_info_base_check(ret_struct_info, func.ret_struct_info)
     assert func.attrs["global_symbol"] == "func"
 
 
