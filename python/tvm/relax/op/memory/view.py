@@ -36,6 +36,13 @@ from . import _ffi_api
 PrimExprLike = Union[int, PrimExpr]
 
 
+def _normalize(expr, relax_cls):
+    if expr is None or isinstance(expr, Expr):
+        return expr
+    else:
+        return relax_cls(expr)
+
+
 def view(
     data: Expr,
     shape: Optional[Union[Sequence[PrimExprLike], Expr]] = None,
@@ -92,3 +99,72 @@ def view(
     relative_byte_offset = _normalize(relative_byte_offset, PrimValue)
 
     return _ffi_api.view(data, shape, dtype, relative_byte_offset)  # type: ignore
+
+
+def ensure_aligned(
+    tensor: Expr,
+    byte_alignment: Optional[Expr] = None,
+) -> Expr:
+    """Ensures that a tensor satisfies a minimum alignment
+
+    While compute kernels are frequently written to accept NDArray
+    arguments, a compute kernel may have stronger requirements than
+    the NDArray format imposes.  For example, a compute kernel may
+    require that the `byte_offset` field is zero.  In general, this
+    assumption is neither upheld by outputs from Relax operations, nor
+    is this assumption checked for arguments passed to Relax
+    functions.  If a compute kernels requires additional constraints
+    on its NDArray arguments, these extra constraints must be
+    explicitly provided.
+
+    The `R.memory.ensure_aligned` operator can be used to produce a
+    `R.Tensor` that provides stronger guarantees than Relax provides
+    by default.  The `NDArray` generated as output from
+    `R.memory.ensure_aligned` will have a `DLTensor::byte_offset` of
+    zero, and the `DLTensor::data` pointer will be evenly divisible by
+    `byte_alignment`.
+
+    The legalization of this operator depends on the target being used.
+
+    - For any target, the result of `R.memory.ensure_aligned` may
+      alias the `tensor` argument, if the `tensor` argument already
+      satisfies the conditions for `DLTensor::byte_offset` and
+      `DLTensor::data`.
+
+    - For a target that supports host-side pointer arithmetic on the
+      `DLTensor::data` pointer (e.g. cuda), the result of
+      `R.memory.ensure_aligned` may alias the `tensor` argument, even
+      if the `tensor` argument does not satisfy the conditions for
+      `DLTensor::byte_offset` and `DLTensor::data`.
+
+    - For a target that does not support host-side pointer arithmetic
+      on the `DLTensor::data` pointer (e.g. Vulkan and OpenCL),
+      `R.memory.ensure_aligned` may perform a memory allocation.
+
+
+
+    Parameters
+    ----------
+    tensor : relax.Expr
+
+        The input tensor to the operator.
+
+    byte_alignment : Optional[Expr]
+
+        The alignment that should be provided.  Should be a
+        `relax.PrimValue`, or convertible to a `relax.PrimValue`.
+
+        If None, will default to `tvm::runtime::kAllocAlignment`,
+        providing the same alignment guarantees as are provided by
+        TVM allocations.
+
+    Returns
+    -------
+    result : relax.Expr
+        The tensor view
+
+    """
+
+    byte_alignment = _normalize(byte_alignment, PrimValue)
+
+    return _ffi_api.ensure_aligned(tensor, byte_alignment)  # type: ignore
