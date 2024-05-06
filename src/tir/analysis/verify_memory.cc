@@ -47,7 +47,8 @@ class MemoryAccessVerifier final : protected StmtExprVisitor {
  public:
   /// Special member functions
   //@{
-  explicit MemoryAccessVerifier(PrimFunc f, int device_type) : func_(f), dev_type_(device_type) {}
+  explicit MemoryAccessVerifier(PrimFunc f, Target target)
+      : func_(f), target_(target), dev_type_(target->GetTargetDeviceType()) {}
   virtual ~MemoryAccessVerifier() = default;
   MemoryAccessVerifier(const MemoryAccessVerifier&) = delete;
   MemoryAccessVerifier(MemoryAccessVerifier&&) = delete;
@@ -86,6 +87,23 @@ class MemoryAccessVerifier final : protected StmtExprVisitor {
     } else {
       StmtExprVisitor::VisitStmt_(op);
     }
+  }
+
+  void VisitExpr_(const CallNode* op) final {
+    if (op->op.same_as(builtin::address_of())) {
+      TargetKindAttrMap<Bool> target_attr_map =
+          tvm::TargetKind::GetAttrMap<Bool>(tvm::attr::kAllowPointerArithmeticOnHost);
+      if (target_attr_map.count(target_->kind) && target_attr_map[target_->kind]) {
+        // If this is a platform on which we can perform pointer
+        // arithmetic, then `T.address_of(buf[indices])` may be computed
+        // on the host, so long as the indices themselves may be
+        // computed on the host.
+        auto buffer_load = op->args[0].as<BufferLoadNode>();
+        ICHECK(buffer_load);
+        return StmtExprVisitor::VisitExpr_(buffer_load);
+      }
+    }
+    return StmtExprVisitor::VisitExpr_(op);
   }
 
   void VisitExpr_(const BufferLoadNode* op) final {
@@ -162,6 +180,7 @@ class MemoryAccessVerifier final : protected StmtExprVisitor {
   std::vector<String> errs_;
   //@}
   tir::PrimFunc func_{nullptr};                        ///< Function to be verified.
+  Target target_;                                      ///< Target for which the function is
   int dev_type_{kDLCPU};                               ///< Device type
   std::unordered_map<const VarNode*, PrimExpr> defs_;  ///< Variable definitions
 };
@@ -178,9 +197,9 @@ std::vector<String> VerifyMemory_(const PrimFunc& func) {
 
   if (func->GetAttr<Integer>(tvm::attr::kCallingConv, Integer(CallingConv::kDefault)) ==
       CallingConv::kDefault) {
-    MemoryAccessVerifier v(func, target.value()->GetTargetDeviceType());
-    v.Run();
-    return v.Errors();
+    MemoryAccessVerifier verifier(func, target.value());
+    verifier.Run();
+    return verifier.Errors();
   } else {
     return {};
   }

@@ -118,11 +118,59 @@ def test_verify_memory_partially_bind():
             tvm.tir.transform.VerifyMemory()(binded_mod)
 
 
-def test_verify_memory_address_of():
-    """T.address_of may appear on host side
+@tvm.testing.parametrize_targets("llvm", "cuda")
+def test_host_may_compute_address_on_specific_targets(target):
+    """Some targets support T.address_of on host
 
-    For some
+    Some targets have the `tvm::attr::kAllowPointerArithmeticOnHost`
+    attribute.  For these targets, the `T.address_of` built-in may
+    appear in TIR regions that will be executed on the host.  The host
+    will use pointer arithmetic to determine the address of the
+    requested element.
+
     """
+
+    @I.ir_module
+    class Module:
+        @T.prim_func
+        def is_128bit_aligned(A_handle: T.handle) -> T.bool:
+            T.func_attr({"target": T.target(target)})
+            elem_offset = T.int64()
+            A = T.match_buffer(A_handle, 4096, "float16", elem_offset=elem_offset)
+
+            is_offset_zero = elem_offset == 0
+            is_aligned = T.reinterpret("int64", T.address_of(A[0])) % 128 == 0
+            return is_offset_zero and is_aligned
+
+    tvm.tir.transform.VerifyMemory()(Module)
+
+
+@tvm.testing.parametrize_targets("vulkan", "opencl")
+def test_error_to_compute_address_on_host_for_most_targets(target):
+    """Some targets do not support T.address_of on host
+
+    By default, the `DLTensor::data` pointer must be treated as
+    opaque.  For any target without the
+    `tvm::attr::kAllowPointerArithmeticOnHost` attribute, the host may
+    not use pointer arithmetic to determine the address of a value
+    within a buffer.
+
+    """
+
+    @I.ir_module
+    class Module:
+        @T.prim_func
+        def is_128bit_aligned(A_handle: T.handle) -> T.bool:
+            T.func_attr({"target": T.target(target)})
+            elem_offset = T.int64()
+            A = T.match_buffer(A_handle, 4096, "float16", elem_offset=elem_offset)
+
+            is_offset_zero = elem_offset == 0
+            is_aligned = T.reinterpret("int64", T.address_of(A[0])) % 128 == 0
+            return is_offset_zero and is_aligned
+
+    with pytest.raises(RuntimeError):
+        tvm.tir.transform.VerifyMemory()(Module)
 
 
 if __name__ == "__main__":
