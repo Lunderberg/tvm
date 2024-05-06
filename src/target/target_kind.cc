@@ -274,6 +274,7 @@ TVM_REGISTER_TARGET_KIND("llvm", kDLCPU)
     // Force the external codegen kind attribute to be registered, even if no external
     // codegen targets are enabled by the TVM build.
     .set_attr<Bool>(tvm::attr::kIsExternalCodegen, Bool(false))
+    .set_attr<Bool>(tvm::attr::kAllowPointerArithmeticOnHost, Bool(true))
     .set_target_parser(tvm::target::parsers::cpu::ParseTarget);
 
 // Note regarding the "cl-opt" attribute:
@@ -304,6 +305,7 @@ TVM_REGISTER_TARGET_KIND("c", kDLCPU)
     .add_attr_option<Integer>("workspace-byte-alignment")
     .add_attr_option<Integer>("constants-byte-alignment")
     .set_default_keys({"cpu"})
+    .set_attr<Bool>(tvm::attr::kAllowPointerArithmeticOnHost, Bool(true))
     .set_target_parser(tvm::target::parsers::cpu::ParseTarget);
 
 TVM_REGISTER_TARGET_KIND("cuda", kDLCUDA)
@@ -316,6 +318,7 @@ TVM_REGISTER_TARGET_KIND("cuda", kDLCUDA)
     .add_attr_option<Integer>("l2_cache_size_bytes")
     .add_attr_option<Integer>("max_num_threads", Integer(1024))  // TODO(@zxybazh): deprecate it
     .set_default_keys({"cuda", "gpu"})
+    .set_attr<Bool>(tvm::attr::kAllowPointerArithmeticOnHost, Bool(true))
     .set_target_parser(UpdateCUDAAttrs);
 
 TVM_REGISTER_TARGET_KIND("nvptx", kDLCUDA)
@@ -324,6 +327,7 @@ TVM_REGISTER_TARGET_KIND("nvptx", kDLCUDA)
     .add_attr_option<Integer>("max_num_threads", Integer(1024))
     .add_attr_option<Integer>("thread_warp_size", Integer(32))
     .set_default_keys({"cuda", "gpu"})
+    .set_attr<Bool>(tvm::attr::kAllowPointerArithmeticOnHost, Bool(true))
     .set_target_parser(UpdateNVPTXAttrs);
 
 TVM_REGISTER_TARGET_KIND("rocm", kDLROCM)
@@ -428,7 +432,8 @@ TVM_REGISTER_TARGET_KIND("hexagon", kDLHexagon)
     .set_default_keys({"hexagon", "cpu"});
 
 TVM_REGISTER_TARGET_KIND("stackvm", kDLCPU)  // line break
-    .set_default_keys({"cpu"});
+    .set_default_keys({"cpu"})
+    .set_attr<Bool>(tvm::attr::kAllowPointerArithmeticOnHost, Bool(true));
 
 TVM_REGISTER_TARGET_KIND("ext_dev", kDLExtDev);
 

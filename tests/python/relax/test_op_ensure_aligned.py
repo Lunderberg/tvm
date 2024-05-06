@@ -206,6 +206,8 @@ def test_legalize_ensure_aligned():
 
 @tvm.testing.parametrize_targets("llvm", "cuda")
 def test_execute_ensure_aligned(target, dev):
+    target = tvm.target.Target(target)
+
     # @I.ir_module
     # class Module:
     #     @R.function
@@ -249,7 +251,15 @@ def test_execute_ensure_aligned(target, dev):
                 with T.block("copy"):
                     B[i] = A[i]
 
-    built = tvm.relax.build(Module, target=target)
+    seq = []
+    if "gpu" in target.keys:
+        seq.append(tvm.dlight.ApplyDefaultSchedule(tvm.dlight.gpu.Fallback()))
+
+    with target:
+        from lunderberg_tvm_instrument import PrintTransformSequence
+
+        with tvm.transform.PassContext(instruments=[PrintTransformSequence()]):
+            built = tvm.relax.build(tvm.ir.transform.Sequential(seq)(Module), target=target)
     vm = tvm.relax.VirtualMachine(built, device=dev)
 
     np_A = np.random.random([4096]).astype("float16")

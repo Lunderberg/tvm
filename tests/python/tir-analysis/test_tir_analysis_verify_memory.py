@@ -14,10 +14,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 import tvm
-import pytest
-from tvm import te
 import tvm.testing
+from tvm import te
+from tvm.script import ir as I, tir as T
+
+import pytest
 
 # The following DLDeviceType/TVMDeviceExtType values
 # are originally defined in dlpack.h and c_runtime_api.h.
@@ -115,7 +118,12 @@ def test_verify_memory_partially_bind():
             tvm.tir.transform.VerifyMemory()(binded_mod)
 
 
+def test_verify_memory_address_of():
+    """T.address_of may appear on host side
+
+    For some
+    """
+
+
 if __name__ == "__main__":
-    test_verify_memory_all_bind()
-    test_verify_memory_not_bind()
-    test_verify_memory_partially_bind()
+    tvm.testing.main()

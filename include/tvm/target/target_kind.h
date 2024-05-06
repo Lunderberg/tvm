@@ -415,6 +415,29 @@ constexpr const char* kIsExternalCodegen = "is_external_codegen";
  */
 constexpr const char* kRelayToTIR = "RelayToTIR";
 
+/*! \brief Specifies whether host may alter `DLTensor::data` field
+ *
+ * A boolean \p TargetKind attribute, which indicates whether the host
+ * may treat the `DLTensor::data` field as a pointer, for purposes of
+ * indexing into the array.  If true, the host may perform pointer
+ * arithmetic on the `DLTensor::data` field.  If false (default), the
+ * host must treat the `DLTensor::data` field as an opaque handle.
+ *
+ * The `DLTensor::data` is a host-side handle to a device-side memory
+ * allocation.  Because the representation of `DLTensor::data` is
+ * backend-specific, the host must not alter its value.  Instead, this
+ * handle may be interacted with through the `DeviceAPI` interface, or
+ * passed as part of an `NDArray` argument to a compiled kernel.
+ *
+ * However, for some backends, such as CUDA, the `DLTensor::data`
+ * field may be treated as a pointer-to-data in pointer arithmetic
+ * expressions performed on the host.  This can be useful for some
+ * zero-copy optimizations, such as generating views into a buffer,
+ * when calling a kernel that doesn't support non-zero values for
+ * `DLTensor::byte_offset`.
+ */
+constexpr const char* kAllowPointerArithmeticOnHost = "allow_pointer_arithmetic_on_host";
+
 }  // namespace attr
 
 /*!
