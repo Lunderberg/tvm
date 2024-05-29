@@ -147,7 +147,41 @@ class NDArray : public ObjectRef {
    *       outside the bounds of the current array, this function will
    *       raise an exception.
    */
-  TVM_DLL NDArray CreateView(ShapeTuple shape, DLDataType dtype, uint64_t relative_byte_offset = 0);
+  TVM_DLL NDArray CreateView(ShapeTuple shape, DLDataType dtype,
+                             uint64_t relative_byte_offset = 0) const;
+
+  /* \brief Create a NDArray that is
+   *
+   * This function offsets the `void* DLTensor::data` field by the
+   * `uint64_t DLTensor::byte_offset`, returning a view with
+   * `byte_offset` of zero.
+   *
+   * In general, this function should not be used.  Instead, GPU
+   * kernels should accept a `DLTensor*`, and should apply the
+   * `DLTensor::byte_offset` internally.  This function is provided
+   * to allow compatibility with GPU kernels that assume the
+   * `byte_offset` field is zero.
+   *
+   * - In general, the `DLTensor::data` field is an opaque pointer,
+   *   and performing pointer arithmetic on this opaque pointer does
+   *   *NOT* correspond to indexing within the allocation.  This
+   *   function may only be used on devices that allow host-side
+   *   pointer arithmetic of device-side `DLTensor::data` pointers.
+   *   On all other targets, this function will raise an exception.
+   *
+   * - TVM's guarantee of aligned allocations only apply to the
+   *   `DLTensor::data` field, and does *NOT* apply to the
+   *   `DLTensor::data` field when offset by the
+   *   `DLTensor::byte_offset`.  If applying the
+   *   `DLTensor::byte_offset` to the `DLTensor::data` would break
+   *   TVM's guarantee of aligned allocations, this function will
+   *   raise an exception.
+   *
+   * \return A NDArray that shares the same backing allocation as the
+   *     current NDArray, representing the same subset of the backing
+   *     allocation, but with `byte_offset` of zero.
+   */
+  TVM_DLL NDArray MergeOffsetIntoDataPointer() const;
 
   /*!
    * \brief Create a reference view of NDArray that

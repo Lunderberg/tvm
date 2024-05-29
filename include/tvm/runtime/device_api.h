@@ -240,6 +240,15 @@ class TVM_DLL DeviceAPI {
     return device_type != kDLCPU && device_type != kDLMicroDev;
   }
 
+  /*! \brief Returns whether the host may perform pointer arithmetic
+   *  on the `DLTensor::data` field.
+   *
+   * Corresponds to the compile-time
+   * `tvm::attr::kAllowPointerArithmeticOnHost` attribute in a
+   * `tvm::Target`.
+   */
+  virtual bool HostMayPerformPointerArithmeticOnDeviceOwnedDataPointer() const { return false; }
+
  protected:
   /*!
    * \brief copy data from one place to another

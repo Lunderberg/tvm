@@ -270,7 +270,7 @@ def test_legalize_ensure_aligned():
 #     assert B.handle.contents.byte_offset == 0
 
 
-@tvm.testing.parametrize_targets("llvm", "cuda")
+@tvm.testing.parametrize_targets("llvm", "cuda", "vulkan -from_device=0")
 def test_execute_ensure_aligned(target, dev):
     target = tvm.target.Target(target)
 
@@ -278,7 +278,7 @@ def test_execute_ensure_aligned(target, dev):
     # class Module:
     #     @R.function
     #     def main(A: R.Tensor([4096], "float16")):
-    #         B = R.memory.ensure_aligned(A, 128)
+    #         B = R.memory.ensure_aligned(A, 64)
     #         return B
 
     @I.ir_module
@@ -286,18 +286,38 @@ def test_execute_ensure_aligned(target, dev):
         @R.function
         def main(A: R.Tensor([4096], "float16")):
             cls = Module
-            B = cls.ensure_aligned(A)
+            # B = cls.ensure_aligned_by_copy(A)
+            B = cls.ensure_aligned_by_view(A)
             return B
 
         @R.function(private=True)
-        def ensure_aligned(A: R.Tensor([4096], "float16")) -> R.Tensor([4096], "float16"):
+        def ensure_aligned_by_copy(A: R.Tensor([4096], "float16")) -> R.Tensor([4096], "float16"):
             cls = Module
 
             is_aligned = cls.is_aligned(A)
             if is_aligned:
                 output = A
             else:
-                output = R.call_tir(cls.copy_to_aligned, [A], out_sinfo=R.Tensor([4096], "float16"))
+                output = R.call_tir(
+                    cls.copy_to_new_allocation, [A], out_sinfo=R.Tensor([4096], "float16")
+                )
+            return output
+
+        @R.function(private=True)
+        def ensure_aligned_by_view(A: R.Tensor([4096], "float16")) -> R.Tensor([4096], "float16"):
+            cls = Module
+
+            is_aligned = cls.is_aligned(A)
+            if is_aligned:
+                output = A
+            else:
+                can_merge_offset_into_data_pointer = cls.can_merge_offset_into_data_pointer(A)
+                if can_merge_offset_into_data_pointer:
+                    output = R.call_pure_packed(
+                        "runtime.TVMArrayMergeOffsetIntoDataPointer", A, sinfo_args=[A.struct_info]
+                    )
+                else:
+                    output = R.call_tir(cls.copy_to_new_allocation, [A], out_sinfo=A.struct_info)
             return output
 
         @T.prim_func(private=True)
@@ -306,42 +326,26 @@ def test_execute_ensure_aligned(target, dev):
             A = T.match_buffer(A_handle, 4096, "float16", elem_offset=elem_offset)
 
             is_offset_zero = elem_offset == 0
-            is_aligned = T.reinterpret("int64", T.address_of(A[0])) % 128 == 0
+            is_aligned = T.reinterpret("int64", T.address_of(A[0])) % 64 == 0
             return is_offset_zero and is_aligned
 
         @T.prim_func(private=True)
-        def copy_to_aligned(
+        def can_merge_offset_into_data_pointer(A_handle: T.handle) -> T.bool:
+            elem_offset = T.int64()
+            A = T.match_buffer(A_handle, 4096, "float16", elem_offset=elem_offset)
+
+            is_aligned = T.reinterpret("int64", T.address_of(A[0])) % 64 == 0
+
+            return is_aligned
+
+        @T.prim_func(private=True)
+        def copy_to_new_allocation(
             A: T.Buffer(4096, "float16", offset_factor=1), B: T.Buffer(4096, "float16")
         ):
             for i in range(4096):
                 with T.block("copy"):
                     vi = T.axis.remap("S", [i])
                     B[vi] = A[vi]
-
-        @T.prim_func(private=True)
-        def view_as_aligned(tensor: T.handle):
-            T.func_attr({"tir.is_scheduled": True, "tir.is_host_func": True})
-
-            # From #include <tvm/tir/builtin.h>
-            kArrTypeBits = T.meta_var(6)
-            kArrTypeLanes = T.meta_var(7)
-
-            type_bits = T.tvm_struct_get(tensor, 0, kArrTypeBits, dtype="uint8")
-            type_lanes = T.tvm_struct_get(tensor, 0, kArrTypeLanes, dtype="uint16")
-
-        # @T.prim_func(private=True)
-        # def is_bfloat16_dtype(tensor: T.handle) -> T.bool:
-        #     T.func_attr({"tir.is_scheduled": True, "tir.is_host_func": True})
-
-        #     # From #include <tvm/tir/builtin.h>
-        #     kArrTypeCode = T.meta_var(5)
-        #     kArrTypeBits = T.meta_var(6)
-        #     kArrTypeLanes = T.meta_var(7)
-
-        #     is_bfloat16: T.bool = (
-        #         (type_code == kDLBfloat) and (type_bits == 16) and (type_lanes == 1)
-        #     )
-        #     T.ret(is_bfloat16)
 
     seq = [tvm.relax.transform.LegalizeOps()]
     if "gpu" in target.keys:

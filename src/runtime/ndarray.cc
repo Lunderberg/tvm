@@ -179,7 +179,7 @@ struct NDArray::Internal {
   }
 };
 
-NDArray NDArray::CreateView(ShapeTuple shape, DLDataType dtype, uint64_t relative_byte_offset) {
+NDArray NDArray::CreateView(ShapeTuple shape, DLDataType dtype, uint64_t relative_byte_offset) const {
   ICHECK(data_ != nullptr);
 
   const DLTensor& orig = get_mutable()->dl_tensor;
@@ -228,6 +228,37 @@ NDArray NDArray::CreateView(ShapeTuple shape, DLDataType dtype, uint64_t relativ
       get_mutable()->dl_tensor.byte_offset + relative_byte_offset;
   return ret;
 }
+
+TVM_REGISTER_GLOBAL("runtime.TVMArrayCreateView").set_body_method(&NDArray::CreateView);
+
+NDArray NDArray::MergeOffsetIntoDataPointer() const {
+  CHECK(DeviceAPI::Get((*this)->device)->HostMayPerformPointerArithmeticOnDeviceOwnedDataPointer())
+      << "RuntimeError: "
+      << "Attempted to perform pointer arithmetic on DLTensor::data, "
+      << "but the NDArray is allocated on device " << (*this)->device
+      << ", which does not support pointer arithmetic of device-side allocations.  "
+      << "In general, the DLTensor::data field must be treated as an opaque pointer.";
+
+  auto byte_offset = (*this)->byte_offset;
+  CHECK_EQ(byte_offset % runtime::kAllocAlignment, 0) << "RuntimeError: "
+                                                      << "Attempted to merge DLTensor::byte_offset of " << byte_offset << " into the DLTensor::data field.  "  << "However, this would break TVM's allocation alignment guarantee, " << "which requires that the data field by aligned to tvm::runtime::kAllocAlignment (" << tvm::runtime::kAllocAlignment << " bytes)";
+
+  if ((*this)->byte_offset == 0) {
+    return *this;
+  }
+
+  NDArray ret = CreateView(Shape(), DataType());
+
+  {
+    auto write_ptr = ret.get_mutable();
+    write_ptr->dl_tensor.data = static_cast<char*>(write_ptr->dl_tensor.data) + write_ptr->dl_tensor.byte_offset;
+    write_ptr->dl_tensor.byte_offset = 0;
+  }
+
+  return ret;
+}
+
+TVM_REGISTER_GLOBAL("runtime.TVMArrayMergeOffsetIntoDataPointer").set_body_method(&NDArray::MergeOffsetIntoDataPointer);
 
 DLManagedTensor* NDArray::ToDLPack() const { return Internal::ToDLPack(get_mutable()); }
 
@@ -384,7 +415,7 @@ int TVMArrayAlloc(const tvm_index_t* shape, int ndim, int dtype_code, int dtype_
 
 TVM_REGISTER_GLOBAL("runtime.TVMArrayAllocWithScope").set_body_typed(NDArray::Empty);
 
-TVM_REGISTER_GLOBAL("runtime.TVMArrayCreateView").set_body_method(&NDArray::CreateView);
+
 
 int TVMArrayFree(TVMArrayHandle handle) {
   API_BEGIN();
