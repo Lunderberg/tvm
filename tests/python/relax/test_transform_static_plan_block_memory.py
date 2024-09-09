@@ -452,6 +452,8 @@ def test_if_then_else():
 
 
 def test_cross_block_use():
+    """Either branch of an if/else node may access allocations prior to the branch"""
+
     @tvm.script.ir_module
     class Module:
         @T.prim_func
@@ -488,6 +490,574 @@ def test_cross_block_use():
     # The pass does no change.
     mod = relax.transform.StaticPlanBlockMemory()(Module)
     tvm.ir.assert_structural_equal(mod, Module)
+
+
+def test_cross_block_use_without_prior():
+    """Branches may not use allocations performed in the other branch
+
+    This is a regression test.  In previous implementations, the
+    `StaticPlanBlockMemory` pass introduced an allocation in the `if`
+    branch, which was then illegally used during the `else` branch.
+
+    """
+
+    @tvm.script.ir_module
+    class Module:
+        @R.function
+        def main(cond: R.Tensor((), dtype="bool"), x: R.Tensor((2, 3), dtype="float32")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Module
+
+            if cond:
+                y_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="float32", runtime_device_index=0
+                )
+                cls.exp(x, y_then)
+
+                z_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="float32", runtime_device_index=0
+                )
+                cls.exp(y_then, z_then)
+                z = z_then
+            else:
+                y_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="float32", runtime_device_index=0
+                )
+                cls.exp(x, y_else)
+
+                alloc3 = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="float32", runtime_device_index=0
+                )
+                cls.exp(y_else, z_else)
+                z = z_else
+            return z
+
+        @T.prim_func
+        def exp(A: T.Buffer((2, 3), "float32"), B: T.Buffer((2, 3), "float32")):
+            T.evaluate(0)
+
+    # The pass does no change.
+    mod = relax.transform.StaticPlanBlockMemory()(Module)
+    tvm.ir.assert_structural_equal(mod, Module)
+
+
+def test_ping_pong_memory_allocation():
+    """Memory planning may ping-pong between allocations
+
+    Here, the 5 initial allocations are reduced to 3, two for
+    computations and one for the output.
+
+    This third allocation could reuse one of the ping-ponged
+    allocations.  Currently, the memory planner provides a fresh
+    allocation for the output of Relax functions.  This ensures that
+    the caller-owned tensor is not keeping a much larger backing
+    allocation alive.
+
+    TODO(Lunderberg): Allow the output to re-use one of the earlier
+    allocations, if the size of the output buffer exactly matches the
+    size of the allocation.
+
+    """
+
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Before
+
+            x1 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x0, x1)
+
+            x2 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x1, x2)
+
+            x3 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x2, x3)
+
+            x4 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x3, x4)
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Expected
+
+            storage = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x1 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x0, x1)
+
+            storage1 = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x2 = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+            cls.increment(x1, x2)
+
+            x3 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x2, x3)
+
+            x4 = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+            cls.increment(x3, x4)
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    After = relax.transform.StaticPlanBlockMemory()(Before)
+    tvm.ir.assert_structural_equal(Expected, After)
+
+
+def test_ping_pong_memory_allocation_branch_1_2():
+    """Memory planning may ping-pong between allocations
+
+    Like `test_ping_pong_memory_allocation`, but `x1` and `x2` are
+    inside a conditional.
+
+    """
+
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Before
+
+            if cond:
+                x1_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x0, x1_then)
+
+                x2_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x1_then, x2_then)
+                x2 = x2_then
+            else:
+                x1_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x0, x1_else)
+
+                x2_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x1_else, x2_else)
+                x2 = x2_else
+
+            x3 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x2, x3)
+
+            x4 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x3, x4)
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Expected
+
+            if cond:
+                storage_then = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+                x1_then = R.memory.alloc_tensor(storage_then, 0, R.shape([2, 3]), "int32")
+                cls.increment(x0, x1_then)
+
+                storage1_then = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+                x2_then = R.memory.alloc_tensor(storage1_then, 0, R.shape([2, 3]), "int32")
+                cls.increment(x1_then, x2_then)
+
+                cond_result = (storage_then, storage1_then, x2_then)
+            else:
+                storage_else = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+                x1_else = R.memory.alloc_tensor(storage_else, 0, R.shape([2, 3]), "int32")
+                cls.increment(x0, x1_else)
+
+                storage1_else = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+                x2_else = R.memory.alloc_tensor(storage1_else, 0, R.shape([2, 3]), "int32")
+                cls.increment(x1_else, x2_else)
+
+                cond_result = (storage_else, storage1_else, x2_else)
+
+            storage = cond_result[0]
+            storage1 = cond_result[1]
+            x2 = cond_result[2]
+
+            x3 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x2, x3)
+
+            x4 = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+            cls.increment(x3, x4)
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    After = relax.transform.StaticPlanBlockMemory()(Before)
+    tvm.ir.assert_structural_equal(Expected, After)
+
+
+def test_ping_pong_memory_allocation_branch_2_3():
+    """Memory planning may ping-pong between allocations
+
+    Like `test_ping_pong_memory_allocation`, but `x2` and `x3` are
+    inside a conditional.
+
+    """
+
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Before
+
+            x1 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x0, x1)
+
+            if cond:
+                x2_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x1, x2_then)
+
+                x3_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x2_then, x3_then)
+
+                x3 = x3_then
+            else:
+                x2_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x1, x2_else)
+
+                x3_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x2_else, x3_else)
+
+                x3 = x3_else
+
+            x4 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x3, x4)
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Expected
+
+            storage = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x1 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x0, x1)
+
+            if cond:
+                storage1_then = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+                x2_then = R.memory.alloc_tensor(storage1_then, 0, R.shape([2, 3]), "int32")
+                cls.increment(x1, x2_then)
+
+                x3_then = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+                cls.increment(x2_then, x3_then)
+
+                cond_result = (storage1_then, x3_then)
+            else:
+                storage1_else = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+                x2_else = R.memory.alloc_tensor(storage1_else, 0, R.shape([2, 3]), "int32")
+                cls.increment(x1, x2_else)
+
+                x3_else = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+                cls.increment(x2_else, x3_else)
+
+                cond_result = (storage1_else, x3_else)
+
+            storage1 = cond_result[0]
+            x3 = cond_result[1]
+
+            x4 = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+            cls.increment(x3, x4)
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    After = relax.transform.StaticPlanBlockMemory()(Before)
+    tvm.ir.assert_structural_equal(Expected, After)
+
+
+def test_ping_pong_memory_allocation_branch_3_4():
+    """Memory planning may ping-pong between allocations
+
+    Like `test_ping_pong_memory_allocation`, but `x3` and `x4` are
+    inside a conditional.
+
+    """
+
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Before
+
+            x1 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x0, x1)
+
+            x2 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x1, x2)
+
+            if cond:
+                x3_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x2, x3_then)
+
+                x4_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x3_then, x4_then)
+
+                x4 = x4_then
+            else:
+                x3_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x2, x3_else)
+
+                x4_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x3_else, x4_else)
+
+                x4 = x4_else
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Expected
+
+            storage = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x1 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x0, x1)
+
+            storage1 = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x2 = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+            cls.increment(x1, x2)
+
+            if cond:
+                x3_then = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+                cls.increment(x2, x3_then)
+
+                x4_then = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+                cls.increment(x3_then, x4_then)
+
+                x4 = x4_then
+            else:
+                x3_else = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+                cls.increment(x2, x3_else)
+
+                x4_else = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+                cls.increment(x3_else, x4_else)
+
+                x4 = x4_else
+
+            x5 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x4, x5)
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    After = relax.transform.StaticPlanBlockMemory()(Before)
+    tvm.ir.assert_structural_equal(Expected, After)
+
+
+def test_ping_pong_memory_allocation_branch_4_5():
+    """Memory planning may ping-pong between allocations
+
+    Like `test_ping_pong_memory_allocation`, but `x4` and `x5` are
+    inside a conditional.
+
+    """
+
+    @I.ir_module
+    class Before:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Before
+
+            x1 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x0, x1)
+
+            x2 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x1, x2)
+
+            x3 = R.builtin.alloc_tensor(R.shape([2, 3]), dtype="int32", runtime_device_index=0)
+            cls.increment(x2, x3)
+
+            if cond:
+                x4_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x3, x4_then)
+
+                x5_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x4_then, x5_then)
+                x5 = x5_then
+            else:
+                x4_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x3, x4_else)
+
+                x5_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x4_else, x5_else)
+
+                x5 = x5_else
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    @I.ir_module
+    class Expected:
+        @R.function
+        def main(x0: R.Tensor((2, 3), dtype="int32"), cond: R.Prim("bool")):
+            R.func_attr({"relax.force_pure": True})
+            cls = Expected
+
+            storage = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x1 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x0, x1)
+
+            storage1 = R.memory.alloc_storage(R.shape([24]), 0, "global", "int32")
+            x2 = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+            cls.increment(x1, x2)
+
+            x3 = R.memory.alloc_tensor(storage, 0, R.shape([2, 3]), "int32")
+            cls.increment(x2, x3)
+
+            if cond:
+                x4_then = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+                cls.increment(x3, x4_then)
+
+                x5_then = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x4_then, x5_then)
+                x5 = x5_then
+            else:
+                x4_else = R.memory.alloc_tensor(storage1, 0, R.shape([2, 3]), "int32")
+                cls.increment(x3, x4_else)
+
+                x5_else = R.builtin.alloc_tensor(
+                    R.shape([2, 3]), dtype="int32", runtime_device_index=0
+                )
+                cls.increment(x4_else, x5_else)
+                x5 = x5_else
+
+            return x5
+
+        @T.prim_func(private=True)
+        def increment(A: T.Buffer((2, 3), "int32"), B: T.Buffer((2, 3), "int32")):
+            for iters in T.grid(*A.shape):
+                with T.block("compute"):
+                    i, j = T.axis.remap("SS", iters)
+                    B[i, j] = A[i, j] + 1
+
+    After = relax.transform.StaticPlanBlockMemory()(Before)
+    tvm.ir.assert_structural_equal(Expected, After)
 
 
 def test_nested_tuple():
@@ -1355,9 +1925,9 @@ def test_add():
             T.evaluate(0)
 
         @R.function
-        def main(
-            probs: R.Tensor(("batch_size", "vocab_size"), dtype="float32")
-        ) -> R.Tensor(("batch_size", "vocab_size"), dtype="float32"):
+        def main(probs: R.Tensor(("batch_size", "vocab_size"), dtype="float32")) -> R.Tensor(
+            ("batch_size", "vocab_size"), dtype="float32"
+        ):
             batch_size = T.int64()
             vocab_size = T.int64()
             R.func_attr(
@@ -1401,9 +1971,9 @@ def test_add():
             T.evaluate(0)
 
         @R.function
-        def main(
-            probs: R.Tensor(("batch_size", "vocab_size"), dtype="float32")
-        ) -> R.Tensor(("batch_size", "vocab_size"), dtype="int32"):
+        def main(probs: R.Tensor(("batch_size", "vocab_size"), dtype="float32")) -> R.Tensor(
+            ("batch_size", "vocab_size"), dtype="int32"
+        ):
             batch_size = T.int64()
             vocab_size = T.int64()
             R.func_attr(
